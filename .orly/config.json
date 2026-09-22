@@ -5,7 +5,7 @@
       "command": "bun test 2>&1 | tail -5"
     },
     "build": {
-      "command": "for f in src/*.ts adapters/*.ts bin/*.ts; do bun build $f --target=bun --outfile=/dev/null >/dev/null || exit 1; done"
+      "command": "git ls-files 'src/*.ts' 'adapters/*.ts' 'bin/*.ts' | while read f; do bun build \"$f\" --target=bun --outfile=/dev/null >/dev/null || exit 1; done"
     },
     "readme_lines": {
       "command": "cat README.md",
