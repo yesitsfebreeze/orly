@@ -47,8 +47,10 @@ export function contextEnricher(sources: Record<string, ContextSpec>, cwd: strin
   return async (_turn, specs): Promise<Evidence> => {
     const names = wantedSources(sources, specs ?? []);
     if (!names.length) return {};
-    const out: Record<string, string> = {};
-    for (const name of names) {
+    // In parallel, for the same reason as checks: a ticket fetch and a deploy status have
+    // no business queueing behind each other.
+    const entries = await Promise.all(
+      names.map(async (name) => {
       const spec = sources[name];
       const max = spec.maxChars ?? DEFAULT_MAX;
       try {
@@ -62,16 +64,18 @@ export function contextEnricher(sources: Record<string, ContextSpec>, cwd: strin
         clearTimeout(timer);
         // A source that could not run must say so in words. Empty text reads as "the
         // ticket says nothing", which is an answer — and the wrong one.
-        out[name] =
+        const text =
           exit === 0
             ? stdout.length > max
               ? `${stdout.slice(0, max)}\n…[TRUNCATED: ${stdout.length - max} more chars not shown — do not treat anything below as absent]`
               : stdout
             : `[context source "${name}" could not be read: exit ${exit}. Treat it as unknown, not as absent.]\n${stderr.slice(0, 400)}`;
+        return [name, text] as const;
       } catch {
-        out[name] = `[context source "${name}" could not be run. Treat it as unknown, not as absent.]`;
+        return [name, `[context source "${name}" could not be run. Treat it as unknown, not as absent.]`] as const;
       }
-    }
-    return { context: out };
+      }),
+    );
+    return { context: Object.fromEntries(entries) };
   };
 }
