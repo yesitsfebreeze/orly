@@ -9,12 +9,21 @@ Your agent says it's done. orly asks the obvious question — at the end of **ev
 before the stop goes through. Whatever isn't true comes back with the gap named, and the
 agent keeps working until it is.
 
+A library and a CLI. Claude Code is one adapter, in one file.
+
 ```sh
-claude plugin marketplace add /path/to/orly
-claude plugin install orly@orly-local
+claude plugin marketplace add /path/to/orly && claude plugin install orly@orly-local
 ```
 
 Then `/orly:orly <your goal>` — it writes the checks, then holds you to them.
+
+Any other loop — opencode, pi, your own — pipes its message log in and reads the exit code:
+
+```sh
+echo '{"messages":[…]}' | orly judge   # 0 = may stop, 2 = not done yet
+```
+
+Anthropic and OpenAI message shapes both work. [Porting](docs/porting.txt) is one file.
 
 ## What it catches that a test suite can't
 
@@ -39,16 +48,18 @@ you couldn't do, or the round cap runs out.
 
 ## What it costs
 
-One request per turn. Measured on a real turn: **~390 ms, 2,610 input tokens — about
-$1.10 per 10,000 turns.**
+One request per turn. Measured on a real turn: **under 400 ms, 2,610 input tokens —
+about $1.10 per 10,000 turns.**
 
 ## Between turns
 
 ```sh
-orly ask "is the stub gone?" src/thing.ts
+orly ask "is the stub gone?" "is there a test for it?" src/thing.ts
+git diff | orly ask --json "does this touch auth?" -
 ```
 
-Same judge, under a second, as many questions per call as you like.
+Same judge, same key, answers in under a second. Batching is nearly free, so ask twenty
+things at once. `--json` for a program on the other end; exit 2 if any answer is no.
 
 ## Does it work
 

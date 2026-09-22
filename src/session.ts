@@ -63,6 +63,32 @@ export function projectRoot(cwd: string): string | null {
   return dir ? dirname(dir) : null;
 }
 
+/**
+ * The API key, for any host.
+ *
+ * The library itself reads `TYPESAFE_API_KEY` and nothing else on purpose: a component
+ * that decides WHICH credential to authenticate as is a component that will silently pick
+ * the wrong one. But a hook does not inherit an interactive shell's environment, so a
+ * host needs some way to supply it without a plaintext key in a settings file.
+ *
+ * `.orly/config.json` may name one command that prints it. That command is configuration
+ * the user wrote, not a search this code performs, and the secret stays wherever it
+ * already lives. This lived in the Claude Code adapter, which meant every other host had
+ * to reimplement it — or go without, and read as "no key" in a session where the key was
+ * perfectly readable.
+ */
+export function resolveKey(cwd: string = process.cwd()): string | undefined {
+  if (process.env.TYPESAFE_API_KEY) return process.env.TYPESAFE_API_KEY;
+  const command = process.env.ORLY_KEY_COMMAND ?? loadConfig(cwd).keyCommand;
+  if (typeof command !== "string" || !command.trim()) return undefined;
+  try {
+    const out = Bun.spawnSync(["sh", "-c", command], { stdout: "pipe", stderr: "ignore" });
+    return out.stdout.toString().trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Whatever `.orly/config.json` holds, or an empty object. */
 export function loadConfig(cwd: string): Record<string, any> {
   const dir = findOrlyDir(cwd);

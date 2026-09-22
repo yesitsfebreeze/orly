@@ -16,18 +16,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULTS, judge, type Turn } from "../src/gate.ts";
 import { normalizeLastTurn } from "../src/normalize.ts";
-import { combine, fileEnricher } from "../src/enrich.ts";
+import { projectEvidence } from "../src/evidence.ts";
 import { append as logVerdict } from "../src/log.ts";
-import { kernMemoryEnricher } from "../src/enrich-kern.ts";
-import { checkEnricher } from "../src/enrich-checks.ts";
 import {
   advance,
   DEFAULT_MAX_ROUNDS,
   findOrlyDir,
-  loadConfig,
   loadSpecFile,
-  projectRoot,
   readRounds,
+  resolveKey,
   writeRounds,
 } from "../src/session.ts";
 import { unmet } from "../src/specs.ts";
@@ -101,40 +98,6 @@ if (guardDir && specs.length) {
 // but bounded by the round cap and stall detection in session.ts, never by the model.
 if (input.stop_hook_active && !specs.length) allow();
 
-/**
- * Key resolution, host-side.
- *
- * The library reads `TYPESAFE_API_KEY` and nothing else on purpose — a component that
- * decides *which* credential to authenticate as is a component that will silently pick the
- * wrong one. But a hook does not inherit an interactive shell's environment, so the host
- * needs some way to supply it without a plaintext key sitting in a settings file.
- *
- * `.orly/config.json` may name one command to produce it. The command is configuration the
- * user wrote, not a search the plugin performs, and the secret stays wherever it already
- * lives.
- */
-function resolveKey(cwd: string): string | undefined {
-  if (process.env.TYPESAFE_API_KEY) return process.env.TYPESAFE_API_KEY;
-  const command = (() => {
-    if (process.env.ORLY_KEY_COMMAND) return process.env.ORLY_KEY_COMMAND;
-    try {
-      const orlyDir = findOrlyDir(cwd);
-      if (!orlyDir) return undefined;
-      return JSON.parse(readFileSync(join(orlyDir, "config.json"), "utf8"))?.keyCommand;
-    } catch {
-      return undefined;
-    }
-  })();
-  if (typeof command !== "string" || !command.trim()) return undefined;
-  try {
-    const out = Bun.spawnSync(["sh", "-c", command], { stdout: "pipe", stderr: "ignore" });
-    const value = out.stdout.toString().trim();
-    return value || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 const key = resolveKey(input.cwd ?? process.cwd());
 if (!key) {
   // Say this once per session. A gate that disables itself quietly looks installed and
@@ -187,26 +150,10 @@ try {
   result = await judge(turn!, {
     apiKey: key,
     specs,
-    // Independent evidence: the files the specs point at, read now rather than taken from
-    // what the agent printed, plus whatever this project's own kern knows about the goal.
-    // Both are optional and both fail quietly.
-    enrich: combine(
-      fileEnricher(projectRoot(input.cwd ?? process.cwd()) ?? input.cwd ?? process.cwd(), (path) =>
-        Bun.file(path).text(),
-      ),
-      kernMemoryEnricher(specFile?.goal ?? "", input.cwd),
-      // Facts from the project's own tooling. Anything a command can decide belongs here
-      // and is asserted in code, never handed to the model.
-      // From the project root, never cwd: a check command is written relative to the
-      // project, and an agent's cwd moves. Run from a subdirectory, `cd orly && …` fails
-      // and the shell's error message — which contains a newline — gets counted by
-      // countPattern as a real violation. A broken check that reports a plausible number
-      // is worse than one that errors.
-      checkEnricher(
-        loadConfig(input.cwd ?? process.cwd()).checks ?? {},
-        projectRoot(input.cwd ?? process.cwd()) ?? input.cwd ?? process.cwd(),
-      ),
-    ),
+    // Independent evidence: the files the specs point at, read now rather than taken
+    // from what the agent printed; the project's own checks; whatever kern knows about
+    // the goal. Wired in the library so every host gathers the same thing.
+    enrich: projectEvidence({ cwd: input.cwd, goal: specFile?.goal }),
     endpoint: process.env.TYPESAFE_BASE_URL,
     model: process.env.ORLY_MODEL,
     timeoutMs: num("ORLY_TIMEOUT_MS", 12_000),

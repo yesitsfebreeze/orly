@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { projectEvidence } from "../src/evidence.ts";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { combine, evidencePaths, fileEnricher, withEvidence } from "../src/enrich.ts";
 import type { Turn } from "../src/gate.ts";
 import type { Spec } from "../src/specs.ts";
@@ -52,4 +56,28 @@ test("truncation announces itself instead of silently hiding the tail", () => {
 test("a file under the limit is passed through whole", async () => {
   const e = await fileEnricher("/x", async () => "short file")(turn, specs);
   expect((e.files as any)["duration.js"]).toBe("short file");
+});
+
+test("projectEvidence gathers files and checks from the project root, called from anywhere", async () => {
+  // The hook and the CLI wired these enrichers separately and drifted: the CLI gathered
+  // files but never ran the checks, so every `require` spec read as unmet through
+  // `orly judge` while passing through the hook, on the same repository.
+  const root = mkdtempSync(join(tmpdir(), "orly-ev-"));
+  try {
+    mkdirSync(join(root, ".orly"));
+    mkdirSync(join(root, "sub"));
+    writeFileSync(join(root, "thing.ts"), "export const done = true;\n");
+    writeFileSync(join(root, ".orly", "config.json"), JSON.stringify({ checks: { here: { command: "cat thing.ts" } } }));
+    const specs: any = [
+      { id: "file", instructions: "n/a", evidence: ["thing.ts"] },
+      { id: "check", instructions: "n/a", require: { path: "checks.here.exit", op: "equals", value: 0 } },
+    ];
+    for (const cwd of [root, join(root, "sub")]) {
+      const e: any = await projectEvidence({ cwd })({} as any, specs);
+      expect(e.files["thing.ts"]).toContain("export const done");
+      expect(e.checks.here.exit).toBe(0);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

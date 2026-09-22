@@ -4,16 +4,34 @@ ANY AGENTIC LOOP
 orly is a library and a CLI. Claude Code is one adapter, in one file. Nothing in the core
 knows what harness it is running under.
 
-  src/gate.ts         questions, policy, transport
-  src/normalize.ts    message log -> Turn
-  src/specs.ts        specifiers: validation, question generation, scoring
-  src/enrich.ts       evidence the transcript does not contain
-  src/enrich-kern.ts  kern as one evidence source
-  src/session.ts      .orly discovery, layering, loop control
-  src/log.ts          the verdict log and cut proposals
-  src/guard.ts        refusing edits that weaken the gate
-  bin/orly.ts         the CLI
-  adapters/           one file per host
+  src/client.ts        the only thing here that speaks HTTP
+  src/gate.ts          questions and policy
+  src/normalize.ts     message log -> Turn
+  src/specs.ts         specifiers: validation, question generation, scoring
+  src/enrich.ts        evidence the transcript does not contain
+  src/enrich-checks.ts the project's own commands as evidence
+  src/enrich-kern.ts   kern as one evidence source
+  src/evidence.ts      all three, wired the way every host wants them
+  src/session.ts       .orly discovery, the key, layering, loop control
+  src/log.ts           the verdict log and cut proposals
+  src/guard.ts         refusing edits that weaken the gate
+  bin/orly.ts          the CLI
+  adapters/            one file per host
+
+
+WHAT A HOST HAS TO DO
+---------------------
+
+Four calls. Everything else is the library's problem:
+
+  resolveKey(cwd)                     TYPESAFE_API_KEY, or the keyCommand in .orly
+  normalizeLastTurn(messages)         the host's log -> a Turn
+  projectEvidence({cwd, goal})        files, checks and project knowledge, from the root
+  judge(turn, {apiKey, specs, enrich})
+
+None of these know what a hook is. Key resolution and evidence wiring used to live in the
+Claude Code adapter, so a second host had to reimplement both — and the one that did it
+slightly differently disagreed with the first about the same repository.
 
 
 THE CLI
@@ -41,6 +59,7 @@ ASKING DIRECTLY
 
   orly ask "is the stub gone?" "is there a test for it?" src/thing.ts
   git diff | orly ask "does this touch auth?" "is a test included?" -
+  orly ask --json "does this touch auth?" src/auth.ts
 
 Named files become `files` in the state; "-" reads piped text into `input`. Each question
 becomes a Noul and prints yes/no with its probability; exit 2 if any came back no.
@@ -50,9 +69,16 @@ about one thing — or twenty. Batching is close to free because the state domin
 cost: measured on one file, 1 question cost $0.00017 and 40 cost $0.00021, with latency
 flat at roughly 300-400 ms.
 
+--json gives a program the whole answer: every probability, the cut they were split at,
+the latency and the token count. Exit 2 if any answer came back no, either way.
+
 The printed yes/no splits at 0.5 as a reporting convenience. Anything you act on needs a
 cut fitted for that question's wording - see calibration.txt. 0.5 is where an unfitted
-question looks most trustworthy and is least so.
+question looks most trustworthy and is least so. ORLY_ASK_CUT moves the split once you
+have fitted one.
+
+The key comes from resolveKey, same as the hook: TYPESAFE_API_KEY, else the keyCommand in
+.orly/config.json. Nothing here needs an interactive shell's environment.
 
 
 THE TURN

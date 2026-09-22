@@ -13,10 +13,11 @@
  * policy that turns those numbers into a decision.
  */
 
+import { ask, ENDPOINT_DEFAULT } from "./client.ts";
 import { withEvidence, type Enricher } from "./enrich.ts";
 import { scoreSpecs, specQuestions, unmet, type Spec, type SpecResult } from "./specs.ts";
 
-export const ENDPOINT_DEFAULT = "https://api.typesafe.ai/v1/systemone";
+export { ENDPOINT_DEFAULT };
 
 /** One turn of any agent, reduced to what the judge needs. */
 export type Turn = {
@@ -310,24 +311,12 @@ export async function judge(turn: Turn, opts: JudgeOptions): Promise<Judgment> {
   // differently depending on what the working tree happens to look like.
   const { checks, ...visible } = evidence ?? {};
   const { conclusive, ...state } = withEvidence(turn, visible);
-  // One request, every question. TypeSafe measured 13 questions batched at 12.2x cheaper
-  // and 10x faster than 13 separate calls, with the same answers.
-  const questions = { ...QUESTIONS, ...specQuestions(specs) };
-  const res = await fetch(opts.endpoint ?? ENDPOINT_DEFAULT, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${opts.apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ state, model: opts.model ?? "jev-latest", questions }),
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 12_000),
-  });
-  if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 300)}`);
-  const out = await res.json();
-  // A 200 that is not the documented shape means we reached something that is not the
-  // judge. Treat it as an outage rather than as evidence about the turn.
-  if (!out?.answers || typeof out.answers !== "object") throw new Error("response had no answers");
+  // The built-in questions and every goal spec, in one request.
+  const { answers, usage } = await ask(state, { ...QUESTIONS, ...specQuestions(specs) }, opts);
   return {
     // `require` specs still see everything, including checks — they are decided in code.
-    verdict: compose(out.answers, opts.thresholds ?? DEFAULTS, specs, evidence),
-    answers: out.answers,
-    usage: out.usage,
+    verdict: compose(answers, opts.thresholds ?? DEFAULTS, specs, evidence),
+    answers,
+    usage,
   };
 }

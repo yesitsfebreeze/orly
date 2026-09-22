@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { compose, DEFAULTS } from "../src/gate.ts";
-import { advance, DEFAULT_MAX_ROUNDS, STALL_ROUNDS } from "../src/session.ts";
+import { advance, DEFAULT_MAX_ROUNDS, resolveKey, STALL_ROUNDS } from "../src/session.ts";
 import { scoreSpecs, SPEC_PREFIX, specQuestions, unmet, validateSpecs, type Spec } from "../src/specs.ts";
 
 const specs: Spec[] = [
@@ -133,9 +133,9 @@ test("a changed goal starts a fresh loop", () => {
 
 // ---------------------------------------------------------------- .orly discovery
 
-import { mkdirSync, rmSync, writeFileSync as write } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync as write, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as j } from "node:path";
+import { join, join as j } from "node:path";
 import { findOrlyDir, loadSpecFile, projectRoot } from "../src/session.ts";
 
 test("finds .orly from a nested working directory", () => {
@@ -246,4 +246,29 @@ test("check results never reach the model, only the require specs", async () => 
   }
   expect(sentState.project.files).toBeDefined();
   expect(sentState.project.checks).toBeUndefined();
+});
+
+test("the key resolves for any host, not just the one with a hook", () => {
+  // Key resolution lived in the Claude Code adapter, so every other host had to
+  // reimplement it — or go without and report "no key" in a session where the key was
+  // perfectly readable.
+  const root = mkdtempSync(join(tmpdir(), "orly-key-"));
+  const saved = process.env.TYPESAFE_API_KEY;
+  try {
+    mkdirSync(join(root, ".orly"));
+    delete process.env.TYPESAFE_API_KEY;
+    expect(resolveKey(root)).toBeUndefined();
+
+    writeFileSync(join(root, ".orly", "config.json"), JSON.stringify({ keyCommand: "echo from-the-keychain" }));
+    expect(resolveKey(root)).toBe("from-the-keychain");
+
+    // The environment always wins: a host that has already been given a key must not
+    // have a config file quietly authenticate it as somebody else.
+    process.env.TYPESAFE_API_KEY = "from-the-env";
+    expect(resolveKey(root)).toBe("from-the-env");
+  } finally {
+    if (saved === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = saved;
+    rmSync(root, { recursive: true, force: true });
+  }
 });

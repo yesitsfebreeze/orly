@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import * as client from "../src/client.ts";
 import { compose, DEFAULTS, judge, QUESTIONS } from "../src/gate.ts";
 import { MAX_RESULTS, normalize, normalizeLastTurn, selectResults, type Msg } from "../src/normalize.ts";
 
@@ -220,5 +221,23 @@ test("enrichment that throws never takes the judgment down", async () => {
       },
     });
     expect(verdict.block).toBe(false);
+  });
+});
+
+test("the transport is one place: a non-2xx and a wrong-shaped 200 fail the same way", async () => {
+  // There were three hand-rolled copies of this — the gate's, `orly ask`'s and
+  // `orly specs`'s — each with its own endpoint default and its own idea of a bad
+  // response. One outage looked like three different errors depending on which command
+  // hit it.
+  await withTransport("upstream on fire", 503, async () => {
+    await expect(client.ask({}, {}, { apiKey: "k" })).rejects.toThrow("503");
+  });
+  await withTransport({ ok: true }, 200, async () => {
+    await expect(client.ask({}, {}, { apiKey: "k" })).rejects.toThrow("no answers");
+  });
+  await withTransport({ answers: { q0: { noul: 0.9 } }, usage: { input_tokens: 10, output_tokens: 1 } }, 200, async () => {
+    const out = await client.ask({}, { q0: { type: "noul" } }, { apiKey: "k" });
+    expect(out.answers.q0.noul).toBe(0.9);
+    expect(out.usage?.input_tokens).toBe(10);
   });
 });

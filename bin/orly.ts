@@ -16,11 +16,10 @@
 import { DEFAULTS, judge, type Turn } from "../src/gate.ts";
 import { normalize, normalizeLastTurn, type Msg } from "../src/normalize.ts";
 import { existsSync } from "node:fs";
-import { combine, fileEnricher } from "../src/enrich.ts";
-import { kernMemoryEnricher } from "../src/enrich-kern.ts";
+import { ask as askJudge } from "../src/client.ts";
+import { projectEvidence } from "../src/evidence.ts";
 import { label, propose, read } from "../src/log.ts";
-import { checkEnricher } from "../src/enrich-checks.ts";
-import { findOrlyDir, loadConfig, loadSpecFile, projectRoot } from "../src/session.ts";
+import { findOrlyDir, loadSpecFile, resolveKey } from "../src/session.ts";
 import { validateSpecs, type Spec } from "../src/specs.ts";
 
 const fail = (msg: string, code = 1): never => {
@@ -28,16 +27,24 @@ const fail = (msg: string, code = 1): never => {
   process.exit(code);
 };
 
+const num = (name: string, fallback: number) => {
+  const v = process.env[name];
+  const n = v === undefined ? NaN : Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+
 const command = process.argv[2] ?? "judge";
 if (command === "--help" || command === "-h" || command === "help") {
   console.log(
     [
       "orly judge         read {messages:[…]} or {turn:{…}} on stdin, write a verdict as JSON",
+      "orly ask Q… [file…] [-] [--json]   ask now, between turns",
       "                       exit 0 = the turn may end, 2 = it may not, 1 = the gate could not run",
       "orly specs [path]  check that a spec list is decidable from recorded evidence",
       "orly fit           propose cuts from the judgments logged in .orly/log.jsonl",
       "",
-      "env: TYPESAFE_API_KEY (required), TYPESAFE_BASE_URL, ORLY_MODEL,",
+      "env: TYPESAFE_API_KEY or .orly/config.json keyCommand, TYPESAFE_BASE_URL, ORLY_MODEL,",
+      "     ORLY_ASK_CUT (the yes/no split for `ask`, default 0.5),",
       "     ORLY_HAZARD, ORLY_MIN_COVERAGE, ORLY_MIN_CONFIDENCE,",
       "     ORLY_MIN_ACTION_P, ORLY_TIMEOUT_MS",
     ].join("\n"),
@@ -54,10 +61,11 @@ if (command === "ask") {
   //
   //   orly ask "is the stub gone?" src/thing.ts
   //   echo "$DIFF" | orly ask "does this change touch auth?" "is a test included?"
-  const key3 = process.env.TYPESAFE_API_KEY;
-  if (!key3) fail("TYPESAFE_API_KEY is not set");
+  const key3 = resolveKey();
+  if (!key3) fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json");
 
-  const rest = process.argv.slice(3);
+  const rest = process.argv.slice(3).filter((a) => a !== "--json");
+  const asJson = process.argv.includes("--json");
   const questions: string[] = [];
   const paths: string[] = [];
   // Reading stdin is opt-in via "-". Guessing from isTTY hangs forever wherever stdin is
@@ -90,26 +98,38 @@ if (command === "ask") {
   });
 
   const t0 = performance.now();
-  const res3 = await fetch(process.env.TYPESAFE_BASE_URL ?? "https://api.typesafe.ai/v1/systemone", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key3}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ state, model: process.env.ORLY_MODEL ?? "jev-latest", questions: qs }),
-  });
-  if (!res3.ok) fail(`${res3.status} ${(await res3.text()).slice(0, 200)}`);
-  const out3 = await res3.json();
+  let answers: Record<string, any>;
+  let usage: { input_tokens: number; output_tokens: number } | undefined;
+  try {
+    ({ answers, usage } = await askJudge(state, qs, {
+      apiKey: key3!,
+      endpoint: process.env.TYPESAFE_BASE_URL,
+      model: process.env.ORLY_MODEL,
+      timeoutMs: num("ORLY_TIMEOUT_MS", 12_000),
+    }));
+  } catch (e: any) {
+    fail(`judge unavailable (${e?.message ?? e})`);
+  }
   const ms = performance.now() - t0;
 
-  let anyNo = false;
-  questions.forEach((q, i) => {
-    const p = out3.answers?.[`q${i}`]?.noul ?? NaN;
-    // 0.5 is a reporting split only — never a decision threshold. Anything you act on
-    // needs a cut fitted for that question's wording.
-    if (!(p >= 0.5)) anyNo = true;
-    console.log(`${p >= 0.5 ? "yes" : "no "} ${p.toFixed(2)}  ${q}`);
+  // The split is a reporting convenience, not a decision threshold: 0.5 is where an
+  // unfitted question looks most trustworthy and is least so. Anything you act on needs
+  // a cut fitted for that question's wording — which is what --cut is for.
+  const cut = num("ORLY_ASK_CUT", 0.5);
+  const asked = questions.map((q, i) => {
+    const p = answers![`q${i}`]?.noul ?? NaN;
+    return { question: q, p: Number.isFinite(p) ? Number(p.toFixed(3)) : null, yes: p >= cut };
   });
-  const tok = out3.usage?.input_tokens ?? 0;
-  console.error(`${ms.toFixed(0)} ms · ${tok} tok · $${((tok * 0.042) / 1e6).toFixed(6)}`);
-  process.exit(anyNo ? 2 : 0);
+  const tok = usage?.input_tokens ?? 0;
+  if (asJson) {
+    // For a program on the other end: one object, every probability, the cut it was
+    // split at, and what it cost. Parsing the human lines is nobody's idea of an API.
+    console.log(JSON.stringify({ answers: asked, cut, ms: Math.round(ms), usage, files: paths, questions_asked: asked.length }));
+  } else {
+    for (const a of asked) console.log(`${a.yes ? "yes" : "no "} ${a.p === null ? " n/a" : a.p.toFixed(2)}  ${a.question}`);
+    console.error(`${ms.toFixed(0)} ms · ${tok} tok · $${((tok * 0.042) / 1e6).toFixed(6)}`);
+  }
+  process.exit(asked.some((a) => !a.yes) ? 2 : 0);
 }
 
 if (command === "specs") {
@@ -133,8 +153,8 @@ if (command === "specs") {
   const rejected = new Set(problems.map((p) => p.id));
   for (const p of problems) console.log(`✗ word   ${p.id}: ${p.problem}`);
 
-  const key2 = process.env.TYPESAFE_API_KEY;
-  if (!key2) fail("TYPESAFE_API_KEY is not set");
+  const key2 = resolveKey();
+  if (!key2) fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json");
   const questions: Record<string, any> = {};
   for (const sp of file.specs as Spec[]) {
     questions[sp.id] = {
@@ -151,20 +171,24 @@ if (command === "specs") {
       },
     };
   }
-  const res = await fetch(process.env.TYPESAFE_BASE_URL ?? "https://api.typesafe.ai/v1/systemone", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key2}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ state: { goal: file.goal }, model: process.env.ORLY_MODEL ?? "jev-latest", questions }),
-  });
-  if (!res.ok) fail(`${res.status} ${(await res.text()).slice(0, 200)}`);
-  const { answers } = await res.json();
+  let answers: Record<string, any>;
+  try {
+    ({ answers } = await askJudge({ goal: file.goal }, questions, {
+      apiKey: key2!,
+      endpoint: process.env.TYPESAFE_BASE_URL,
+      model: process.env.ORLY_MODEL,
+      timeoutMs: num("ORLY_TIMEOUT_MS", 12_000),
+    }));
+  } catch (e: any) {
+    fail(`judge unavailable (${e?.message ?? e})`);
+  }
   // Fitted on a mixed list: specs that are genuinely decidable from a transcript scored
   // 0.57–0.74, ones requiring simulated execution or taste scored 0.06–0.08. 0.35 is the
   // midpoint of that gap. Refit if this question's wording changes.
   const cut = Number(process.env.ORLY_CHECKABLE ?? 0.35);
   for (const sp of file.specs as Spec[]) {
     if (rejected.has(sp.id)) continue;
-    const p = answers?.[sp.id]?.noul ?? 1;
+    const p = answers![sp.id]?.noul ?? 1;
     if (p < cut) rejected.add(sp.id);
     console.log(`${p >= cut ? "✓" : "✗"} ${p.toFixed(2)}  ${sp.id}: ${sp.instructions}`);
   }
@@ -212,8 +236,8 @@ if (command === "fit") {
 
 if (command !== "judge") fail(`unknown command "${command}" — try: orly judge | orly specs | orly fit`);
 
-const key = process.env.TYPESAFE_API_KEY;
-if (!key) fail("TYPESAFE_API_KEY is not set");
+const key = resolveKey();
+if (!key) fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json");
 
 const raw = await new Response(Bun.stdin.stream()).text();
 let input: { messages?: Msg[]; turn?: Turn };
@@ -230,24 +254,13 @@ else fail('expected {"messages":[…]} or {"turn":{…}} on stdin');
 
 const specFile = loadSpecFile(process.cwd());
 
-const num = (name: string, fallback: number) => {
-  const v = process.env[name];
-  const n = v === undefined ? NaN : Number(v);
-  return Number.isFinite(n) ? n : fallback;
-};
-
 try {
   const { verdict, answers, usage } = await judge(turn!, {
     apiKey: key!,
     specs: specFile?.specs,
-    enrich: combine(
-      fileEnricher(projectRoot(process.cwd()) ?? process.cwd(), (path) => Bun.file(path).text()),
-      kernMemoryEnricher(specFile?.goal ?? ""),
-      // Same evidence the hook gathers. Without it every `require` spec resolves to
-      // nothing, which reads as unmet — the CLI would disagree with the hook on the
-      // same repo, and the deterministic half of the gate would be the part that broke.
-      checkEnricher(loadConfig(process.cwd()).checks ?? {}, projectRoot(process.cwd()) ?? process.cwd()),
-    ),
+    // The same evidence the hook gathers, from the same place, so the CLI and a host
+    // adapter can never disagree about the same repository.
+    enrich: projectEvidence({ goal: specFile?.goal }),
     endpoint: process.env.TYPESAFE_BASE_URL,
     model: process.env.ORLY_MODEL,
     timeoutMs: num("ORLY_TIMEOUT_MS", 12_000),
