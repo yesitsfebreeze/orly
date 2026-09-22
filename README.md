@@ -26,7 +26,8 @@ Other loops (opencode, your own) pipe the message log in and read the exit code:
 echo '{"messages":[…]}' | orly judge   # 0 = may stop, 2 = not done yet
 ```
 
-Anthropic and OpenAI message shapes both work. [Porting](docs/porting.txt) is one file.
+`orly schema` prints both accepted shapes with a working example; a bad shape is named
+before any request is spent. [Porting](docs/porting.txt) is one file.
 
 ## What you get
 

@@ -36,12 +36,66 @@ const num = (name: string, fallback: number) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+// What `orly schema` prints and every input error points at: a caller should get the
+// shape right on the first try, not by reading this file.
+const SCHEMA = {
+  messages: {
+    "stdin": '{"messages":[…]}',
+    "dialects": "content blocks (tool_use / tool_result), or tool_calls + role:\"tool\"; judged from the last user message on",
+    "example": {
+      messages: [
+        { role: "user", content: "add a test for parse()" },
+        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "bun test" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "3 pass, 0 fail" }] },
+        { role: "assistant", content: "Added test/parse.test.ts; bun test: 3 pass, 0 fail." },
+      ],
+    },
+  },
+  turn: {
+    "stdin": '{"turn":{…}}, for logs in neither dialect',
+    "example": {
+      turn: {
+        user_request: "add a test for parse()",
+        assistant_final_message: "Added test/parse.test.ts; bun test: 3 pass, 0 fail.",
+        assistant_said: "Added test/parse.test.ts; bun test: 3 pass, 0 fail.",
+        actions_taken: ["Bash bun test"],
+        command_results: ["3 pass, 0 fail"],
+        conclusive: true,
+      },
+    },
+  },
+  output: '{"block":bool,"reason":string,"line":string,"answers":{…},"usage":{…}} — exit 0 may stop, 2 may not, 1 could not run',
+};
+
+/** Why `input` is not something `orly judge` can read, or null when it is. */
+function inputProblem(input: any): string | null {
+  if (!input || typeof input !== "object") return "stdin must be a JSON object";
+  if (input.turn !== undefined) {
+    const t = input.turn;
+    if (!t || typeof t !== "object") return "turn must be an object";
+    for (const k of ["user_request", "assistant_final_message", "assistant_said"])
+      if (typeof t[k] !== "string") return `turn.${k} must be a string`;
+    for (const k of ["actions_taken", "command_results"])
+      if (!Array.isArray(t[k]) || t[k].some((x: unknown) => typeof x !== "string")) return `turn.${k} must be an array of strings`;
+    if (typeof t.conclusive !== "boolean") return "turn.conclusive must be a boolean";
+    return null;
+  }
+  if (!Array.isArray(input.messages)) return 'expected {"messages":[…]} or {"turn":{…}}';
+  if (!input.messages.some((m: any) => m?.role === "user")) return "messages has no role:\"user\" entry, so there is no request to judge";
+  return null;
+}
+
 const command = process.argv[2] ?? "judge";
+if (command === "schema") {
+  console.log(JSON.stringify(SCHEMA, null, 2));
+  process.exit(0);
+}
 if (command === "--help" || command === "-h" || command === "help") {
   console.log(
     [
       "orly judge         read {messages:[…]} or {turn:{…}} on stdin, write a verdict as JSON",
       "                       exit 0 = the turn may end, 2 = it may not, 1 = the gate could not run",
+      "orly schema        print both input shapes with a working example, and the output shape",
       "orly ask Q… [file…] [-] [--json]   ask now, between turns",
       "orly watch         run the checks on every change, so a turn never waits for them",
       "orly specs [path]  check that a spec list is decidable from recorded evidence",
@@ -279,23 +333,26 @@ if (command === "fit") {
   process.exit(0);
 }
 
-if (command !== "judge") fail(`unknown command "${command}" — try: orly judge | orly specs | orly fit`);
+if (command !== "judge") fail(`unknown command "${command}" — try: orly --help`);
 
-const key = resolveKey();
-if (!key) fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json");
-
+// Shape first, key second: a caller fixing its input should not have to get a key to
+// find out the input was wrong, and a bad shape should never cost a request.
 const raw = await new Response(Bun.stdin.stream()).text();
 let input: { messages?: Msg[]; turn?: Turn };
 try {
   input = JSON.parse(raw);
 } catch {
-  fail("stdin was not JSON");
+  fail("stdin was not JSON — run `orly schema` for the expected shape");
 }
+const problem = inputProblem(input!);
+if (problem) fail(`${problem} — run \`orly schema\` for the expected shape`);
+
+const key = resolveKey();
+if (!key) fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json");
 
 let turn: Turn;
 if (input!.turn) turn = input!.turn;
-else if (Array.isArray(input!.messages)) turn = normalizeLastTurn(input!.messages);
-else fail('expected {"messages":[…]} or {"turn":{…}} on stdin');
+else turn = normalizeLastTurn(input!.messages!);
 
 const specFile = loadSpecFile(process.cwd());
 
