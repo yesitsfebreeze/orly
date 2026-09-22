@@ -18,8 +18,11 @@ import { normalize, normalizeLastTurn, type Msg } from "../src/normalize.ts";
 import { existsSync } from "node:fs";
 import { ask as askJudge } from "../src/client.ts";
 import { projectEvidence } from "../src/evidence.ts";
+import { CACHE_NAME, checkEnricher } from "../src/enrich-checks.ts";
+import { treeFingerprint } from "../src/fingerprint.ts";
 import { label, propose, read } from "../src/log.ts";
-import { findOrlyDir, loadSpecFile, resolveKey } from "../src/session.ts";
+import { join } from "node:path";
+import { findOrlyDir, loadConfig, loadSpecFile, projectRoot, resolveKey } from "../src/session.ts";
 import { validateSpecs, type Spec } from "../src/specs.ts";
 
 const fail = (msg: string, code = 1): never => {
@@ -38,8 +41,9 @@ if (command === "--help" || command === "-h" || command === "help") {
   console.log(
     [
       "orly judge         read {messages:[…]} or {turn:{…}} on stdin, write a verdict as JSON",
-      "orly ask Q… [file…] [-] [--json]   ask now, between turns",
       "                       exit 0 = the turn may end, 2 = it may not, 1 = the gate could not run",
+      "orly ask Q… [file…] [-] [--json]   ask now, between turns",
+      "orly watch         run the checks on every change, so a turn never waits for them",
       "orly specs [path]  check that a spec list is decidable from recorded evidence",
       "orly fit           propose cuts from the judgments logged in .orly/log.jsonl",
       "",
@@ -195,6 +199,48 @@ if (command === "specs") {
   const bad = rejected.size;
   console.log(bad ? `\n${bad} of ${file.specs.length} spec(s) need rewriting` : `\nall ${file.specs.length} specs are checkable`);
   process.exit(bad ? 2 : 0);
+}
+
+if (command === "watch") {
+  // Run the project's checks continuously, so a turn does not pay for them.
+  //
+  // Measured on this repository: nine checks cost 325 ms even run in parallel, against a
+  // judge round trip of roughly 450 ms. Computed while the agent is still working, they
+  // cost the turn nothing. Every result is stamped with the tree it was computed against,
+  // and the gate recomputes that stamp itself and ignores anything that does not match —
+  // so a watcher falling behind costs time, never correctness.
+  const root = projectRoot(process.cwd()) ?? process.cwd();
+  const checks = loadConfig(process.cwd()).checks ?? {};
+  if (!Object.keys(checks).length) fail("no checks in .orly/config.json — nothing to watch");
+  const every = num("ORLY_WATCH_MS", 2_000);
+  const cachePath = join(findOrlyDir(process.cwd())!, CACHE_NAME);
+  console.error(`orly watch · ${Object.keys(checks).length} checks · ${root}`);
+
+  let last: string | null = null;
+  for (;;) {
+    const fingerprint = treeFingerprint(root);
+    if (fingerprint && fingerprint !== last) {
+      last = fingerprint;
+      const t0 = performance.now();
+      const results = await Promise.all(
+        Object.entries(checks).map(async ([name, spec]: [string, any]) => {
+          const one = await checkEnricher({ [name]: spec }, root)({} as any, [
+            { id: name, instructions: "n/a", require: { path: `checks.${name}.exit`, op: "equals" } } as any,
+          ]);
+          return [name, { fingerprint, at: new Date().toISOString(), result: (one as any).checks?.[name] }] as const;
+        }),
+      );
+      // Only write results still describing the tree we started from. An edit landing
+      // mid-sweep would otherwise be stamped with a fingerprint it never had.
+      if (treeFingerprint(root) === fingerprint) {
+        await Bun.write(cachePath, JSON.stringify(Object.fromEntries(results), null, 2));
+        console.error(`  ${new Date().toTimeString().slice(0, 8)} ${results.length} checks in ${(performance.now() - t0).toFixed(0)} ms`);
+      } else {
+        last = null; // the tree moved under us; sweep again
+      }
+    }
+    await Bun.sleep(every);
+  }
 }
 
 if (command === "fit") {

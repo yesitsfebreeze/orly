@@ -65,6 +65,7 @@ CONFIGURATION
   ORLY_FLUSH_WAIT_MS    150    delay per poll
   ORLY_NO_LOG           set to keep a dry run out of the dataset
   ORLY_ASK_CUT          0.5    yes/no split used by `orly ask`
+  ORLY_WATCH_MS         2000   how often `orly watch` looks for a change
   ORLY_MAX_CONTEXT_CHARS 6000  cap per declared context source
   ORLY_MODEL            jev-latest
   ORLY_TIMEOUT_MS       12000

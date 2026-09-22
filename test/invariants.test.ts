@@ -10,6 +10,8 @@ import { expect, test } from "bun:test";
 import { readdirSync, readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CACHE_NAME, checkEnricher } from "../src/enrich-checks.ts";
+import { treeFingerprint } from "../src/fingerprint.ts";
 
 const ROOT = join(import.meta.dir, "..");
 
@@ -203,4 +205,74 @@ test("the core names no vendor, no host and no harness", () => {
   );
   const offenders = shipped.filter((f) => VENDOR.test(code(f)));
   expect(offenders.map((f) => f.slice(ROOT.length + 1))).toEqual([]);
+});
+
+test("a cached check is used only while the tree it was measured on is unchanged", async () => {
+  // A watcher takes the checks off the critical path, and a cache that could go stale
+  // unnoticed would let the gate report a passing suite for a tree where it fails — the
+  // exact lie it exists to catch. Being out of date must cost time, never correctness.
+  const root = mkdtempSync(join(tmpdir(), "orly-cache-"));
+  try {
+    mkdirSync(join(root, ".orly"));
+    Bun.spawnSync(["git", "init", "-q"], { cwd: root });
+    Bun.spawnSync(["git", "commit", "-q", "--allow-empty", "-m", "x"], {
+      cwd: root,
+      env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" },
+    });
+    const spec: any = [{ id: "slow", instructions: "n/a", require: { path: "checks.slow.exit", op: "equals", value: 0 } }];
+    // A command that reports 1, cached against the tree as it is now.
+    const fingerprint = treeFingerprint(root);
+    expect(fingerprint).not.toBeNull();
+    writeFileSync(
+      join(root, ".orly", CACHE_NAME),
+      JSON.stringify({ slow: { fingerprint, at: "now", result: { exit: 1, out: "from the cache" } } }),
+    );
+    const hit: any = await checkEnricher({ slow: { command: "exit 0" } }, root)({} as any, spec);
+    expect(hit.checks.slow.out).toBe("from the cache");
+
+    // Touch the tree: the stamp no longer matches, so the command runs and wins.
+    writeFileSync(join(root, "new.txt"), "changed\n");
+    const miss: any = await checkEnricher({ slow: { command: "exit 0" } }, root)({} as any, spec);
+    expect(miss.checks.slow.exit).toBe(0);
+    expect(miss.checks.slow.out).not.toBe("from the cache");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("no fingerprint means no cache, never a weak one", async () => {
+  // Outside a git repository there is nothing cheap that establishes "unchanged", so the
+  // answer is to run the command, not to guess.
+  const root = mkdtempSync(join(tmpdir(), "orly-nogit-"));
+  try {
+    mkdirSync(join(root, ".orly"));
+    expect(treeFingerprint(root)).toBeNull();
+    const spec: any = [{ id: "c", instructions: "n/a", require: { path: "checks.c.exit", op: "equals", value: 0 } }];
+    writeFileSync(join(root, ".orly", CACHE_NAME), JSON.stringify({ c: { fingerprint: null, result: { exit: 1, out: "stale" } } }));
+    const e: any = await checkEnricher({ c: { command: "exit 0" } }, root)({} as any, spec);
+    expect(e.checks.c.exit).toBe(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("orly writing its own state is not the tree changing", () => {
+  // The cache lives inside .orly, so counting it would mean every write invalidated the
+  // entry it had just stamped, and no cached result would ever be usable.
+  const root = mkdtempSync(join(tmpdir(), "orly-fp-"));
+  try {
+    mkdirSync(join(root, ".orly"));
+    Bun.spawnSync(["git", "init", "-q"], { cwd: root });
+    const before = treeFingerprint(root);
+    writeFileSync(join(root, ".orly", CACHE_NAME), '{"a":1}');
+    writeFileSync(join(root, ".orly", "log.jsonl"), "{}\n");
+    expect(treeFingerprint(root)).toBe(before!);
+
+    // A spec file is an input, not orly's own scratch: a check may read it, and this
+    // repository has one that does.
+    writeFileSync(join(root, ".orly", "specs.json"), '{"specs":[]}');
+    expect(treeFingerprint(root)).not.toBe(before!);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
