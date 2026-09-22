@@ -9,10 +9,10 @@ const FLUSH_TRIES = Number(process.env.PI_FLUSH_TRIES ?? 12);
 const FLUSH_WAIT_MS = Number(process.env.PI_FLUSH_WAIT_MS ?? 150);
 
 const OWL = `
-  ; ,
- {@.@}
- /) )  oRly?
-  '`;
+  , .
+ {@,@}
+ /) ) 
+  '"`;
 const BLOCKED = "[X]";
 const PASSED = "[O]";
 

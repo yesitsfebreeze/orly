@@ -1,0 +1,36 @@
+{
+  "version": 3,
+  "id": "mucwg68z-lch4gb",
+  "objective": "1) Restore .orly/config.json checks (tests, build, readme_lines, net_in_tests, todos, fixtures, git_dirty, docs, unfitted_specs) — they were stripped. 2) Commit all dirty files. 3) Verify fixtures labelled, docs resolve, specs fitted. 4) Add 2 new spec requirements: (A) threshold logging in verdict (from adapter change), (B) adapter parity / no stripped adapter. 5) Re-verify with `bun test` and check block clears.",
+  "status": "active",
+  "autoContinue": true,
+  "usage": {
+    "tokensUsed": 203007,
+    "activeSeconds": 83
+  },
+  "sisyphus": false,
+  "createdAt": "2026-09-22T16:39:36.611Z",
+  "updatedAt": "2026-09-22T16:41:08.121Z",
+  "activePath": ".pi/goals/active_goal_2026092218393661_mucwg68z-lch4gb.md",
+  "revision": 6,
+  "scheduler": {
+    "version": 1,
+    "owner": "01a0c9f6-9eb7-746f-a4bf-97401d33cb11",
+    "generation": "a8bf347c-3ce3-479f-9b2f-944d701b1955",
+    "used": 0,
+    "phase": "idle",
+    "repairUsed": false
+  }
+}
+
+# Goal Prompt
+
+1) Restore .orly/config.json checks (tests, build, readme_lines, net_in_tests, todos, fixtures, git_dirty, docs, unfitted_specs) — they were stripped. 2) Commit all dirty files. 3) Verify fixtures labelled, docs resolve, specs fitted. 4) Add 2 new spec requirements: (A) threshold logging in verdict (from adapter change), (B) adapter parity / no stripped adapter. 5) Re-verify with `bun test` and check block clears.
+
+## Progress
+
+- Status: running
+- Auto-continue: on
+- Sisyphus mode: no
+- Time spent: 1m23s
+- Tokens used: 203K (203,007) tokens
