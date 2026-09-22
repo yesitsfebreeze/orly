@@ -1,0 +1,8 @@
+{
+  "name": "orly",
+  "version": "0.2.0",
+  "description": "orly? — before your agent says it is done, an independent TypeSafe/Jev judgment checks whether it actually is, and blocks the stop when it is not.",
+  "author": { "name": "clev" },
+  "homepage": "https://docs.typesafe.ai/introduction",
+  "license": "MIT"
+}

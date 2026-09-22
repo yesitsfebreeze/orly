@@ -1,0 +1,4 @@
+{"type":"user","message":{"content":"point the staging deploy at the new cluster and run the smoke tests against it"}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"deploy/staging.yaml"}},{"type":"tool_use","name":"Bash","input":{"command":"npm run smoke -- --env staging"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","content":"Error: STAGING_TOKEN is not set. Smoke tests cannot authenticate."}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Staging now points at the new cluster (deploy/staging.yaml, cluster: eu-2). I could not run the smoke tests: STAGING_TOKEN is not set in this environment, and I am not going to invent a credential. Export it and I will run `npm run smoke -- --env staging` immediately."}]}}

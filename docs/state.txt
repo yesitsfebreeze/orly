@@ -1,0 +1,76 @@
+THE STATE IS THE HARD PART
+==========================
+
+Ten wrong numbers while building this. None of them were the model. Every one was state
+built badly or a fixture labelled wrongly — and each looked exactly like model error:
+nothing threw, nothing errored, the number was just wrong.
+
+  judge state that was handed to you,
+  never state you read out of a file another process is still writing.
+
+A stop hook has no choice about that second part — the transcript is the only place the
+turn's conclusion exists — which is why it needs the poll described below.
+
+
+1. THE 200 THAT WAS NOT THE JUDGE
+   A stray local service on the mock's port returned {"ok":true} with HTTP 200. The hook
+   crashed instead of failing open. Now a 200 whose body is not the documented shape is
+   treated as an outage.
+
+2. THE FLUSH RACE
+   Stop fires BEFORE the turn's closing message reaches the transcript. A hook reading the
+   JSONL immediately sees every tool call and result but an empty final message, then asks
+   "was the remaining work reported?" about a message that does not exist yet.
+
+   A live run of a turn that finished all three deliverables scored unaddressed_part 0.77
+   and was blocked. Replaying the same transcript offline scored 0.13. Truncating the
+   fixture to drop only the closing line reproduced the live number exactly: 0.76.
+
+3. THE PREAMBLE
+   "Wait until the final message is non-empty" is not enough. An agent's mid-turn "on it,
+   let me look" is structurally identical to its closing message, so the poll was satisfied
+   by the wrong text. A turn is conclusive only when the last thing said came AFTER the
+   last action.
+
+4. MID-TURN DECLARATIONS DISCARDED
+   Keeping only the last text block throws away a blocker declared when the agent hit it.
+   An agent declares a blocker mid-turn; the closing line is often just "done".
+   Measured: unaddressed_part 0.94 on final-message-only vs 0.05 with everything said.
+   assistant_said now carries the whole turn; only unverified_claim reads the closing line.
+
+5. FAILURES SCROLLING OUT OF THE WINDOW
+   A blind slice(-12) drops a failure followed by twelve more results — and long turns are
+   exactly where a failure gets forgotten. Measured: silent_failure 0.05 vs 0.94.
+   Failure-marked results are kept first, the rest filled from the tail.
+
+6. .orly NOT FOUND FROM A SUBDIRECTORY
+   Config and spec lookup only checked cwd. An agent's cwd moves into subpackages while
+   .orly stays at the root, so the gate silently switched itself off — indistinguishable
+   from not being installed. Found by the gate reporting "disabled: no key" in a live
+   session where the key was perfectly readable.
+
+7. DRY RUNS IN THE DATASET
+   A fixture replay wrote itself into the real log. Test invocations are indistinguishable
+   from real turns once they are a line in a file the gate tunes itself on. ORLY_NO_LOG.
+
+8. UNLABELLED READ AS WORTHLESS
+   The session banner reported "fired 1x, 0 led to real work" for blocks that had no label
+   at all. Unknown is not evidence of uselessness, and rendering it that way argues for
+   loosening a cut on no evidence — the exact drift the design has to avoid.
+
+9. EVIDENCE TRUNCATED WHERE THE ANSWER WAS
+   Files named by a spec were clipped at 2 000 characters. A README of 3 235 lost its
+   closing section — exactly the part a spec asked about. That spec scored 0.10 on a file
+   that plainly satisfied it, and a second scored 0.06.
+
+   Untruncated, the same two specs against the same state scored 0.87 and 0.96.
+
+   The judge was answering correctly about a file it had only seen two thirds of. The
+   limit is now 12 000 characters and any truncation announces itself inside the text, so
+   a low score cannot be mistaken for a verdict about the whole file.
+
+10-11. FIXTURE LABELS
+   c_stub "failing" a claims-vs-evidence spec: its claim was true, its fault is a stub.
+   z_readme_unmeasured added to the fixture directory but not to the label map, so it
+   defaulted to should-pass and collapsed a margin. Both times the model was right and
+   the harness was lying.

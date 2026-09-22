@@ -1,0 +1,55 @@
+THE AGENT EDITS ITS OWN EXAMINER
+================================
+
+The agent tuning the gate is the thing the gate judges. Left alone, the cheapest way to
+pass is to lower a cut or mark a spec optional. Do that a few times and you have a gate
+that never fires and a session that feels great.
+
+An instruction not to do this is exactly the kind of thing an agent talks itself past at
+2am with one spec left failing, and it only has to succeed once.
+
+So weakening is REFUSED by the harness, not discouraged in prose.
+
+
+WHAT COUNTS AS WEAKENING
+------------------------
+
+  - lowering a cut
+  - deleting a spec
+  - marking a spec optional
+  - dropping an explicit cut that was above the default (removing a line weakens a gate
+    just as effectively as editing one)
+  - rewording a spec while keeping its fitted cut — wording moves the probability more
+    than the threshold does, so a rewrite makes the old number meaningless rather than
+    merely stale. Refit, or drop the cut so it is marked unfitted.
+
+Tightening a cut and adding a spec are always allowed. An agent that makes its own
+examiner stricter is not the failure mode anyone needs protecting from.
+
+
+TWO ENFORCEMENT POINTS
+----------------------
+
+PreToolUse reconstructs the file the edit would produce, compares it with what is on
+disk, and denies the call if the difference makes the gate easier to pass.
+
+That only sees edit tools. A spec file rewritten through a shell command never reaches
+it — a real hole, found by testing the guard rather than trusting it. So Stop keeps a
+baseline: the strictest spec set ever seen. Every judgment compares against it, whatever
+route the edit took. A weakened gate is caught before the turn it was weakened for can
+end.
+
+The baseline only advances when nothing was weakened, so a weakening cannot be laundered
+into the baseline by following it with an unrelated edit.
+
+
+THE HONEST LIMIT
+----------------
+
+This stops the easy path, not every path. An agent that rewrites the spec's INSTRUCTIONS
+into something vacuous while raising the cut passes both checks. The wording-change rule
+catches the common case; it does not catch a determined one.
+
+The real answer is that specs are the user's to own. The gate makes weakening visible and
+awkward. It does not make it impossible, and nothing that runs inside the same session as
+the agent could.

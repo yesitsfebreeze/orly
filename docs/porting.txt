@@ -1,0 +1,62 @@
+ANY AGENTIC LOOP
+================
+
+orly is a library and a CLI. Claude Code is one adapter, in one file. Nothing in the core
+knows what harness it is running under.
+
+  src/gate.ts         questions, policy, transport
+  src/normalize.ts    message log -> Turn
+  src/specs.ts        specifiers: validation, question generation, scoring
+  src/enrich.ts       evidence the transcript does not contain
+  src/enrich-kern.ts  kern as one evidence source
+  src/session.ts      .orly discovery, layering, loop control
+  src/log.ts          the verdict log and cut proposals
+  src/guard.ts        refusing edits that weaken the gate
+  bin/orly.ts         the CLI
+  adapters/           one file per host
+
+
+THE CLI
+-------
+
+  echo '{"messages":[...]}' | orly judge
+
+  -> {"block":true,"reason":"...","line":"...","answers":{...},"usage":{...}}
+
+  exit 0  the turn may end
+  exit 2  it may not
+  exit 1  the gate could not run
+
+`messages` accepts either dialect: Anthropic content blocks (tool_use / tool_result) or
+OpenAI chat messages (tool_calls / role:"tool"). The last human message onward is judged.
+`{"turn":{...}}` takes a pre-normalised turn for logs that are neither shape.
+
+  orly specs [path]   check a spec list is decidable from recorded evidence
+  orly fit            propose cuts from the log
+
+
+THE TURN
+--------
+
+  user_request              what the human asked for
+  assistant_final_message   the closing message
+  assistant_said            everything the agent said this turn, in order
+  actions_taken             one line per tool call
+  command_results           tool output, failures preserved
+  conclusive                did the agent speak after its last action?
+  project                   evidence gathered independently (optional)
+
+conclusive is the one that matters for a host reading from a log another process writes.
+A turn whose conclusion has not been recorded yet cannot be judged: every "and was it
+reported?" question answers no, because the report does not exist yet.
+
+
+WRITING AN ADAPTER
+------------------
+
+Translate the host's turn-end event into a Turn, call judge(), translate the Verdict back.
+Everything else is defence, and it all points one way: every error path ends in LET THE
+AGENT STOP. No key, unreadable log, timeout, non-2xx, a 200 that is not the documented
+shape, a turn whose conclusion never arrived — all of them allow.
+
+A judge that is down must not become a wall.

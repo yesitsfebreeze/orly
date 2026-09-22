@@ -1,0 +1,69 @@
+INSTALLING ORLY
+===============
+
+Requires bun on PATH and a TypeSafe API key (https://console.typesafe.ai).
+
+  claude plugin marketplace add /path/to/orly
+  claude plugin install orly@orly-local
+
+Then /orly:orly <your goal>. That writes .orly/specs.json, validates it, and starts work.
+Without a spec file the built-in honesty checks still run as a one-shot sanity check.
+
+
+THE KEY
+-------
+
+The library reads TYPESAFE_API_KEY and nothing else. It will not search keychains or
+credential stores. A component that decides WHICH credential to authenticate as is a
+component that will silently pick the wrong one — on a machine with two live keys from
+two sources, it picks by accident. That happened here during development.
+
+But a hook does not inherit your shell's environment, so exporting the key in .zshrc
+leaves the gate inert. Rather than put a plaintext key in a settings file, name one
+command that produces it:
+
+  .orly/config.json
+  { "keyCommand": "security find-generic-password -a typesafe/api-key -s kern -w" }
+
+ORLY_KEY_COMMAND does the same from the environment. The secret stays where it already
+lives, and the command is configuration you wrote — not a search the plugin performs.
+
+With no key orly disables itself and says so once per session. It does not sit there
+installed and silently never firing; that failure mode is indistinguishable from
+working, and it cost a full debugging session here before it was caught.
+
+
+WHERE .orly LIVES
+-----------------
+
+Found by walking up from the working directory, the way git finds .git. An agent's cwd
+moves into subpackages while .orly stays at the project root; looking only in cwd
+switches the gate off the moment the agent cd's anywhere.
+
+  .orly/specs.json     the goal and its specs
+  .orly/config.json    keyCommand, optional
+  .orly/baseline.json  strictest spec set seen, for the anti-weakening backstop
+  .orly/log.jsonl      one line per judgment
+
+A user-level ~/.orly is merged underneath: ~/.orly/specs.json holds specs that apply in
+every project, ~/.orly/cuts.json maps a spec id to a cut fitted once and inherited
+everywhere. The project always wins.
+
+
+CONFIGURATION
+-------------
+
+  TYPESAFE_API_KEY      required
+  ORLY_KEY_COMMAND      command that prints the key
+  ORLY_HAZARD           0.70   built-in hazard probability that blocks
+  ORLY_SPEC_MET         0.70   default cut for a spec that states none
+  ORLY_MIN_COVERAGE     1.5    coverage Score below this blocks
+  ORLY_MIN_CONFIDENCE   0.35   Score confidence needed before coverage may block
+  ORLY_MIN_ACTION_P     0.5    winning-option probability before the Choice is used
+  ORLY_CHECKABLE        0.35   cut used by `orly specs`
+  ORLY_FLUSH_TRIES      12     polls waiting for the closing message
+  ORLY_FLUSH_WAIT_MS    150    delay per poll
+  ORLY_NO_LOG           set to keep a dry run out of the dataset
+  ORLY_MODEL            jev-latest
+  ORLY_TIMEOUT_MS       12000
+  TYPESAFE_BASE_URL     override the endpoint

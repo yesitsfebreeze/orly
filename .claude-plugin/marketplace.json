@@ -1,0 +1,13 @@
+{
+  "name": "orly-local",
+  "owner": { "name": "clev" },
+  "plugins": [
+    {
+      "name": "orly",
+      "source": "./",
+      "description": "orly? — a goal-spec completion gate judged by TypeSafe's Jev.",
+      "category": "Productivity",
+      "interface": { "displayName": "orly?" }
+    }
+  ]
+}

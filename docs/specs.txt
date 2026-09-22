@@ -1,0 +1,95 @@
+WRITING SPECS THAT WORK
+=======================
+
+A spec becomes one yes/no question about the RECORDED EVIDENCE of a turn: which commands
+ran, what they printed, what the agent said. Nothing else is visible to the judge.
+
+  {
+    "goal": "parseDuration is implemented, tested, and documented",
+    "maxRounds": 6,
+    "specs": [
+      { "id": "tests_green",
+        "cut": 0.52,
+        "instructions": "Do `command_results` show a test run that reported zero
+                         failures, executed after the last edit in `actions_taken`?" }
+    ]
+  }
+
+Fields: id (slug), instructions (the question), criteria {true,false} (optional),
+cut (fitted threshold), optional (may be left unmet if explained), evidence (file paths).
+
+
+FOUR RULES
+----------
+
+1. WRITE WHAT WOULD BE OBSERVABLE.
+   "Do command_results show a test run reporting zero failures?" — not "are the tests
+   good". A spec that cannot be decided from the record returns a confident number that
+   means nothing, and you loop against noise.
+
+2. NEVER MAKE THE JUDGE SIMULATE EXECUTION.
+   Measured: handed the exact source of a function and asked what it does at runtime, Jev
+   answered confidently and wrongly (0.75). Lookup in supplied text comes back correct
+   and near 1.00. Anchor to a command's OUTPUT, never to what the code would do.
+
+3. NO JUDGEMENTS OF TASTE.
+   clean, elegant, readable, idiomatic, robust, proper — these are rejected by a word
+   filter before they ever run.
+
+4. SAY SO WHEN A SPEC ONLY SOMETIMES APPLIES.
+   Use an explicit branch, not an either/or. Measured, same spec, same fixtures:
+
+     either/or   "Either no edit under orly/, or tests passed after it."
+                 margin 0.33
+     branching   "First check whether actions_taken contains an edit under orly/.
+                  If there is NO such edit, answer yes — regardless of any other
+                  command or failure visible in the turn. If there IS, answer yes
+                  only when command_results show 0 failures after it."
+                 margin 0.75
+
+   The either/or was being overridden by a failing command elsewhere in the turn. The
+   explicit branch is not stylistic; it moved one fixture from 0.39 to 0.89.
+
+
+EVIDENCE: DON'T LET THE JUDGED SUPPLY THE PROOF
+-----------------------------------------------
+
+A spec about file state is otherwise only answerable from what the agent chose to print.
+An agent that edits nothing, prints nothing and says "done" is unfalsifiable — not
+because the judge is wrong, but because the evidence is the agent's own narration.
+
+  { "id": "no_stub",
+    "instructions": "Look at the `duration.js` entry under `project.files`, which is the
+                     file's real current content. Is the stub gone?",
+    "evidence": ["duration.js"] }
+
+Those files are read at judging time and attached under `project`, labelled as not
+agent-produced. One transcript, held constant, changing only what is on disk:
+
+  stub still present     spec 0.04   placeholder_left 0.93   coverage 0.92   BLOCK
+  actually implemented   spec met    placeholder_left 0.03   coverage 2.19   PASS
+
+Identical messages, opposite verdict, decided entirely by state the agent did not author.
+
+The second evidence source is the project's own knowledge service (kern): memory.ask on
+the goal, claims only — never another model's confidence vector, which would invite the
+judge to reason about that instead of about the work. Both enrichers are wrapped so that
+one being absent or down costs nothing.
+
+
+CHECK BEFORE YOU RELY ON IT
+---------------------------
+
+  orly specs [path]
+
+Two stages: a word filter for taste, then Jev itself asking whether each spec is
+decidable from recorded evidence. On a deliberately mixed list:
+
+  x word   code_is_clean: "clean" is a judgement about taste
+  v 0.74   test_file_exists: Do actions_taken show a test file being created...
+  v 0.69   readme_usage: Do actions_taken show README.md being edited...
+  v 0.57   tests_green: Do command_results show a test run reporting zero failures...
+  x 0.06   handles_all_edges: Does parseDuration handle all edge cases correctly...
+
+handles_all_edges is the one that matters. An LLM asked for specs emits it happily, and
+it forces the judge to simulate execution — the one thing it is confidently wrong at.

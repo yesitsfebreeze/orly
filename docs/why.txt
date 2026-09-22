@@ -1,0 +1,61 @@
+WHY THE END OF A TURN
+=====================
+
+Of all the points you can intercept an agent, the end of a turn is the only one that can
+make it do MORE work. Intercepting a tool call can block an action. Intercepting a prompt
+can add context. The turn boundary is where a judgment becomes "keep going".
+
+It is also the decision an agent is worst at making about itself. The model that wrote
+the code is the model that decides the code is done, so that decision inherits the work's
+blind spots: tests declared green that were never run, a TODO standing in for the
+feature, the third item in a three-item request quietly dropped.
+
+A second opinion there only works if it is cheap and fast enough to run on EVERY turn.
+That rules out another LLM call — a full model costs ~350x more and takes seconds. A
+System One model returns typed probabilities instead of prose, in well under a second,
+and code owns the policy that turns those numbers into a decision.
+
+
+TWO LAYERS
+----------
+
+Specifiers say what THIS job requires. The built-in questions say whether the agent is
+telling the truth about it. A spec list on its own is gameable by an agent that simply
+asserts satisfaction, so both run together, in one request:
+
+  unverified_claim   Noul    "tests pass" with nothing in the transcript that ran them
+  placeholder_left   Noul    a stub or TODO where an implementation was asked for
+  unaddressed_part   Noul    a deliverable neither done nor declared skipped
+  silent_failure     Noul    a command failed and the turn ends anyway
+  next_action        Choice  which single step would actually move the turn forward
+  coverage           Score   how completely the work satisfies the request (0-3)
+  spec:<id>          Noul    one per goal spec
+
+TypeSafe measured 13 batched questions at 12.2x cheaper and 10x faster than 13 separate
+calls, with the same answers. Batching is not an optimisation here, it is the design.
+
+
+WHAT THE CHOICE IS FOR
+----------------------
+
+next_action does not decide WHETHER to block. It decides what the block ASKS FOR, so the
+agent gets "run the check that would actually demonstrate what you just claimed" instead
+of a generic nag.
+
+It is gated on the winning option's probability, never on `confidence`. Confidence
+measures how concentrated a distribution is, so a genuine 0.52/0.48 tie reports
+near-zero confidence and reads as "wrong" when it means "these two are equally good".
+
+
+THE LOOP ENDS
+-------------
+
+Three exits, all in code, none in the model's hands:
+
+  - every spec met
+  - the agent states plainly what it could not do and why
+  - the round cap, or two rounds with no newly-met spec
+
+Progress is measured against the best round so far, not the previous one, so an agent
+thrashing between two partial states counts as stalled rather than as progressing.
+Without specs, the built-in layer blocks at most once per stop chain.

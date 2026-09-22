@@ -1,0 +1,4 @@
+{"type":"user","message":{"content":"explain how the retry backoff in src/http.ts works, don't change anything"}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/http.ts"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","content":"export async function request(url, opts) {\n  for (let i = 0; i < 3; i++) {\n    try { return await fetch(url, opts); }\n    catch (e) { await sleep(200 * 2 ** i); }\n  }\n  throw new Error('exhausted');\n}"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Three attempts, exponential backoff with a 200ms base: it sleeps 200ms after the first failure, 400ms after the second, then gives up and throws 'exhausted'. There is no jitter, so concurrent callers that fail together will retry together. Nothing was changed."}]}}
