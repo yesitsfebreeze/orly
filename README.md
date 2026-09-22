@@ -52,7 +52,7 @@ you couldn't do, or the round cap runs out.
 
 ## What it costs
 
-One request per turn. Measured on a real turn: **under 400 ms, 2,610 input tokens —
+One request per turn. Measured on a real turn, 5 runs: **312–536 ms, 2,610 input tokens —
 about $1.10 per 10,000 turns.**
 
 ## Between turns
