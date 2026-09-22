@@ -1,5 +1,5 @@
 /**
- * The invariants in docs/state.txt that no single module owns.
+ * The invariants in docs/notes/state.txt that no single module owns.
  *
  * Each of these cost a wrong number, a silent bill or a session-long wall while this was
  * being built, and each was fixed in a place where nothing else would notice it breaking

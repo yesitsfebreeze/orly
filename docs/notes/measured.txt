@@ -28,3 +28,40 @@ separation per hazard (max where it should stay quiet  ..  min where it should f
 
 block/pass  12/12
 next_action 5/5 (on blocked turns, where it is used)
+
+
+WHERE THE TIME GOES
+-------------------
+
+Measured, per judgment, on a real turn:
+
+  normalize a transcript      0.0167 ms
+  compose the verdict         0.0016 ms
+  serialise the request       0.0077 ms
+  process start              21.6    ms
+  parse and load the modules  9.6-16.5 ms
+  the judge round trip      451-511  ms
+
+The round trip is the whole budget, and it does not scale the way you would hope: 1 493
+tokens took 343 ms, 2 610 took 447 ms, 11 630 took 551 ms. Roughly a 280 ms floor plus
+25 ms per thousand tokens, so sending a smaller state saves tens of milliseconds, not
+hundreds. There is no trimming your way below the floor.
+
+The local cost that IS worth removing is the project's own checks. Nine of them on this
+repository cost 1 069 ms sequentially and 325 ms in parallel. Run by `orly watch` while
+the agent is still working, they cost the turn nothing:
+
+  cold, nothing cached        520 ms
+  warm, the watcher ran them   13 ms
+  after an edit                524 ms
+
+Every cached result carries the fingerprint of the tree it was measured on, and the gate
+recomputes that itself. A watcher that has fallen behind is ignored. Being out of date
+costs time, never correctness — a cache that could go stale unnoticed would let the gate
+report a passing suite for a tree where it fails, which is the exact lie it exists to
+catch.
+
+The fingerprint comes from git: HEAD, plus the size and mtime of every modified and
+untracked file. No git, no fingerprint, no caching — the answer is to run the command,
+never to guess. Note that this needs .orly at the repository root; .orly ABOVE the
+repository disables it.

@@ -14,9 +14,7 @@ THE KEY
 -------
 
 The library reads TYPESAFE_API_KEY and nothing else. It will not search keychains or
-credential stores. A component that decides WHICH credential to authenticate as is a
-component that will silently pick the wrong one — on a machine with two live keys from
-two sources, it picks by accident. That happened here during development.
+credential stores.
 
 But a hook does not inherit your shell's environment, so exporting the key in .zshrc
 leaves the gate inert. Rather than put a plaintext key in a settings file, name one
@@ -28,17 +26,13 @@ command that produces it:
 ORLY_KEY_COMMAND does the same from the environment. The secret stays where it already
 lives, and the command is configuration you wrote.
 
-With no key orly disables itself and says so once per session. It does not sit there
-installed and silently never firing; that failure mode is indistinguishable from
-working, and it cost a full debugging session here before it was caught.
+With no key orly disables itself and says so once per session.
 
 
 WHERE .orly LIVES
 -----------------
 
-Found by walking up from the working directory, the way git finds .git. An agent's cwd
-moves into subpackages while .orly stays at the project root; looking only in cwd
-switches the gate off the moment the agent cd's anywhere.
+Found by walking up from the working directory, the way git finds .git.
 
   .orly/specs.json     the goal and its specs
   .orly/config.json    keyCommand, optional

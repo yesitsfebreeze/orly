@@ -57,14 +57,12 @@ Same judge. Batch many questions at once. Exit 2 if any answer is no.
 
 12 fixtures against the live judge: **12/12** right on block-vs-pass, and **5/5** right
 next step on blocked turns. Reproduce: `bun test/calibrate.ts`.
-Cost and latency: [measured](docs/measured.txt).
+Cost and latency: [measured](docs/notes/measured.txt).
 
 ## More
 
-[`docs/`](docs/), indexed for machines in [`llms.txt`](llms.txt):
-[why the turn boundary](docs/why.txt) · [install](docs/install.txt) ·
-[writing specs](docs/specs.txt) · [calibration](docs/calibration.txt) ·
-[measured](docs/measured.txt) · [the state problem](docs/state.txt) ·
-[the guard](docs/guard.txt) · [learning](docs/learning.txt) · [porting](docs/porting.txt)
+[install](docs/install.txt) · [writing specs](docs/specs.txt) ·
+[the guard](docs/guard.txt) · [porting](docs/porting.txt) · for machines: [`llms.txt`](llms.txt).
+How it was built and measured: [`docs/notes/`](docs/notes/).
 
 MIT.

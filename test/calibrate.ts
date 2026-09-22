@@ -142,7 +142,7 @@ const wrongAction = blocking.filter((r) => WANT_ACTION[r.name] !== r.action);
 say(`\nblock/pass  ${rows.length - wrong.length}/${rows.length}`);
 say(`next_action ${blocking.length - wrongAction.length}/${blocking.length} (on blocked turns, where it is used)`);
 if (WRITE) {
-  const path = join(import.meta.dir, "..", "docs", "measured.txt");
+  const path = join(import.meta.dir, "..", "docs", "notes", "measured.txt");
   await Bun.write(
     path,
     [

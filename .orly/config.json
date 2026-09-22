@@ -28,7 +28,7 @@
       "countPattern": "\\n"
     },
     "missing_docs": {
-      "command": "grep -o 'docs/[a-z-]*\\.txt' llms.txt | sort -u | while read d; do [ -f \"$d\" ] || echo \"MISSING $d\"; done",
+      "command": "grep -oh 'docs/[a-z/-]*\\.txt' llms.txt README.md | sort -u | while read d; do [ -f \"$d\" ] || echo \"MISSING $d\"; done",
       "countPattern": "MISSING"
     },
     "unfitted_specs": {
