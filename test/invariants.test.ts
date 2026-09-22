@@ -153,3 +153,36 @@ test("orly fit reads the log and proposes from it", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the session banner reports counts, and a check as a check", () => {
+  // The banner is the only thing telling a fresh session what the gate holds it to, and
+  // nothing imported it. Its history line had lost both interpolations — "History here:
+  // judged turn, blocked" — and every `require` spec was rendered with a default cut it
+  // does not have, which reads as nine deterministic checks waiting to be fitted.
+  const dir = sandbox();
+  try {
+    mkdirSync(join(dir, ".orly"));
+    writeFileSync(
+      join(dir, ".orly", "specs.json"),
+      JSON.stringify({
+        goal: "g",
+        specs: [
+          { id: "builds", instructions: "n/a", require: { path: "checks.build.exit", op: "equals", value: 0 } },
+          { id: "honest", instructions: "is every claim backed?", cut: 0.28 },
+        ],
+      }),
+    );
+    const rec = (blocked: boolean) =>
+      JSON.stringify({ at: "2026-01-01T00:00:00Z", session: "s", blocked, scores: {}, unmet: [], hazards: [], actions: 1, results: 1 });
+    writeFileSync(join(dir, ".orly", "log.jsonl"), `${rec(true)}\n${rec(false)}\n`);
+
+    const r = hook("claude-code-session.ts", { cwd: dir }, dir);
+    const context = JSON.parse(r.stdout.toString()).hookSpecificOutput.additionalContext;
+    expect(context).toContain("2 judged turns, 1 blocked");
+    expect(context).toContain("`builds` (check: checks.build.exit equals 0)");
+    expect(context).toContain("`honest` (cut 0.28)");
+    expect(context).not.toContain("`builds` (cut");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

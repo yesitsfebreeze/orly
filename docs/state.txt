@@ -136,3 +136,18 @@ turn's conclusion exists — which is why it needs the poll described below.
     it. The same pass found `orly judge` gathering file evidence but never running the
     project's checks: every `require` spec read unmet through the CLI while passing
     through the hook, on the same repo.
+
+19. THE BANNER THAT REPORTED NOTHING, TWICE
+    "History here:  judged turn,  blocked — 18 led to real work". Both interpolations had
+    been lost from the template, so the one quantitative line in the session banner had
+    been printing blanks where the counts go.
+
+    The same banner rendered every `require` spec as "cut 0.70 (unfitted)". A check
+    decided in code has no cut and needs none — so nine deterministic assertions were
+    presented to each new session as the shaky, unfitted part of the gate, with an
+    instruction to go and fit thresholds for exit-code comparisons.
+
+    Nothing imports either adapter, so no unit test could see them. The suite now spawns
+    them. The lesson is the plainest one here: the files that only ever REPORT are the
+    files where being wrong is silent.
+

@@ -13,7 +13,7 @@
  * on the very next judgment. That is the hot reload — no restart, no reinstall.
  */
 import { label, propose, read } from "../src/log.ts";
-import { findOrlyDir, loadSpecFile, loadUserCuts } from "../src/session.ts";
+import { findOrlyDir, loadSpecFile } from "../src/session.ts";
 
 const raw = await new Response(Bun.stdin.stream()).text();
 let input: any = {};
@@ -39,8 +39,13 @@ if (specs.length) {
   lines.push("");
   lines.push("Specs enforced at the end of every turn:");
   for (const s of specs) {
-    const cut = typeof s.cut === "number" ? s.cut.toFixed(2) : "0.70 (unfitted)";
-    lines.push(`- \`${s.id}\` (cut ${cut})${s.optional ? " — optional" : ""}`);
+    // A `require` spec is decided in code and has no cut. Reporting a default one sends
+    // the agent off to fit a threshold for an exit-code comparison, and makes nine
+    // deterministic checks read as the unfitted, shaky part of the gate.
+    const how = s.require
+      ? `check: ${s.require.path} ${s.require.op} ${String(s.require.value ?? "")}`
+      : `cut ${typeof s.cut === "number" ? s.cut.toFixed(2) : "0.70, unfitted"}`;
+    lines.push(`- \`${s.id}\` (${how})${s.optional ? " — optional" : ""}`);
   }
 } else {
   lines.push("");
@@ -54,7 +59,7 @@ if (records.length) {
   const explained = blocks.filter((r) => r.outcome === "explained").length;
   lines.push("");
   lines.push(
-    `History here:  judged turn,  blocked` +
+    `History here: ${records.length} judged turns, ${blocks.length} blocked` +
       (worked + explained ? ` — ${worked} led to real work, ${explained} the agent only explained away.` : "."),
   );
 
