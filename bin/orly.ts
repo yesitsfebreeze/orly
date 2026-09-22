@@ -15,6 +15,7 @@
  */
 import { DEFAULTS, judge, type Turn } from "../src/gate.ts";
 import { normalize, normalizeLastTurn, type Msg } from "../src/normalize.ts";
+import { existsSync } from "node:fs";
 import { combine, fileEnricher } from "../src/enrich.ts";
 import { kernMemoryEnricher } from "../src/enrich-kern.ts";
 import { label, propose, read } from "../src/log.ts";
@@ -42,6 +43,74 @@ if (command === "--help" || command === "-h" || command === "help") {
   );
   process.exit(0);
 }
+if (command === "ask") {
+  // Ask right now instead of waiting for the end of a turn.
+  //
+  // The gate answers once, at the boundary, about everything. This answers immediately,
+  // about one thing: build a small state, fan out as many yes/no questions as you like,
+  // get calibrated numbers back in well under a second. Batching is close to free — the
+  // state dominates the cost — so asking ten things costs barely more than asking one.
+  //
+  //   orly ask "is the stub gone?" src/thing.ts
+  //   echo "$DIFF" | orly ask "does this change touch auth?" "is a test included?"
+  const key3 = process.env.TYPESAFE_API_KEY;
+  if (!key3) fail("TYPESAFE_API_KEY is not set");
+
+  const rest = process.argv.slice(3);
+  const questions: string[] = [];
+  const paths: string[] = [];
+  // Reading stdin is opt-in via "-". Guessing from isTTY hangs forever wherever stdin is
+  // neither a terminal nor a closed pipe, which is most places a tool actually runs.
+  const wantsStdin = rest.includes("-");
+  for (const a of rest) {
+    if (a === "-") continue;
+    (existsSync(a) && !a.includes("?") ? paths : questions).push(a);
+  }
+  if (!questions.length) fail('nothing to ask — try: orly ask "is the stub gone?" src/thing.ts');
+
+  const files: Record<string, string> = {};
+  for (const path of paths.slice(0, 8)) {
+    try {
+      files[path] = (await Bun.file(path).text()).slice(0, 12_000);
+    } catch {
+      files[path] = "[file does not exist]";
+    }
+  }
+  const piped = wantsStdin ? (await new Response(Bun.stdin.stream()).text()).slice(0, 12_000) : "";
+
+  const state: Record<string, unknown> = {};
+  if (Object.keys(files).length) state.files = files;
+  if (piped.trim()) state.input = piped;
+  if (!Object.keys(state).length) fail('no state — name files to read, or pipe text in with "-"');
+
+  const qs: Record<string, any> = {};
+  questions.forEach((q, i) => {
+    qs[`q${i}`] = { type: "noul", instructions: `Judging only from the state provided: ${q}` };
+  });
+
+  const t0 = performance.now();
+  const res3 = await fetch(process.env.TYPESAFE_BASE_URL ?? "https://api.typesafe.ai/v1/systemone", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key3}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ state, model: process.env.ORLY_MODEL ?? "jev-latest", questions: qs }),
+  });
+  if (!res3.ok) fail(`${res3.status} ${(await res3.text()).slice(0, 200)}`);
+  const out3 = await res3.json();
+  const ms = performance.now() - t0;
+
+  let anyNo = false;
+  questions.forEach((q, i) => {
+    const p = out3.answers?.[`q${i}`]?.noul ?? NaN;
+    // 0.5 is a reporting split only — never a decision threshold. Anything you act on
+    // needs a cut fitted for that question's wording.
+    if (!(p >= 0.5)) anyNo = true;
+    console.log(`${p >= 0.5 ? "yes" : "no "} ${p.toFixed(2)}  ${q}`);
+  });
+  const tok = out3.usage?.input_tokens ?? 0;
+  console.error(`${ms.toFixed(0)} ms · ${tok} tok · $${((tok * 0.042) / 1e6).toFixed(6)}`);
+  process.exit(anyNo ? 2 : 0);
+}
+
 if (command === "specs") {
   // Two-stage check on a generated spec list. Stage one is a word filter for judgements
   // about taste; stage two asks Jev itself whether each spec is decidable from recorded

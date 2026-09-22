@@ -40,6 +40,10 @@ allowed.
 10,000 turns**, against $237 through a frontier model. 357× cheaper is why this can run on
 *every* turn instead of being something you remember to invoke.
 
+**Ask it mid-work, not just at the end.** `orly ask "is the stub gone?" src/thing.ts`
+answers in under a second. Same judge, any question, as many at once as you like — you
+don't have to finish a turn to find out.
+
 **It gets better as you use it.** Every judgment is logged. Specs and code hot-reload on
 the next turn, no restart. A cut fitted once in one repo is inherited by all of them.
 
