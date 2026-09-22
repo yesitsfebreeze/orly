@@ -11,3 +11,6 @@
 {"type":"completion_requested","goalId":"mucyhkem-scfrd8","at":"2026-09-22T17:47:45.653Z"}
 {"type":"audit_started","goalId":"mucyhkem-scfrd8","at":"2026-09-22T17:47:45.653Z"}
 {"type":"audit_result","goalId":"mucyhkem-scfrd8","verdict":"disapproved","report":"I'll verify the artifacts quickly.\n\nThe open `.pi/goals/` file (`mucyhkem-scfrd8`) is unrefined, not focused with `/goal-focus`/`create_goal`; previous audit rejected for un-focused goal + unverified `readme_opens_with_owl` (p=0.29 pending). Constraint \"confirm layer after loop verified\" not shown. <disapproved/>\n\n<disapproved/> — Goal 2 (focus) unfulfilled; loop/guidance not confirmed as \"verified\" before single improvement; `readme_opens_with_owl` p=0.29 still needs verification per claim; layer confirmation missing. Previous rejection reasons persist.","at":"2026-09-22T17:48:07.689Z"}
+{"type":"completion_requested","goalId":"mucyhkem-scfrd8","at":"2026-09-22T17:48:48.737Z"}
+{"type":"audit_started","goalId":"mucyhkem-scfrd8","at":"2026-09-22T17:48:48.737Z"}
+{"type":"audit_result","goalId":"mucyhkem-scfrd8","verdict":"disapproved","report":"No focused goal (still unrefined `.pi/goals/` file); no `/goal-focus`; adapter dirty-state unverified; improvement layer unconfirmed; goal 2 missing. <disapproved/>","at":"2026-09-22T17:48:53.109Z"}
