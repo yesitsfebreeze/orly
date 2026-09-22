@@ -4,7 +4,7 @@
  /) )   
   '"  
 
-I have done what you asked, here is... orly?
+I have done what you asked, here is... oRly
 ```
 
 # orly
@@ -46,7 +46,7 @@ Anthropic and OpenAI message shapes both work. [Porting](docs/porting.txt) is on
  /) )   
   '"  
 
-I have done what you asked, here is... orly?
+I have done what you asked, here is... oRly
 ```
 
 ## Why it holds
