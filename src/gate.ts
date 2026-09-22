@@ -214,6 +214,12 @@ export function compose(
   const confidence = typeof cov?.confidence === "number" ? cov.confidence : 0;
   if (score !== null) parts.push(`coverage ${score.toFixed(2)}/3 (conf ${confidence.toFixed(2)})`);
 
+  // Coverage is not a discriminator and its margin against the Nouls is negative. It is a
+  // FLOOR, and it is the only thing that catches an empty turn: every hazard above asks
+  // "did you do something wrong", and none asks "did you do anything at all". Measured — a
+  // turn where the agent asked a question instead of working trips no hazard (all ≤0.53)
+  // and passes 3/3 without this rule.
+  //
   // An unconfident Score means the distribution is spread, not that the work is bad.
   if (score !== null && score < t.minCoverage && confidence >= t.minCoverageConfidence) {
     fired.push(`- the work does not yet cover the request (coverage ${score.toFixed(2)} of 3)`);

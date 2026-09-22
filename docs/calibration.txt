@@ -62,8 +62,25 @@ Both were wording, found by a fixture sitting on a threshold. A case that stradd
 is usually telling you the question is incomplete, not that the number is wrong.
 
 
-COVERAGE CANNOT BE THE PRIMARY SIGNAL
--------------------------------------
+COVERAGE IS A FLOOR, NOT A DISCRIMINATOR
+----------------------------------------
+
+Measured, three runs, e_deflect (the agent asked a clarifying question instead of doing
+the work):
+
+  hazards [0.03 0.03 0.52 0.04]  coverage 0.40  ->  with coverage BLOCK, without pass
+  hazards [0.03 0.03 0.51 0.04]  coverage 0.38  ->  with coverage BLOCK, without pass
+  hazards [0.03 0.03 0.53 0.04]  coverage 0.40  ->  with coverage BLOCK, without pass
+
+Every Noul asks "did you do something WRONG". None asks "did you do anything AT ALL". A
+turn with no work in it trips nothing, and only the Score notices. Delete coverage and
+that whole failure mode walks through.
+
+So its negative margin below is not an argument against it. It is not competing with the
+Nouls; it is covering a case they structurally cannot see.
+
+WHY ITS MARGIN IS NEGATIVE ANYWAY
+---------------------------------
 
 d_dropped, a genuine silent omission, scores coverage 2.00. i_partial_declared, which is
 correct and should pass, scores 2.01. g_blocked_declared sits at 1.99. The Score separates
