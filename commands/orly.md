@@ -88,3 +88,20 @@ turn by explaining why it was skipped.
 
 The loop ends when every spec is met, when you state plainly what you could not do and
 why, or when the round cap runs out — whichever comes first.
+
+## When something went wrong
+
+Every mistake becomes a regression case, so the same mistake is caught next time. When the
+user says a turn went wrong — a block that should not have fired, or a pass that let a lie
+through — or you notice it yourself:
+
+1. `bun ${CLAUDE_PLUGIN_ROOT}/bin/orly.ts turns` to find the turn (`last` is the most recent).
+2. `bun ${CLAUDE_PLUGIN_ROOT}/bin/orly.ts case <turn> block|pass "<what went wrong>" --spec <id>`
+   — `block` if it should have been stopped, `pass` if it was blocked wrongly. `--spec` names
+   the spec that must catch it; leave it off for a wrong block.
+3. For a missed mistake, add that spec to `.orly/specs.json`.
+4. `bun ${CLAUDE_PLUGIN_ROOT}/bin/orly.ts replay` until every case is right. A fix that
+   breaks an earlier case is not a fix.
+
+Cases live in `.orly/cases/` and are committed. Each holds the turn verbatim: read it for
+secrets first.

@@ -18,6 +18,7 @@ import { DEFAULTS, judge, type Turn } from "../src/gate.ts";
 import { normalizeLastTurn } from "../src/normalize.ts";
 import { projectEvidence } from "../src/evidence.ts";
 import { append as logVerdict } from "../src/log.ts";
+import { saveTurn } from "../src/cases.ts";
 import {
   advance,
   DEFAULT_MAX_ROUNDS,
@@ -147,6 +148,10 @@ if (!turn!.actions_taken.length && !turn!.assistant_said) allow();
 // A turn whose conclusion never arrived is a turn we have no business judging.
 if (!turn!.conclusive) allow("closing message never reached the transcript");
 
+// The evidence the judge saw, kept with the turn so a replay judges exactly this state.
+const gather = projectEvidence({ cwd: input.cwd });
+let seen: Record<string, unknown> | undefined;
+
 let result;
 try {
   result = await judge(turn!, {
@@ -155,7 +160,7 @@ try {
     // Independent evidence: the files the specs point at, read now rather than taken
     // from what the agent printed, plus whatever the project declared. Wired in the
     // library, so every host gathers the same thing.
-    enrich: projectEvidence({ cwd: input.cwd }),
+    enrich: async (t, s) => (seen = await gather(t, s)),
     endpoint: process.env.TYPESAFE_BASE_URL,
     model: process.env.ORLY_MODEL,
     timeoutMs: num("ORLY_TIMEOUT_MS", 12_000),
@@ -186,13 +191,22 @@ if (orlyDir) {
   // The results the verdict used, evidence and all. Re-scoring here would drop it and
   // log every deterministic check as unmet.
   const scored = verdict.results;
+  const unmetIds = scored.filter((r) => !r.met && !r.spec.optional).map((r) => `spec:${r.spec.id}`);
+  saveTurn(orlyDir, {
+    at: new Date().toISOString(),
+    session: String(input.session_id ?? "unknown"),
+    turn: turn!,
+    evidence: seen,
+    blocked: verdict.block,
+    unmet: unmetIds,
+  });
   logVerdict(orlyDir, {
     at: new Date().toISOString(),
     session: String(input.session_id ?? "unknown"),
     goal: specFile?.goal,
     blocked: verdict.block,
     scores,
-    unmet: scored.filter((r) => !r.met && !r.spec.optional).map((r) => `spec:${r.spec.id}`),
+    unmet: unmetIds,
     hazards: ["unverified_claim", "placeholder_left", "unaddressed_part", "silent_failure"].filter(
       (h) => (scores[h] ?? 0) >= num("ORLY_HAZARD", DEFAULTS.hazard),
     ),

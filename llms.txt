@@ -7,7 +7,7 @@
 ## Use
 
 - [Install](docs/install.txt): setup, the API key, where `.orly` lives, environment variables.
-- [Writing specs](docs/specs.txt): specs that can be judged, file and command evidence, `orly specs`.
+- [Writing specs](docs/specs.txt): specs that can be judged, file and command evidence, turning each mistake into a replayable case (`orly case`, `orly replay`), `orly specs`.
 - [The guard](docs/guard.txt): what counts as weakening the gate and how it is refused.
 - [Porting](docs/porting.txt): the CLI contract, `orly schema`, the Turn shape, writing an adapter.
 

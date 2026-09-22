@@ -41,6 +41,8 @@ before any request is spent. [Porting](docs/porting.txt) is one file.
   becomes evidence. No connectors.
 - **An examiner the agent can't edit down.** Loosening a cut or deleting a spec is refused.
 - **A malformed spec blocks.** It never waves the turn through.
+- **Every mistake becomes a check.** `orly case last block "what went wrong" --spec id`
+  freezes that turn; `orly replay` re-judges every case, so the mistake stays caught.
 - **No trap.** The agent stops when everything passes, when it says plainly what it
   couldn't do, or when the round cap runs out.
 
@@ -57,6 +59,7 @@ Same judge. Batch many questions at once. Exit 2 if any answer is no.
 
 12 fixtures against the live judge: **12/12** right on block-vs-pass, and **5/5** right
 next step on blocked turns. Reproduce: `bun test/calibrate.ts`.
+On your own work: `orly replay` scores every recorded case and keeps the history.
 Cost and latency: [measured](docs/notes/measured.txt).
 
 ## More

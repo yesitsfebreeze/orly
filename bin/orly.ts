@@ -24,6 +24,7 @@ import { label, propose, read } from "../src/log.ts";
 import { join } from "node:path";
 import { findOrlyDir, loadConfig, loadSpecFile, projectRoot, resolveKey } from "../src/session.ts";
 import { validateSpecs, type Spec } from "../src/specs.ts";
+import { check, listTurns, promote, readCases, readTurn, recordRun, saveTurn, type Outcome } from "../src/cases.ts";
 
 const fail = (msg: string, code = 1): never => {
   console.error(`orly: ${msg}`);
@@ -96,6 +97,11 @@ if (command === "--help" || command === "-h" || command === "help") {
       "orly judge         read {messages:[…]} or {turn:{…}} on stdin, write a verdict as JSON",
       "                       exit 0 = the turn may end, 2 = it may not, 1 = the gate could not run",
       "orly schema        print both input shapes with a working example, and the output shape",
+      "orly turns         list recently judged turns (kept locally, newest last)",
+      "orly case <turn|last> block|pass \"what went wrong\" [--spec id…]",
+      "                   make a judged turn a regression case; --spec names the spec that must catch it",
+      "orly replay [name…]  run every case through the live judge with the current specs",
+      "                   exit 2 if any case comes out wrong; history in .orly/replay.jsonl",
       "orly ask Q… [file…] [-] [--json]   ask now, between turns",
       "orly watch         run the checks on every change, so a turn never waits for them",
       "orly specs [path]  check that a spec list is decidable from recorded evidence",
@@ -338,6 +344,88 @@ if (command === "fit") {
   process.exit(0);
 }
 
+if (command === "turns") {
+  const dir = findOrlyDir(process.cwd());
+  if (!dir) fail("no .orly directory here or above");
+  for (const id of listTurns(dir!).slice(-Number(process.argv[3] ?? 15))) {
+    const t = readTurn(dir!, id);
+    const ask = t.turn.user_request.replace(/\s+/g, " ").slice(0, 70);
+    console.log(`${id}  ${t.blocked ? "BLOCK" : "pass "}  ${ask}`);
+  }
+  process.exit(0);
+}
+
+if (command === "case") {
+  // Every mistake becomes a check. The turn is frozen with the evidence the judge saw;
+  // the expectation says what the verdict must have been and which spec must catch it.
+  const dir = findOrlyDir(process.cwd());
+  if (!dir) fail("no .orly directory here or above");
+  const args = process.argv.slice(3);
+  const specAt = args.indexOf("--spec");
+  const specIds = specAt >= 0 ? args.splice(specAt).slice(1) : [];
+  const [id, want, note] = args;
+  if (!id || (want !== "block" && want !== "pass") || !note)
+    fail('usage: orly case <turn|last> block|pass "what went wrong" [--spec id…]');
+  let saved;
+  try {
+    saved = readTurn(dir!, id);
+  } catch (e: any) {
+    fail(`${e.message} — run \`orly turns\``);
+  }
+  const path = promote(dir!, saved!, { block: want === "block", ...(specIds.length ? { unmet: specIds } : {}) }, note);
+  console.log(`case written: ${path}`);
+  console.log("It holds the turn's transcript and evidence verbatim: read it for secrets before committing.");
+  const known = (loadSpecFile(process.cwd())?.specs ?? []).map((s) => s.id);
+  const missing = specIds.filter((s) => !known.includes(s));
+  if (missing.length) console.log(`next: add spec ${missing.join(", ")} to .orly/specs.json, then \`orly replay\``);
+  else console.log("next: `orly replay`");
+  process.exit(0);
+}
+
+if (command === "replay") {
+  // The long-term test: every recorded mistake, re-judged by the live judge against the
+  // specs as they are now. A spec change that fixes one case and breaks another shows here.
+  const dir = findOrlyDir(process.cwd());
+  if (!dir) fail("no .orly directory here or above");
+  const only = process.argv.slice(3);
+  const cases = readCases(dir!).filter((c) => !only.length || only.includes(c.name));
+  if (!cases.length) fail("no cases yet — make one with `orly case last block \"what went wrong\" --spec id`");
+  const key4 = resolveKey();
+  if (!key4) fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json");
+  const specs = loadSpecFile(process.cwd())?.specs ?? [];
+  const results = await Promise.all(
+    cases.map(async (c): Promise<Outcome> => {
+      try {
+        const { verdict } = await judge(c.turn, {
+          apiKey: key4!,
+          specs,
+          enrich: async () => c.evidence ?? {},
+          endpoint: process.env.TYPESAFE_BASE_URL,
+          model: process.env.ORLY_MODEL,
+          timeoutMs: num("ORLY_TIMEOUT_MS", 12_000),
+        });
+        return check(c, verdict, specs.map((s) => s.id));
+      } catch (e: any) {
+        return { name: c.name, ok: false, blocked: false, problem: `judge unavailable (${e?.message ?? e})` };
+      }
+    }),
+  );
+  for (const r of results) console.log(`${r.ok ? "ok  " : "FAIL"}  ${r.name}${r.problem ? `  — ${r.problem}` : ""}`);
+  const right = results.filter((r) => r.ok).length;
+  const history = only.length
+    ? []
+    : recordRun(dir!, {
+        at: new Date().toISOString(),
+        total: results.length,
+        right,
+        wrong: results.filter((r) => !r.ok).map((r) => r.name),
+      });
+  console.log(`\n${right}/${results.length} cases right`);
+  if (history.length > 1)
+    console.log(`history: ${history.slice(-8).map((h) => `${h.right}/${h.total}`).join(" → ")}`);
+  process.exit(right === results.length ? 0 : 2);
+}
+
 if (command !== "judge") fail(`unknown command "${command}" — try: orly --help`);
 
 // Shape first, key second: a caller fixing its input should not have to get a key to
@@ -360,6 +448,7 @@ if (input!.turn) turn = input!.turn;
 else turn = normalizeLastTurn(input!.messages!);
 
 const specFile = loadSpecFile(process.cwd());
+let seen: Record<string, unknown> | undefined;
 
 try {
   const { verdict, answers, usage } = await judge(turn!, {
@@ -367,7 +456,7 @@ try {
     specs: specFile?.specs,
     // The same evidence the hook gathers, from the same place, so the CLI and a host
     // adapter can never disagree about the same repository.
-    enrich: projectEvidence(),
+    enrich: async (t, s) => (seen = await projectEvidence()(t, s)),
     endpoint: process.env.TYPESAFE_BASE_URL,
     model: process.env.ORLY_MODEL,
     timeoutMs: num("ORLY_TIMEOUT_MS", 12_000),
@@ -379,6 +468,16 @@ try {
       minActionProbability: num("ORLY_MIN_ACTION_P", DEFAULTS.minActionProbability),
     },
   });
+  const orlyDir = findOrlyDir(process.cwd());
+  if (orlyDir)
+    saveTurn(orlyDir, {
+      at: new Date().toISOString(),
+      session: String(process.env.ORLY_SESSION ?? "cli"),
+      turn: turn!,
+      evidence: seen,
+      blocked: verdict.block,
+      unmet: verdict.results.filter((r) => !r.met && !r.spec.optional).map((r) => `spec:${r.spec.id}`),
+    });
   console.log(JSON.stringify({ ...verdict, answers, usage }));
   process.exit(verdict.block ? 2 : 0);
 } catch (e: any) {

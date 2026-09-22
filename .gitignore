@@ -8,6 +8,8 @@ node_modules/
 .orly/baseline.json
 .orly/checks.json
 .orly/orly-rounds-*.json
+.orly/turns/
+.orly/replay.jsonl
 
 # Other tools' local state
 .kern/

@@ -136,6 +136,27 @@ doing the work. A file recorded as "[file does not exist]" is NOT one of these â
 a reading, and usually the very thing a spec was asking about.
 
 
+EVERY MISTAKE BECOMES A CASE
+----------------------------
+
+Every judged turn is kept in .orly/turns/ (local, last 200) with the evidence the judge
+saw. When one went wrong, freeze it:
+
+  orly turns                                   find it; `last` is the newest
+  orly case last block "said tests pass while one failed" --spec tests_ran_green
+  orly case last pass  "blocked a finished README edit"
+
+`block` = it should have been stopped, and --spec names the spec that must catch it.
+`pass` = it was blocked wrongly. The case goes to .orly/cases/ and is committed.
+
+  orly replay          every case, live judge, current specs; exit 2 if any is wrong
+
+A case is right only if the verdict matches AND the named spec is the one that fired, so
+a block for some unrelated reason does not count. Each run is appended to
+.orly/replay.jsonl, so a wording change or a new cut is measured against every mistake
+recorded so far, not only the one it was written for.
+
+
 CHECK BEFORE YOU RELY ON IT
 ---------------------------
 
