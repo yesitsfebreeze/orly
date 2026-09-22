@@ -38,6 +38,17 @@ Anthropic and OpenAI message shapes both work. [Porting](docs/porting.txt) is on
 - The third item of a three-item request, quietly dropped.
 - A figure in the summary that no command produced.
 
+## The owl
+
+```
+  , .  
+ {@,@}  
+ /) )   
+  '"  
+
+I have done what you asked, here is... orly?
+```
+
 ## Why it holds
 
 **It reads your files, not the agent's story about them.** A check names the files it
