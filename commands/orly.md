@@ -31,6 +31,19 @@ from what you happened to print, which makes it unfalsifiable — you could edit
 itself at judging time and put its real contents in front of the judge, under `project.files`.
 Point the spec's wording at that entry.
 
+**Evidence does not have to be a file.** If something outside the repository decides
+whether the work is done — a ticket's acceptance criteria, a staging deploy, a migration
+status — declare one command for it under `context` in `.orly/config.json` and name it in
+`evidence` exactly as you would a path. Its output is put in front of the judge under
+`project.context`, and you ask about it in words.
+
+```json
+"context": { "ticket": { "command": "jira issue view $TICKET --plain" } }
+```
+
+Use a `require` check when a command can decide the answer, and a context source when
+someone has to read it.
+
 Mark a spec `"optional": true` when it is desirable but you should be allowed to end the
 turn by explaining why it was skipped.
 

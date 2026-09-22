@@ -28,10 +28,18 @@ export type Enricher = (turn: Turn, specs: Spec[]) => Promise<Evidence>;
 const MAX_FILE_CHARS = Number(process.env.ORLY_MAX_FILE_CHARS ?? 12_000);
 const MAX_FILES = 8;
 
-/** Every distinct path the specs name as evidence. */
-export function evidencePaths(specs: Spec[]): string[] {
+/**
+ * Every distinct path the specs name as evidence.
+ *
+ * `skip` holds the names that are something else — a declared context source, say. A name
+ * that is not a path must not be read as one: the miss is recorded as "[file does not
+ * exist]", which is a legitimate answer for a spec asking whether something exists, so
+ * the mistake arrives looking exactly like a verdict.
+ */
+export function evidencePaths(specs: Spec[], skip: Iterable<string> = []): string[] {
+  const not = new Set(skip);
   const seen = new Set<string>();
-  for (const s of specs) for (const p of s.evidence ?? []) seen.add(p);
+  for (const s of specs) for (const p of s.evidence ?? []) if (!not.has(p)) seen.add(p);
   return [...seen].slice(0, MAX_FILES);
 }
 
@@ -41,9 +49,13 @@ export function evidencePaths(specs: Spec[]): string[] {
  * This is the enricher that matters most and the one with no dependencies: it turns
  * "did the agent tell me the stub is gone" into "is the stub gone".
  */
-export function fileEnricher(cwd: string, read: (path: string) => Promise<string>): Enricher {
+export function fileEnricher(
+  cwd: string,
+  read: (path: string) => Promise<string>,
+  skip: Iterable<string> = [],
+): Enricher {
   return async (_turn, specs) => {
-    const paths = evidencePaths(specs);
+    const paths = evidencePaths(specs, skip);
     if (!paths.length) return {};
     const files: Record<string, string> = {};
     for (const path of paths) {

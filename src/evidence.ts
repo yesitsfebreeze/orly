@@ -12,6 +12,7 @@
  */
 import { combine, fileEnricher, type Enricher } from "./enrich.ts";
 import { checkEnricher, type CheckSpec } from "./enrich-checks.ts";
+import { contextEnricher, type ContextSpec } from "./enrich-context.ts";
 import { kernMemoryEnricher } from "./enrich-kern.ts";
 import { loadConfig, projectRoot } from "./session.ts";
 
@@ -22,6 +23,8 @@ export type EvidenceOptions = {
   goal?: string;
   /** Override the checks from `.orly/config.json`. */
   checks?: Record<string, CheckSpec>;
+  /** Override the context sources from `.orly/config.json`. */
+  context?: Record<string, ContextSpec>;
 };
 
 /**
@@ -36,9 +39,14 @@ export type EvidenceOptions = {
 export function projectEvidence(opts: EvidenceOptions = {}): Enricher {
   const cwd = opts.cwd ?? process.cwd();
   const root = projectRoot(cwd) ?? cwd;
+  const config = loadConfig(cwd);
+  const context = opts.context ?? config.context ?? {};
   return combine(
-    fileEnricher(root, (path) => Bun.file(path).text()),
+    // A declared context source is named in `evidence` like a file is, so the file reader
+    // has to be told which of those names are not paths.
+    fileEnricher(root, (path) => Bun.file(path).text(), Object.keys(context)),
     kernMemoryEnricher(opts.goal ?? "", cwd),
-    checkEnricher(opts.checks ?? loadConfig(cwd).checks ?? {}, root),
+    checkEnricher(opts.checks ?? config.checks ?? {}, root),
+    contextEnricher(context, root),
   );
 }

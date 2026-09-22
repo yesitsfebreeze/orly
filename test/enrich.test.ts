@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { projectEvidence } from "../src/evidence.ts";
+import { contextEnricher } from "../src/enrich-context.ts";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -77,6 +78,58 @@ test("projectEvidence gathers files and checks from the project root, called fro
       expect(e.files["thing.ts"]).toContain("export const done");
       expect(e.checks.here.exit).toBe(0);
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------- declared context
+
+test("a declared context source reaches the judge as text, unlike a check", async () => {
+  // A check answers a fact in code and never reaches the model. A ticket is a reading,
+  // not a comparison: no exit code expresses "the acceptance criteria are covered".
+  const specs: any = [{ id: "ticket", instructions: "n/a", evidence: ["ticket"] }];
+  const e: any = await contextEnricher({ ticket: { command: "echo 'PROJ-12: status Done'" } }, "/tmp")(
+    {} as any,
+    specs,
+  );
+  expect(e.context.ticket).toContain("status Done");
+});
+
+test("a context source that cannot run says unknown, never nothing", async () => {
+  // Empty text reads as "the ticket says nothing", which is an answer, and the wrong one.
+  const specs: any = [{ id: "t", instructions: "n/a", evidence: ["ticket"] }];
+  const e: any = await contextEnricher({ ticket: { command: "exit 4" } }, "/tmp")({} as any, specs);
+  expect(e.context.ticket).toContain("could not be read");
+  expect(e.context.ticket).toContain("not as absent");
+});
+
+test("a source nothing names is never run", async () => {
+  const specs: any = [{ id: "t", instructions: "n/a", evidence: ["somefile.ts"] }];
+  expect(await contextEnricher({ ticket: { command: "echo hi" } }, "/tmp")({} as any, specs)).toEqual({});
+});
+
+test("a context name is not read as a missing file", async () => {
+  // "[file does not exist]" is a legitimate answer for a spec asking whether something
+  // exists, so a name mistaken for a path arrives looking exactly like a verdict.
+  const specs: any = [{ id: "t", instructions: "n/a", evidence: ["ticket", "real.ts"] }];
+  expect(evidencePaths(specs, ["ticket"])).toEqual(["real.ts"]);
+  const e: any = await fileEnricher("/tmp", async () => "x", ["ticket"])({} as any, specs);
+  expect(Object.keys(e.files)).toEqual(["real.ts"]);
+});
+
+test("projectEvidence carries a declared source end to end", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orly-ctx-"));
+  try {
+    mkdirSync(join(root, ".orly"));
+    writeFileSync(
+      join(root, ".orly", "config.json"),
+      JSON.stringify({ context: { ticket: { command: "echo 'acceptance: rollback documented'" } } }),
+    );
+    const specs: any = [{ id: "t", instructions: "n/a", evidence: ["ticket"] }];
+    const e: any = await projectEvidence({ cwd: root })({} as any, specs);
+    expect(e.context.ticket).toContain("rollback documented");
+    expect(e.files).toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

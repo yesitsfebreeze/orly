@@ -73,8 +73,47 @@ Identical messages, opposite verdict, decided entirely by state the agent did no
 
 The second evidence source is the project's own knowledge service (kern): memory.ask on
 the goal, claims only — never another model's confidence vector, which would invite the
-judge to reason about that in place of the work. Both enrichers are wrapped so that one
+judge to reason about that in place of the work. Every enricher is wrapped so that one
 being absent or down costs nothing.
+
+
+ANYTHING ELSE THAT DECIDES WHETHER IT IS DONE
+---------------------------------------------
+
+Not everything that settles "is this finished" is in the repository. A ticket, a staging
+deploy, a migration status, a review queue. Declare one command per source in
+.orly/config.json and its OUTPUT goes in front of the judge:
+
+  "context": {
+    "ticket": { "command": "jira issue view $TICKET --plain" }
+  }
+
+  { "id": "ticket_covered",
+    "evidence": ["ticket"],
+    "instructions": "Look at `ticket` under `project.context`, which is the issue
+                     tracker's own text. Does the work recorded in `actions_taken`
+                     satisfy every acceptance criterion it lists?" }
+
+Measured on exactly that spec, with a ticket demanding retries capped at 3 AND each
+failure logged with its attempt number:
+
+  work does both            0.73   pass
+  work caps but never logs  0.21   block
+
+Same transcript shape, opposite verdict, decided by text the agent did not write and
+could not have summarised away.
+
+This is not the same thing as a `check`. A check answers a fact in code — an exit code, a
+count — and never reaches the model. A context source is for a READING: no exit code
+expresses "the acceptance criteria are covered". Use a check when a command can decide it,
+a context source when someone has to read it.
+
+A source that cannot run says so in words: "[context source ... could not be read ...
+Treat it as unknown, not as absent.]" Empty text would read as "the ticket says nothing",
+which is an answer, and the wrong one.
+
+The integration is a command you wrote. Anything with a CLI, a curl or a script is
+already supported, and orly ships no connector for any of them.
 
 
 CHECK BEFORE YOU RELY ON IT

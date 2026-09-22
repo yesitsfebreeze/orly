@@ -53,7 +53,7 @@ everywhere. The project always wins.
 CONFIGURATION
 -------------
 
-  TYPESAFE_API_KEY      required
+  TYPESAFE_API_KEY      required, unless .orly/config.json names a keyCommand
   ORLY_KEY_COMMAND      command that prints the key
   ORLY_HAZARD           0.70   built-in hazard probability that blocks
   ORLY_SPEC_MET         0.70   default cut for a spec that states none
@@ -64,6 +64,8 @@ CONFIGURATION
   ORLY_FLUSH_TRIES      12     polls waiting for the closing message
   ORLY_FLUSH_WAIT_MS    150    delay per poll
   ORLY_NO_LOG           set to keep a dry run out of the dataset
+  ORLY_ASK_CUT          0.5    yes/no split used by `orly ask`
+  ORLY_MAX_CONTEXT_CHARS 6000  cap per declared context source
   ORLY_MODEL            jev-latest
   ORLY_TIMEOUT_MS       12000
   TYPESAFE_BASE_URL     override the endpoint
