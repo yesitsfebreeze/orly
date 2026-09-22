@@ -223,3 +223,27 @@ test("evidence resolves from the project root, not the working directory", () =>
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("check results never reach the model, only the require specs", async () => {
+  // Gathered evidence must not answer a question the transcript was meant to answer:
+  // checks.tests showing a passing run made a Noul about "did tests run this turn?"
+  // score 0.93 on a fixture that never ran them.
+  let sentState: any;
+  const fakeFetch = (async (_url: string, init: any) => {
+    sentState = JSON.parse(init.body).state;
+    return new Response(JSON.stringify({ answers: {}, usage: {} }), { status: 200 });
+  }) as any;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = fakeFetch;
+  try {
+    const { judge } = await import("../src/gate.ts");
+    await judge(
+      { user_request: "r", assistant_final_message: "f", assistant_said: "f", actions_taken: [], command_results: [], conclusive: true },
+      { apiKey: "k", enrich: async () => ({ checks: { tests: { exit: 0 } }, files: { "a.ts": "x" } }) },
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  expect(sentState.project.files).toBeDefined();
+  expect(sentState.project.checks).toBeUndefined();
+});

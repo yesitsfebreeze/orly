@@ -24,10 +24,10 @@ import { specQuestions, SPEC_PREFIX } from "../src/specs.ts";
 const KEY = process.env.TYPESAFE_API_KEY!;
 const DIR = join(import.meta.dir, "fixtures");
 const ROOT = projectRoot(import.meta.dir) ?? join(import.meta.dir, "..", "..");
-const ENRICH = combine(
-  fileEnricher(ROOT, (p) => Bun.file(p).text()),
-  checkEnricher(loadConfig(ROOT).checks ?? {}, ROOT),
-);
+// Only what the model actually sees. Check results go to `require` specs, which code
+// decides, and putting them in state lets live repo state answer questions the fixture's
+// transcript was meant to answer.
+const ENRICH = fileEnricher(ROOT, (p) => Bun.file(p).text());
 
 const ALL_SPECS = JSON.parse(readFileSync(process.argv[2] ?? join(import.meta.dir, "..", "..", ".orly", "specs.json"), "utf8")).specs;
 // Deterministic checks are decided in code and never reach the model; fitting a cut for
@@ -50,7 +50,12 @@ for (const name of names) {
     method: "POST", headers: { Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ state, model: "jev-latest", questions: specQuestions(specs) }),
   });
-  const { answers } = await res.json();
+  const body = await res.json();
+  if (!body?.answers) {
+    console.error(`  ${name}: ${res.status} ${JSON.stringify(body).slice(0, 300)}`);
+    continue;
+  }
+  const { answers } = body;
   const row: string[] = [];
   for (const s of specs) {
     const p = answers[SPEC_PREFIX + s.id]?.noul ?? NaN;

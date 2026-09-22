@@ -281,16 +281,24 @@ export async function judge(turn: Turn, opts: JudgeOptions): Promise<Judgment> {
   // Evidence gathered here is state the agent did not author. If gathering it fails, the
   // judgment still happens on the transcript alone — enrichment must never be the reason
   // a turn cannot be judged.
-  let enriched = turn;
+  let evidence: any = undefined;
   if (opts.enrich) {
     try {
-      enriched = withEvidence(turn, await opts.enrich(turn, specs));
+      evidence = await opts.enrich(turn, specs);
     } catch {
-      /* fall through with the unenriched turn */
+      /* fall through with no evidence */
     }
   }
 
-  const { conclusive, ...state } = enriched;
+  // `checks` is for `require` specs, which code evaluates. It must NOT go to the model.
+  //
+  // Putting it in the state lets gathered evidence answer a question the transcript was
+  // supposed to answer: with checks.tests showing a passing run, the Noul "did tests run
+  // after the edit?" scores 0.93 on a fixture that never ran them. The judgment then
+  // reflects the repo's current state rather than the turn's, and the same fixture scores
+  // differently depending on what the working tree happens to look like.
+  const { checks, ...visible } = evidence ?? {};
+  const { conclusive, ...state } = withEvidence(turn, visible);
   // One request, every question. TypeSafe measured 13 questions batched at 12.2x cheaper
   // and 10x faster than 13 separate calls, with the same answers.
   const questions = { ...QUESTIONS, ...specQuestions(specs) };
@@ -306,7 +314,8 @@ export async function judge(turn: Turn, opts: JudgeOptions): Promise<Judgment> {
   // judge. Treat it as an outage rather than as evidence about the turn.
   if (!out?.answers || typeof out.answers !== "object") throw new Error("response had no answers");
   return {
-    verdict: compose(out.answers, opts.thresholds ?? DEFAULTS, specs, (enriched as any).project),
+    // `require` specs still see everything, including checks — they are decided in code.
+    verdict: compose(out.answers, opts.thresholds ?? DEFAULTS, specs, evidence),
     answers: out.answers,
     usage: out.usage,
   };
