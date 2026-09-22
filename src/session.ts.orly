@@ -1,0 +1,5 @@
+DEFAULT_MAX_ROUNDS: is 6
+STALL_ROUNDS: is 2
+findOrlyDir: walks up parent directories until it finds a .orly directory or reaches the root
+loadSpecFile: prefers the spec tree over specs.json
+resolveSpecs: lets a project spec override a user-level spec with the same id

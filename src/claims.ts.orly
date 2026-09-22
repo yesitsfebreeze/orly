@@ -1,0 +1,4 @@
+parseSidecar: reports a line starting with a number as a problem instead of a claim
+judgeSidecar: fails a claim whose anchor has no matching definition
+judgeSidecar: sends the judge a state of the file path and a symbols map keyed by each claim's anchor
+pool: never runs more than limit tasks at once

@@ -1,0 +1,7 @@
+evaluate: returns met false when require.path is not a string
+evaluate: returns met false for an unknown op
+validateSpecs: reports a duplicate id
+validateSpecs: strips backtick code spans before looking for taste words
+specQuestions: skips specs that carry a require
+scoreSpecs: compares a spec's probability against its own cut before the default threshold
+unmet: leaves out optional specs

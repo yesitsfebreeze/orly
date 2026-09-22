@@ -81,6 +81,11 @@ Headers: `cut`, `require: <path> <op> <value>`, `evidence: a, b`, `optional: yes
 `gather`, `true`, `false`. A file that does not parse blocks every turn until fixed.
 `bun ${CLAUDE_PLUGIN_ROOT}/bin/orly.ts tree` prints the index.
 
+**Claims on code.** For what a definition must state — an export, a constant, a header it
+sends — write `<file>.orly` beside the source, `symbol: claim` per line (`orly symbols
+<file>` lists the anchors), and gate on `orly claims` with a check. Behaviour still goes
+through a test's output.
+
 ## Do this in order
 
 1. Read enough of the project to write specs that refer to its real commands and paths.

@@ -175,6 +175,34 @@ a block for some unrelated reason does not count. Each run is appended to
 recorded so far, not only the one it was written for.
 
 
+CLAIMS ON THE CODE ITSELF
+-------------------------
+
+Next to a source file, a sidecar with one claim per definition:
+
+  src/http.ts.orly
+
+    @file:            contains exactly one fetch call
+    fetchWithRetry:   sends the Authorization header as a Bearer token
+    RetryPolicy.max:  is 3
+
+  orly symbols src/http.ts    every definition a claim can anchor to
+  orly claims [path...]       judge every sidecar, one request per file, 8 files at once
+
+Anchors are names from the syntax tree (`Name`, `Owner.member`, `@file`), never line
+numbers: a line number points at other code after the first edit above it. A name that
+no longer resolves fails. Each claim is shown only its own definition's source, so claim
+what THAT text states — "returns broken(...)" holds, "returns a spec that can never be
+met" does not when the never-met part lives in another function. Behaviour and taste
+words (correctly, handles, works, clean...) are refused: behaviour belongs to a test.
+
+Gate on it with a check and a require spec:
+
+  "claims": { "command": "orly claims 2>&1 || true", "countPattern": "(?:^|\\n)(?:FAIL|orly: )" }
+
+TypeScript and JavaScript today, through the TypeScript parser.
+
+
 CHECK BEFORE YOU RELY ON IT
 ---------------------------
 

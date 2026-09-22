@@ -24,6 +24,7 @@ import { label, propose, read } from "../src/log.ts";
 import { basename, dirname, join } from "node:path";
 import { findOrlyDir, loadConfig, loadSpecFile, projectRoot, resolveKey } from "../src/session.ts";
 import { validateSpecs, type Spec } from "../src/specs.ts";
+import { definitions, judgeSidecar, pool, supported, type ClaimResult } from "../src/claims.ts";
 import { EXT, formatSpec, loadTree, renderTree, TREE } from "../src/spectree.ts";
 import { check, listTurns, promote, readCases, readTurn, recordRun, saveTurn, type Outcome } from "../src/cases.ts";
 
@@ -102,6 +103,9 @@ if (command === "--help" || command === "-h" || command === "help") {
       "orly case <turn|last> block|pass \"what went wrong\" [--spec group/id [--ask \"question\"]]",
       "                   freeze the turn as a case, write the spec that must catch it, replay all",
       "orly tree          index the spec tree in .orly/specs/",
+      "orly symbols <file>  the definitions a claim can anchor to",
+      "orly claims [path…]  judge every <file>.orly sidecar against its code, in parallel;",
+      "                   exit 2 if any claim fails (ORLY_CLAIM_CUT, ORLY_CLAIMS_PARALLEL)",
       "orly replay [name…]  run every case through the live judge with the current specs",
       "                   exit 2 if any case comes out wrong; history in .orly/replay.jsonl",
       "orly ask Q… [file…] [-] [--json]   ask now, between turns",
@@ -355,6 +359,59 @@ if (command === "turns") {
     console.log(`${id}  ${t.blocked ? "BLOCK" : "pass "}  ${ask}`);
   }
   process.exit(0);
+}
+
+if (command === "symbols") {
+  const path = process.argv[3];
+  if (!path || !supported(path)) fail("usage: orly symbols <file.ts|tsx|js|jsx|mts|cts|mjs|cjs>");
+  let text = "";
+  try {
+    text = await Bun.file(path!).text();
+  } catch {
+    fail(`could not read ${path}`);
+  }
+  for (const d of definitions(path!, text)) console.log(`${d.anchor.padEnd(40)} ${d.kind.padEnd(12)} ${d.from}-${d.to}`);
+  process.exit(0);
+}
+
+if (command === "claims") {
+  // Every sidecar in the repository, one request per source file, many files at once.
+  const root = projectRoot(process.cwd()) ?? process.cwd();
+  const listed = Bun.spawnSync(["git", "ls-files", "-co", "--exclude-standard", "*.orly"], { cwd: root, stdout: "pipe" });
+  const only = process.argv.slice(3);
+  const sidecars = listed.stdout
+    .toString()
+    .split("\n")
+    .filter(Boolean)
+    .filter((f) => !only.length || only.some((o) => f === o || f === `${o}.orly` || f.startsWith(o.replace(/\/?$/, "/"))));
+  if (!sidecars.length) fail("no *.orly sidecars found — write one next to a source file, e.g. src/http.ts.orly");
+  const key5 = resolveKey();
+  if (!key5) fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json");
+  const cut = num("ORLY_CLAIM_CUT", DEFAULTS.specMet);
+  const transport = { apiKey: key5!, endpoint: process.env.TYPESAFE_BASE_URL, model: process.env.ORLY_MODEL, timeoutMs: num("ORLY_TIMEOUT_MS", 12_000) };
+  const t0 = performance.now();
+  const perFile = await pool(sidecars, num("ORLY_CLAIMS_PARALLEL", 8), async (car): Promise<[string, ClaimResult[]]> => {
+    const src = car.slice(0, -".orly".length);
+    const source = await Bun.file(join(root, src)).text().catch(() => null);
+    const sidecar = await Bun.file(join(root, car)).text();
+    try {
+      if (!supported(src)) throw new Error(`no parser for ${src}`);
+      return [src, await judgeSidecar(src, source, sidecar, (st, q) => askJudge(st, q, transport), cut)];
+    } catch (e: any) {
+      return [src, [{ anchor: "@file", claim: "", line: 0, ok: false, problem: e?.message ?? String(e) }]];
+    }
+  });
+  let total = 0;
+  let bad = 0;
+  for (const [src, results] of perFile)
+    for (const r of results) {
+      total++;
+      if (!r.ok) bad++;
+      const p = typeof r.p === "number" ? r.p.toFixed(2) : "  - ";
+      console.log(`${r.ok ? "ok  " : "FAIL"} ${p}  ${src}:${r.line} ${r.anchor}: ${r.claim}${r.problem ? `  — ${r.problem}` : ""}`);
+    }
+  console.log(`\n${total - bad}/${total} claims hold across ${sidecars.length} file(s) in ${Math.round(performance.now() - t0)} ms (cut ${cut})`);
+  process.exit(bad ? 2 : 0);
 }
 
 if (command === "tree") {
