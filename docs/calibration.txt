@@ -113,6 +113,24 @@ outcomes.
   orly fit                            propose cuts from the live log
 
 
+A CUT IS FITTED AGAINST A STATE SHAPE, NOT A QUESTION
+-----------------------------------------------------
+
+claims_match_evidence was fitted at met>=0.56, unmet<=0.22, cut 0.28, on turn states that
+carried only the transcript. Then file evidence and nine check results were added to every
+state. The same question on the same fixture now lands at 0.19 - outside its own fitted
+band, and flipping across the cut between runs.
+
+Nothing about the question changed. The state it reads did.
+
+So the rule is wider than "refit when the wording changes". Refit when ANYTHING about the
+state changes: a new enricher, a different truncation limit, a bigger results window. All
+of them move the numbers, and none of them look like a calibration event.
+
+Corollary worth internalising: a `fitted` band recorded in specs.json is only meaningful
+alongside the state shape it was measured against. A band with no date and no note about
+what was in the state is a number someone will trust for longer than they should.
+
 THE ORDER TO DEBUG IN
 ---------------------
 
