@@ -1,9 +1,11 @@
-```
-  ; ,
- {@.@}
- /) )  oRly?
-  "'
-```
+
+  , .
+ {@,@}
+ /) ) 
+  '"
+
+# orly
+
 
 Your agent says it's done. orly asks the obvious question — at the end of **every** turn,
 before the stop goes through. Whatever isn't true comes back with the gap named, and the
