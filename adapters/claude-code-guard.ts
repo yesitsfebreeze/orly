@@ -11,6 +11,8 @@ import { resolve } from "node:path";
 import { refusal, weakenings } from "../src/guard.ts";
 import { DEFAULTS } from "../src/gate.ts";
 import { findOrlyDir } from "../src/session.ts";
+import { EXT, GOAL, loadTree, TREE } from "../src/spectree.ts";
+import { existsSync } from "node:fs";
 
 /** Anything the hook cannot work out for certain is allowed: this must not block real work. */
 function allow(): never {
@@ -32,15 +34,26 @@ const cwd = input.cwd ?? process.cwd();
 const orlyDir = findOrlyDir(cwd);
 if (!orlyDir) allow();
 
-const specPath = resolve(orlyDir!, "specs.json");
 const target = input.tool_input?.file_path ?? input.tool_input?.path;
-if (!target || resolve(cwd, String(target)) !== specPath) allow();
+if (!target) allow();
+const specPath = resolve(cwd, String(target));
+const treeDir = resolve(orlyDir!, TREE);
+// Either one file in the spec tree (or the goal beside it), or the single specs.json.
+const inTree =
+  existsSync(treeDir) &&
+  ((specPath.startsWith(treeDir + "/") && specPath.endsWith(EXT)) || specPath === resolve(orlyDir!, GOAL));
+if (!inTree && specPath !== resolve(orlyDir!, "specs.json")) allow();
 
 let before: unknown;
-let current: string;
+let current = "";
 try {
-  current = readFileSync(specPath, "utf8");
-  before = JSON.parse(current);
+  if (inTree) {
+    before = loadTree(orlyDir!);
+    current = existsSync(specPath) ? readFileSync(specPath, "utf8") : "";
+  } else {
+    current = readFileSync(specPath, "utf8");
+    before = JSON.parse(current);
+  }
 } catch {
   allow(); // no readable spec file yet: nothing to protect
 }
@@ -67,7 +80,7 @@ if (next === null) allow();
 
 let after: unknown;
 try {
-  after = JSON.parse(next!);
+  after = inTree ? loadTree(orlyDir!, { path: specPath, text: next! }) : JSON.parse(next!);
 } catch {
   allow(); // not valid JSON: the edit is broken in a way this hook should not adjudicate
 }

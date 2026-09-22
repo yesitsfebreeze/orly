@@ -15,15 +15,16 @@
  */
 import { DEFAULTS, judge, type Turn } from "../src/gate.ts";
 import { normalize, normalizeLastTurn, type Msg } from "../src/normalize.ts";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { ask as askJudge } from "../src/client.ts";
 import { projectEvidence } from "../src/evidence.ts";
 import { CACHE_NAME, checkEnricher } from "../src/enrich-checks.ts";
 import { treeFingerprint } from "../src/fingerprint.ts";
 import { label, propose, read } from "../src/log.ts";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { findOrlyDir, loadConfig, loadSpecFile, projectRoot, resolveKey } from "../src/session.ts";
 import { validateSpecs, type Spec } from "../src/specs.ts";
+import { EXT, formatSpec, loadTree, renderTree, TREE } from "../src/spectree.ts";
 import { check, listTurns, promote, readCases, readTurn, recordRun, saveTurn, type Outcome } from "../src/cases.ts";
 
 const fail = (msg: string, code = 1): never => {
@@ -98,8 +99,9 @@ if (command === "--help" || command === "-h" || command === "help") {
       "                       exit 0 = the turn may end, 2 = it may not, 1 = the gate could not run",
       "orly schema        print both input shapes with a working example, and the output shape",
       "orly turns         list recently judged turns (kept locally, newest last)",
-      "orly case <turn|last> block|pass \"what went wrong\" [--spec id…]",
-      "                   make a judged turn a regression case; --spec names the spec that must catch it",
+      "orly case <turn|last> block|pass \"what went wrong\" [--spec group/id [--ask \"question\"]]",
+      "                   freeze the turn as a case, write the spec that must catch it, replay all",
+      "orly tree          index the spec tree in .orly/specs/",
       "orly replay [name…]  run every case through the live judge with the current specs",
       "                   exit 2 if any case comes out wrong; history in .orly/replay.jsonl",
       "orly ask Q… [file…] [-] [--json]   ask now, between turns",
@@ -355,41 +357,20 @@ if (command === "turns") {
   process.exit(0);
 }
 
-if (command === "case") {
-  // Every mistake becomes a check. The turn is frozen with the evidence the judge saw;
-  // the expectation says what the verdict must have been and which spec must catch it.
+if (command === "tree") {
   const dir = findOrlyDir(process.cwd());
-  if (!dir) fail("no .orly directory here or above");
-  const args = process.argv.slice(3);
-  const specAt = args.indexOf("--spec");
-  const specIds = specAt >= 0 ? args.splice(specAt).slice(1) : [];
-  const [id, want, note] = args;
-  if (!id || (want !== "block" && want !== "pass") || !note)
-    fail('usage: orly case <turn|last> block|pass "what went wrong" [--spec id…]');
-  let saved;
-  try {
-    saved = readTurn(dir!, id);
-  } catch (e: any) {
-    fail(`${e.message} — run \`orly turns\``);
-  }
-  const path = promote(dir!, saved!, { block: want === "block", ...(specIds.length ? { unmet: specIds } : {}) }, note);
-  console.log(`case written: ${path}`);
-  console.log("It holds the turn's transcript and evidence verbatim: read it for secrets before committing.");
-  const known = (loadSpecFile(process.cwd())?.specs ?? []).map((s) => s.id);
-  const missing = specIds.filter((s) => !known.includes(s));
-  if (missing.length) console.log(`next: add spec ${missing.join(", ")} to .orly/specs.json, then \`orly replay\``);
-  else console.log("next: `orly replay`");
+  const tree = dir ? loadTree(dir) : null;
+  if (!tree) fail("no .orly/specs/ tree here or above");
+  if (tree!.goal) console.log(`goal: ${tree!.goal}\n`);
+  console.log(renderTree(tree!));
+  console.log(`\n${tree!.specs.length} specs`);
   process.exit(0);
 }
 
-if (command === "replay") {
-  // The long-term test: every recorded mistake, re-judged by the live judge against the
-  // specs as they are now. A spec change that fixes one case and breaks another shows here.
-  const dir = findOrlyDir(process.cwd());
-  if (!dir) fail("no .orly directory here or above");
-  const only = process.argv.slice(3);
-  const cases = readCases(dir!).filter((c) => !only.length || only.includes(c.name));
-  if (!cases.length) fail("no cases yet — make one with `orly case last block \"what went wrong\" --spec id`");
+/** Re-judge cases against the live judge with the current specs, record the run, print it. */
+async function replay(dir: string, only: string[] = []): Promise<boolean> {
+  const cases = readCases(dir).filter((c) => !only.length || only.includes(c.name));
+  if (!cases.length) fail('no cases yet — make one with `orly case last block "what went wrong" --spec id`');
   const key4 = resolveKey();
   if (!key4) fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json");
   const specs = loadSpecFile(process.cwd())?.specs ?? [];
@@ -414,16 +395,68 @@ if (command === "replay") {
   const right = results.filter((r) => r.ok).length;
   const history = only.length
     ? []
-    : recordRun(dir!, {
+    : recordRun(dir, {
         at: new Date().toISOString(),
         total: results.length,
         right,
         wrong: results.filter((r) => !r.ok).map((r) => r.name),
       });
   console.log(`\n${right}/${results.length} cases right`);
-  if (history.length > 1)
-    console.log(`history: ${history.slice(-8).map((h) => `${h.right}/${h.total}`).join(" → ")}`);
-  process.exit(right === results.length ? 0 : 2);
+  if (history.length > 1) console.log(`history: ${history.slice(-8).map((h) => `${h.right}/${h.total}`).join(" → ")}`);
+  return right === results.length;
+}
+
+if (command === "case") {
+  // Every mistake becomes a check, in one call: freeze the turn with the evidence the judge
+  // saw, write the spec that must catch it if it does not exist yet, and replay every case
+  // so the new spec is proven on this mistake without breaking an earlier one.
+  const dir = findOrlyDir(process.cwd());
+  if (!dir) fail("no .orly directory here or above");
+  const args = process.argv.slice(3);
+  const flag = (name: string) => {
+    const i = args.indexOf(name);
+    return i < 0 ? undefined : args.splice(i, 2)[1];
+  };
+  const specRef = flag("--spec");
+  const question = flag("--ask");
+  const noReplay = args.includes("--no-replay") ? (args.splice(args.indexOf("--no-replay"), 1), true) : false;
+  const [id, want, note] = args;
+  if (!id || (want !== "block" && want !== "pass") || !note || (question !== undefined && !specRef))
+    fail('usage: orly case <turn|last> block|pass "what went wrong" [--spec group/id [--ask "question"]] [--no-replay]');
+  let saved;
+  try {
+    saved = readTurn(dir!, id);
+  } catch (e: any) {
+    fail(`${e.message} — run \`orly turns\``);
+  }
+  const specId = specRef ? basename(specRef, EXT) : undefined;
+  if (specRef && question) {
+    const path = join(dir!, TREE, specRef.endsWith(EXT) ? specRef : `${specRef}${EXT}`);
+    if (existsSync(path)) fail(`${path} already exists — drop --ask to reuse it`);
+    const problems = validateSpecs([{ id: specId!, instructions: question }]);
+    if (problems.length) fail(`spec rejected: ${problems.map((p) => p.problem).join("; ")}`);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, formatSpec({ id: specId!, instructions: question }));
+    console.log(`spec written: ${path}`);
+  }
+  const path = promote(dir!, saved!, { block: want === "block", ...(specId ? { unmet: [specId] } : {}) }, note);
+  console.log(`case written: ${path}`);
+  console.log("It holds the turn's transcript and evidence verbatim: read it for secrets before committing.");
+  if (specId && !(loadSpecFile(process.cwd())?.specs ?? []).some((s) => s.id === specId)) {
+    console.log(`next: write .orly/${TREE}/${specRef}${EXT} (or pass --ask "question"), then \`orly replay\``);
+    process.exit(0);
+  }
+  if (noReplay) process.exit(0);
+  console.log("");
+  process.exit((await replay(dir!)) ? 0 : 2);
+}
+
+if (command === "replay") {
+  // The long-term test: every recorded mistake, re-judged by the live judge against the
+  // specs as they are now. A spec change that fixes one case and breaks another shows here.
+  const dir = findOrlyDir(process.cwd());
+  if (!dir) fail("no .orly directory here or above");
+  process.exit((await replay(dir!, process.argv.slice(3))) ? 0 : 2);
 }
 
 if (command !== "judge") fail(`unknown command "${command}" — try: orly --help`);

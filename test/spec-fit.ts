@@ -11,8 +11,9 @@
  * answer from the model. Check the labels before the wording, and the wording before
  * the cut.
  *
- *   TYPESAFE_API_KEY=… bun test/spec-fit.ts [path/to/specs.json]
+ *   TYPESAFE_API_KEY=… bun test/spec-fit.ts [path/to/specs.json]  (default: the .orly spec tree)
  */
+import { loadSpecFile } from "../src/session.ts";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeLastTurn } from "../src/normalize.ts";
@@ -29,7 +30,7 @@ const ROOT = projectRoot(import.meta.dir) ?? join(import.meta.dir, "..");
 // transcript was meant to answer.
 const ENRICH = fileEnricher(ROOT, (p) => Bun.file(p).text());
 
-const ALL_SPECS = JSON.parse(readFileSync(process.argv[2] ?? join(ROOT, ".orly", "specs.json"), "utf8")).specs;
+const ALL_SPECS = process.argv[2] ? JSON.parse(readFileSync(process.argv[2], "utf8")).specs : loadSpecFile(ROOT)!.specs;
 // Deterministic checks are decided in code and never reach the model; fitting a cut for
 // one is meaningless. They still enrich the state, so they stay in ALL_SPECS.
 const specs = ALL_SPECS.filter((s: any) => !s.require);

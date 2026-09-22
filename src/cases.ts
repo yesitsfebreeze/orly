@@ -104,7 +104,7 @@ export function readCases(orlyDir: string): Array<Case & { name: string }> {
 export function check(c: Case & { name: string }, verdict: Verdict, specIds: string[]): Outcome {
   const base = { name: c.name, blocked: verdict.block };
   for (const id of c.expect.unmet ?? []) {
-    if (!specIds.includes(id)) return { ...base, ok: false, problem: `spec "${id}" does not exist in .orly/specs.json` };
+    if (!specIds.includes(id)) return { ...base, ok: false, problem: `spec "${id}" does not exist in .orly/specs/` };
     const r = verdict.results.find((x) => x.spec.id === id);
     if (!r || r.met) return { ...base, ok: false, problem: `spec "${id}" did not fire` };
   }

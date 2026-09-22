@@ -135,7 +135,10 @@ export function validateSpecs(specs: Spec[]): SpecProblem[] {
     seen.add(s.id);
     if (s.require !== undefined) {
       const r = s.require as any;
-      if (typeof r?.path !== "string" || !OPS.includes(r?.op)) {
+      if (r?.op === "malformed") {
+        // A spec-tree file that did not parse: its instructions carry what was wrong.
+        problems.push({ id: s.id, problem: s.instructions });
+      } else if (typeof r?.path !== "string" || !OPS.includes(r?.op)) {
         problems.push({ id: s.id, problem: `require must be {path, op} with op one of ${OPS.join(", ")}` });
       }
     }

@@ -4,19 +4,29 @@ WRITING SPECS THAT WORK
 A spec becomes one yes/no question about the RECORDED EVIDENCE of a turn: which commands
 ran, what they printed, what the agent said. Nothing else is visible to the judge.
 
-  {
-    "goal": "parseDuration is implemented, tested, and documented",
-    "maxRounds": 6,
-    "specs": [
-      { "id": "tests_green",
-        "cut": 0.52,
-        "instructions": "Do `command_results` show a test run that reported zero
-                         failures, executed after the last edit in `actions_taken`?" }
-    ]
-  }
+One file per spec, folders to group them. The file name is the id; add one by adding a
+file, however many there are.
 
-Fields: id (slug), instructions (the question), criteria {true,false} (optional),
-cut (fitted threshold), optional (may be left unmet if explained), evidence (file paths).
+  .orly/goal                          rounds: 6, a blank line, the goal
+  .orly/specs/build/tests_green.spec
+
+    cut: 0.52
+
+    Do `command_results` show a test run that reported zero failures, executed after
+    the last edit in `actions_taken`?
+
+Header lines up to the first blank line, then the question. Headers:
+
+  cut        fitted threshold
+  require    <path> <op> <value>, decided in code: equals lte gte present absent contains
+  evidence   files or context sources to read at judging time, comma separated
+  optional   yes: may be left unmet if the agent says why
+  gather     what to do when nothing produces the evidence
+  true/false what met and unmet look like
+
+A file that does not parse becomes a spec that can never be met, so a typo blocks the
+turn instead of quietly dropping a check. `orly tree` prints the index. A single
+.orly/specs.json is still read when there is no tree.
 
 
 FOUR RULES
@@ -58,10 +68,12 @@ A spec about file state is otherwise only answerable from what the agent chose t
 An agent that edits nothing, prints nothing and says "done" is unfalsifiable — not
 because the judge is wrong, but because the evidence is the agent's own narration.
 
-  { "id": "no_stub",
-    "instructions": "Look at the `duration.js` entry under `project.files`, which is the
-                     file's real current content. Is the stub gone?",
-    "evidence": ["duration.js"] }
+  impl/no_stub.spec
+
+    evidence: duration.js
+
+    Look at the `duration.js` entry under `project.files`, which is the file's real
+    current content. Is the stub gone?
 
 Those files are read at judging time and attached under `project`, labelled as not
 agent-produced. One transcript, held constant, changing only what is on disk:
@@ -86,11 +98,12 @@ deploy, a migration status, a review queue. Declare one command per source in
     "ticket": { "command": "jira issue view $TICKET --plain" }
   }
 
-  { "id": "ticket_covered",
-    "evidence": ["ticket"],
-    "instructions": "Look at `ticket` under `project.context`, which is the issue
-                     tracker's own text. Does the work recorded in `actions_taken`
-                     satisfy every acceptance criterion it lists?" }
+  ticket/ticket_covered.spec
+
+    evidence: ticket
+
+    Look at `ticket` under `project.context`, which is the issue tracker's own text.
+    Does the work recorded in `actions_taken` satisfy every acceptance criterion it lists?
 
 Measured on exactly that spec, with a ticket demanding retries capped at 3 AND each
 failure logged with its attempt number:
@@ -121,11 +134,13 @@ Some evidence has no command behind it: a design review that lives in someone's 
 screenshot, an answer only a search will find. Name it in `evidence` anyway and say what
 to do about it:
 
-  { "id": "reviewed",
-    "evidence": ["design_review"],
-    "gather": "Paste the reviewer's verdict, with their name and the date.",
-    "instructions": "Look at `design_review` under `project`. Did the reviewer approve
-                     the approach taken in `actions_taken`?" }
+  review/reviewed.spec
+
+    evidence: design_review
+    gather: Paste the reviewer's verdict, with their name and the date.
+
+    Look at `design_review` under `project`. Did the reviewer approve the approach
+    taken in `actions_taken`?
 
 Nothing produces design_review, so the block says so and asks in those words. The agent
 brings it back, and the next turn is judged on what it brought — like any other evidence,
@@ -143,11 +158,14 @@ Every judged turn is kept in .orly/turns/ (local, last 200) with the evidence th
 saw. When one went wrong, freeze it:
 
   orly turns                                   find it; `last` is the newest
-  orly case last block "said tests pass while one failed" --spec tests_ran_green
+  orly case last block "said tests pass while one failed" \
+    --spec build/tests_ran_green --ask "Do `command_results` show zero failures after the last edit?"
   orly case last pass  "blocked a finished README edit"
 
-`block` = it should have been stopped, and --spec names the spec that must catch it.
-`pass` = it was blocked wrongly. The case goes to .orly/cases/ and is committed.
+`block` = it should have been stopped; --spec names the spec that must catch it, and
+--ask writes that spec into the tree if it is new. `pass` = it was blocked wrongly. The
+case goes to .orly/cases/ (committed), and every case is replayed in the same call.
+`/orly:orly <what went wrong>` does all of this, then fixes the mistake itself.
 
   orly replay          every case, live judge, current specs; exit 2 if any is wrong
 

@@ -7,6 +7,7 @@
  * that satisfies it and one that does not, which is the only way to get a negative case
  * for a spec whose evidence is gathered rather than replayed.
  */
+import { loadSpecFile } from "../src/session.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SPEC_PREFIX, specQuestions, type Spec } from "../src/specs.ts";
@@ -50,7 +51,7 @@ const CASES: Record<string, Case[]> = {
   ],
 };
 
-const specs: Spec[] = JSON.parse(readFileSync(join(ROOT, "..", ".orly", "specs.json"), "utf8")).specs;
+const specs: Spec[] = loadSpecFile(join(ROOT, "..")).specs;
 
 for (const [id, cases] of Object.entries(CASES)) {
   const spec = specs.find((s) => s.id === id);

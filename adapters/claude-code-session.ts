@@ -127,7 +127,7 @@ lines.push("this order — whether the state the judge received was right, then 
 lines.push("the cut. Every apparent misjudgement found while building this was one of the first");
 lines.push("two.");
 lines.push("");
-lines.push("- Specs live in `.orly/specs.json`; edits apply on the **next turn**, no restart.");
+lines.push("- Specs live in `.orly/specs/` (one `.spec` file each, `orly tree` indexes them); edits apply on the **next turn**, no restart.");
 lines.push("- Fit a cut with `bun ${CLAUDE_PLUGIN_ROOT}/test/spec-fit.ts` before changing one.");
 lines.push("- A spec must be answerable from recorded evidence. Verify with `orly specs`.");
 lines.push("- Name the files a spec depends on in `evidence: [...]` so it reads them itself");

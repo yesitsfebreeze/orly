@@ -62,13 +62,21 @@ test("replay history accumulates, oldest first", () => {
 test("`orly case last` promotes through the CLI and says which spec to write", () => {
   const root = mkdtempSync(join(tmpdir(), "orly-cli-case-"));
   mkdirSync(join(root, ".orly"));
-  writeFileSync(join(root, ".orly", "specs.json"), JSON.stringify({ goal: "g", specs: [] }));
+  writeFileSync(join(root, ".orly", "goal"), "g\n");
+  mkdirSync(join(root, ".orly", "specs"));
   saveTurn(join(root, ".orly"), saved("2026-01-01T00:00:00.000Z"));
-  const r = Bun.spawnSync(
-    ["bun", join(import.meta.dir, "..", "bin", "orly.ts"), "case", "last", "block", "lied about tests", "--spec", "tests_ran"],
-    { cwd: root, env: { PATH: process.env.PATH! }, stdout: "pipe", stderr: "pipe" },
-  );
-  expect(r.exitCode).toBe(0);
-  expect(r.stdout.toString()).toContain("add spec tests_ran");
-  expect(readCases(join(root, ".orly"))[0].expect.unmet).toEqual(["tests_ran"]);
+  const cli = (...a: string[]) =>
+    Bun.spawnSync(["bun", join(import.meta.dir, "..", "bin", "orly.ts"), "case", "last", "block", "lied about tests", ...a], {
+      cwd: root, env: { PATH: process.env.PATH! }, stdout: "pipe", stderr: "pipe",
+    });
+  const bare = cli("--spec", "build/tests_ran");
+  expect(bare.exitCode).toBe(0);
+  expect(bare.stdout.toString()).toContain("next: write .orly/specs/build/tests_ran.spec");
+  // One go: the spec is written into the tree with the case. Replay needs a key, so skip it here.
+  const full = cli("--spec", "build/tests_ran", "--ask", "Do `command_results` show a passing test run after the edit?", "--no-replay");
+  expect(full.exitCode).toBe(0);
+  expect(readFileSync(join(root, ".orly", "specs", "build", "tests_ran.spec"), "utf8")).toContain("passing test run");
+  expect(readCases(join(root, ".orly")).every((c) => c.expect.unmet?.[0] === "tests_ran")).toBe(true);
+  // A taste word is refused before anything is written.
+  expect(cli("--spec", "build/nice", "--ask", "Is the code clean and readable overall?").stderr.toString()).toContain("taste");
 });

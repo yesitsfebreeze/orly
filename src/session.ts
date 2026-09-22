@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, parse } from "node:path";
 import type { Spec, SpecFile } from "./specs.ts";
+import { loadTree } from "./spectree.ts";
 
 export const SPEC_PATH = ".orly/specs.json";
 export const DEFAULT_MAX_ROUNDS = 6;
@@ -147,6 +148,9 @@ export function resolveSpecs(projectSpecs: Spec[]): Spec[] {
 export function loadSpecFile(cwd: string): SpecFile | null {
   const orlyDir = findOrlyDir(cwd);
   if (!orlyDir) return null;
+  // The spec tree wins; a single specs.json is still read for projects that have one.
+  const tree = loadTree(orlyDir);
+  if (tree) return { ...tree, specs: resolveSpecs(tree.specs) };
   const path = join(orlyDir, "specs.json");
   if (!existsSync(path)) return null;
   try {

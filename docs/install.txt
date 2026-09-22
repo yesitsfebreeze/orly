@@ -6,7 +6,7 @@ Requires bun on PATH and a TypeSafe API key (https://console.typesafe.ai).
   claude plugin marketplace add /path/to/orly
   claude plugin install orly@orly-local
 
-Then /orly:orly <your goal>. That writes .orly/specs.json, validates it, and starts work.
+Then /orly:orly <your goal>. That writes the spec tree in .orly/, validates it, and starts work.
 Without a spec file the built-in honesty checks still run as a one-shot sanity check.
 
 
@@ -34,7 +34,9 @@ WHERE .orly LIVES
 
 Found by walking up from the working directory, the way git finds .git.
 
-  .orly/specs.json     the goal and its specs
+  .orly/goal           the goal
+  .orly/specs/         one .spec file per spec, in folders
+  .orly/cases/         mistakes frozen as regression cases (committed)
   .orly/config.json    keyCommand, optional
   .orly/baseline.json  strictest spec set seen, for the anti-weakening backstop
   .orly/log.jsonl      one line per judgment

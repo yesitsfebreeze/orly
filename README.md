@@ -41,8 +41,9 @@ before any request is spent. [Porting](docs/porting.txt) is one file.
   becomes evidence. No connectors.
 - **An examiner the agent can't edit down.** Loosening a cut or deleting a spec is refused.
 - **A malformed spec blocks.** It never waves the turn through.
-- **Every mistake becomes a check.** `orly case last block "what went wrong" --spec id`
-  freezes that turn; `orly replay` re-judges every case, so the mistake stays caught.
+- **Every mistake becomes a check.** `/orly:orly <what went wrong>` freezes the turn,
+  writes the spec that catches it, replays every past case, and fixes the work.
+- **Specs scale.** One small file each in `.orly/specs/<group>/`; `orly tree` indexes them.
 - **No trap.** The agent stops when everything passes, when it says plainly what it
   couldn't do, or when the round cap runs out.
 
