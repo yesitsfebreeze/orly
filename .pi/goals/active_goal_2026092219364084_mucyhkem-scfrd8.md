@@ -5,13 +5,13 @@
   "status": "active",
   "autoContinue": true,
   "usage": {
-    "tokensUsed": 1744134,
-    "activeSeconds": 609
+    "tokensUsed": 1752041,
+    "activeSeconds": 655
   },
   "sisyphus": false,
-  "revision": 76,
+  "revision": 84,
   "createdAt": "2026-09-22T17:36:40.846Z",
-  "updatedAt": "2026-09-22T17:47:24.174Z",
+  "updatedAt": "2026-09-22T17:48:21.142Z",
   "scheduler": {
     "version": 1,
     "owner": "01a0ca0f-b866-7462-a8ac-f5a0169c9a6b",
@@ -42,5 +42,5 @@ The user confirmed loop-start fix ("1"). 1) Confirm `/orly` loop: CLI (`bin/orly
 - Status: running
 - Auto-continue: on
 - Sisyphus mode: no
-- Time spent: 10m09s
-- Tokens used: 1.7M (1,744,134) tokens
+- Time spent: 10m55s
+- Tokens used: 1.8M (1,752,041) tokens
