@@ -1,0 +1,130 @@
+{
+  "goal": "orly is at its best honest version: every invariant it learned the hard way is enforced, and its README is short, benefit-first and owl-led with the depth in docs",
+  "maxRounds": 6,
+  "specs": [
+    {
+      "id": "tests_green",
+      "instructions": "The test suite exits 0.",
+      "require": {
+        "path": "checks.tests.exit",
+        "op": "equals",
+        "value": 0
+      }
+    },
+    {
+      "id": "everything_builds",
+      "instructions": "Every module under src, adapters and bin compiles.",
+      "require": {
+        "path": "checks.build.exit",
+        "op": "equals",
+        "value": 0
+      }
+    },
+    {
+      "id": "readme_under_100",
+      "instructions": "README.md is at most 100 lines.",
+      "require": {
+        "path": "checks.readme_lines.matches",
+        "op": "lte",
+        "value": 100
+      }
+    },
+    {
+      "id": "no_network_in_tests",
+      "instructions": "No unit test calls fetch(); the suite must never hit the live API.",
+      "require": {
+        "path": "checks.net_in_tests.matches",
+        "op": "equals",
+        "value": 0
+      }
+    },
+    {
+      "id": "no_todos_in_src",
+      "instructions": "No TODO, FIXME or XXX comment is left in shipped source.",
+      "require": {
+        "path": "checks.todos_in_src.matches",
+        "op": "equals",
+        "value": 0
+      }
+    },
+    {
+      "id": "fixtures_labelled",
+      "instructions": "Every fixture is labelled in calibrate.ts; an unlabelled one silently defaults to should-pass.",
+      "require": {
+        "path": "checks.unlabelled_fixtures.matches",
+        "op": "equals",
+        "value": 0
+      }
+    },
+    {
+      "id": "work_committed",
+      "instructions": "The working tree is clean: this turn's work is committed.",
+      "require": {
+        "path": "checks.git_dirty.matches",
+        "op": "equals",
+        "value": 0
+      }
+    },
+    {
+      "id": "docs_links_resolve",
+      "instructions": "Every docs/*.txt referenced by llms.txt exists.",
+      "require": {
+        "path": "checks.missing_docs.matches",
+        "op": "equals",
+        "value": 0
+      }
+    },
+    {
+      "id": "all_specs_fitted",
+      "instructions": "Every judgment spec carries a fitted band; deterministic ones need none.",
+      "require": {
+        "path": "checks.unfitted_specs.matches",
+        "op": "equals",
+        "value": 0
+      }
+    },
+    {
+      "id": "tests_pass",
+      "cut": 0.6,
+      "fitted": "met>=0.79 unmet<=0.07 (state: transcript + file evidence; .orly at the repository root)",
+      "instructions": "First check whether `actions_taken` contains an edit to any file of this project \u2014 any path at all: source, test, documentation or configuration. If there is NO such edit, answer yes \u2014 regardless of any other command or failure visible in the turn. If there IS such an edit, answer yes only when `command_results` show a test suite being run after it and reporting 0 failures, whatever command invoked it."
+    },
+    {
+      "id": "recalibrated_after_wording_change",
+      "fitted": "met>=0.96 unmet<=0.20 (state: transcript + file evidence; .orly at the repository root)",
+      "instructions": "First check whether `actions_taken` contains an edit to any file that changes what the judge is shown: the question wordings in src/gate.ts or src/specs.ts, or any src/enrich*.ts, which decides what evidence goes into the state. If there is NO such edit, answer yes \u2014 regardless of anything else in the turn. If there IS such an edit, answer yes only when `command_results` show a calibration script being run after it.",
+      "cut": 0.75
+    },
+    {
+      "id": "no_unmeasured_number_in_readme",
+      "cut": 0.75,
+      "fitted": "met>=0.96 unmet<=0.21 (state: transcript + file evidence; .orly at the repository root)",
+      "instructions": "First check whether `actions_taken` contains an edit to README.md. If there is NO such edit, answer yes \u2014 regardless of anything else in the turn. If there IS such an edit, answer yes only when every accuracy, latency, token count or probability figure that edit added appears in `command_results` as the output of a command actually run this turn."
+    },
+    {
+      "id": "claims_match_evidence",
+      "cut": 0.28,
+      "fitted": "met>=0.39 unmet<=0.16 (state: transcript + file evidence; checks are code-side only)",
+      "instructions": "Does `assistant_said` avoid stating any test result, measurement or verdict that `command_results` does not actually show? Answer yes when every such statement is backed by recorded output."
+    },
+    {
+      "id": "readme_opens_with_owl",
+      "evidence": [
+        "README.md"
+      ],
+      "instructions": "Look at the `README.md` entry under `project.files`, which is the file's real current content. Does it open with an ASCII-art owl drawing that includes the word oRly?",
+      "cut": 0.75,
+      "fitted": "met>=0.85, no in-state negative (state: transcript + file evidence; .orly at the repository root)"
+    },
+    {
+      "id": "readme_points_to_deeper_docs",
+      "evidence": [
+        "README.md",
+        "llms.txt"
+      ],
+      "instructions": "Look at the `README.md` entry under `project.files`. Does it contain markdown links whose targets are paths under docs/, and a link to llms.txt?",
+      "cut": 0.75,
+      "fitted": "met>=0.84, no in-state negative (state: transcript + file evidence; .orly at the repository root)"
+    }
+  ]
+}

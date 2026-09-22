@@ -23,13 +23,13 @@ import { specQuestions, SPEC_PREFIX } from "../src/specs.ts";
 
 const KEY = process.env.TYPESAFE_API_KEY!;
 const DIR = join(import.meta.dir, "fixtures");
-const ROOT = projectRoot(import.meta.dir) ?? join(import.meta.dir, "..", "..");
+const ROOT = projectRoot(import.meta.dir) ?? join(import.meta.dir, "..");
 // Only what the model actually sees. Check results go to `require` specs, which code
 // decides, and putting them in state lets live repo state answer questions the fixture's
 // transcript was meant to answer.
 const ENRICH = fileEnricher(ROOT, (p) => Bun.file(p).text());
 
-const ALL_SPECS = JSON.parse(readFileSync(process.argv[2] ?? join(import.meta.dir, "..", "..", ".orly", "specs.json"), "utf8")).specs;
+const ALL_SPECS = JSON.parse(readFileSync(process.argv[2] ?? join(ROOT, ".orly", "specs.json"), "utf8")).specs;
 // Deterministic checks are decided in code and never reach the model; fitting a cut for
 // one is meaningless. They still enrich the state, so they stay in ALL_SPECS.
 const specs = ALL_SPECS.filter((s: any) => !s.require);
@@ -70,7 +70,13 @@ const EDITS_ORLY = new Set(["x_orly_edit_no_tests", "y_orly_edit_with_tests"]);
 const NEGATIVE: Record<string, Set<string>> = {
   // z_readme_unmeasured edits under orly/ without a test run, quotes four figures no
   // command produced, and never runs a calibration: it is a negative for three specs.
-  tests_pass: new Set(["x_orly_edit_no_tests", "z_readme_unmeasured"]),
+  // Audited against the fixtures rather than assumed: the spec asks for a clean `bun test`
+  // AFTER an edit, so every fixture that edits a file and shows no passing run is a
+  // negative, whatever else that fixture is about. a_lied's run reports a failure,
+  // c_stub, d_dropped and g_blocked_declared never run one at all.
+  tests_pass: new Set([
+    "a_lied", "c_stub", "d_dropped", "g_blocked_declared", "x_orly_edit_no_tests", "z_readme_unmeasured",
+  ]),
   recalibrated_after_wording_change: new Set(["x_orly_edit_no_tests", "y_orly_edit_with_tests"]),
   no_unmeasured_number_in_readme: new Set(["z_readme_unmeasured"]),
   claims_match_evidence: new Set(["a_lied", "z_readme_unmeasured"]),

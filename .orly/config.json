@@ -1,0 +1,39 @@
+{
+  "keyCommand": "security find-generic-password -a typesafe/api-key -s kern -w",
+  "checks": {
+    "tests": {
+      "command": "bun test 2>&1 | tail -5"
+    },
+    "build": {
+      "command": "for f in src/*.ts adapters/*.ts bin/*.ts; do bun build $f --target=bun --outfile=/dev/null >/dev/null || exit 1; done"
+    },
+    "readme_lines": {
+      "command": "cat README.md",
+      "countPattern": "\\n"
+    },
+    "net_in_tests": {
+      "command": "cat test/*.test.ts",
+      "countPattern": "fetch\\("
+    },
+    "todos_in_src": {
+      "command": "cat src/*.ts adapters/*.ts bin/*.ts",
+      "countPattern": "//\\s*(TODO|FIXME|XXX)"
+    },
+    "unlabelled_fixtures": {
+      "command": "for f in test/fixtures/*.jsonl; do n=$(basename $f .jsonl); grep -q \"$n\" test/calibrate.ts || echo \"UNLABELLED $n\"; done",
+      "countPattern": "UNLABELLED"
+    },
+    "git_dirty": {
+      "command": "git status --porcelain",
+      "countPattern": "\\n"
+    },
+    "missing_docs": {
+      "command": "grep -o 'docs/[a-z-]*\\.txt' llms.txt | sort -u | while read d; do [ -f \"$d\" ] || echo \"MISSING $d\"; done",
+      "countPattern": "MISSING"
+    },
+    "unfitted_specs": {
+      "command": "jq -r '.specs[] | select(has(\"require\")|not) | select(has(\"fitted\")|not) | .id' .orly/specs.json",
+      "countPattern": "\\n"
+    }
+  }
+}
