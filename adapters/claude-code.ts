@@ -197,6 +197,16 @@ if (orlyDir) {
     ),
     actions: turn!.actions_taken.length,
     results: turn!.command_results.length,
+    // What this verdict was actually decided at, including every per-spec cut, so the
+    // record explains its own outcome without knowing the environment that produced it.
+    thresholds: {
+      hazard: num("ORLY_HAZARD", DEFAULTS.hazard),
+      specMet: num("ORLY_SPEC_MET", DEFAULTS.specMet),
+      minCoverage: num("ORLY_MIN_COVERAGE", DEFAULTS.minCoverage),
+      ...Object.fromEntries(
+        specs.filter((s) => typeof s.cut === "number").map((s) => [`spec:${s.id}`, s.cut as number]),
+      ),
+    },
   });
 }
 

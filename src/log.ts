@@ -33,6 +33,15 @@ export type Judged = {
   /** Counts, to tell a thin turn from a long one without storing the transcript. */
   actions: number;
   results: number;
+  /**
+   * The thresholds this verdict was actually decided at.
+   *
+   * Without them a turn blocked at a raised cut is indistinguishable from one blocked at
+   * the default, and the environment that set it is nowhere in the record. `orly fit`
+   * reads this log to propose cuts, so a log that does not say which cut produced each
+   * outcome is proposing against an unknown.
+   */
+  thresholds?: Record<string, number>;
   /** Set on the NEXT judgment of the same session: what the agent did after a block. */
   outcome?: "worked" | "explained" | "unknown";
 };

@@ -27,25 +27,38 @@ export type Violation = { id: string; problem: string };
  * Only the direction that makes the gate easier is refused. Adding a check, or changing a
  * command while keeping one, is ordinary work.
  */
-export function checkWeakenings(
-  before: { checks?: Record<string, { command?: string }> } | null,
-  after: { checks?: Record<string, { command?: string }> } | null,
-): Violation[] {
+type Commanded = Record<string, { command?: string; maxChars?: number }>;
+type Configured = { checks?: Commanded; context?: Commanded } | null;
+
+/** A command that cannot fail is not a check — the shapes one is filed down into. */
+const CANNOT_FAIL = /^\s*(true|:|exit 0|echo\b[^|]*)\s*$/;
+
+export function checkWeakenings(before: Configured, after: Configured): Violation[] {
   const out: Violation[] = [];
-  const was = before?.checks ?? {};
-  const now = after?.checks ?? {};
-  for (const [name, spec] of Object.entries(was)) {
-    if (!(name in now)) {
-      out.push({ id: name, problem: "the check was deleted, which disarms every spec asserting on it" });
-      continue;
-    }
-    const before_ = spec?.command ?? "";
-    const after_ = now[name]?.command ?? "";
-    if (before_ === after_) continue;
-    // A command that cannot fail is not a check. These are the shapes that show up when
-    // one is filed down rather than fixed.
-    if (/^\s*(true|:|exit 0|echo\b[^|]*)\s*$/.test(after_)) {
-      out.push({ id: name, problem: `its command was replaced with one that cannot fail: ${JSON.stringify(after_)}` });
+  // Both kinds of declared command. A `context` source is the evidence a spec reads, so
+  // narrowing it to print less is the same move as narrowing a test command to run less.
+  for (const kind of ["checks", "context"] as const) {
+    const was = before?.[kind] ?? {};
+    const now = after?.[kind] ?? {};
+    for (const [name, spec] of Object.entries(was)) {
+      const label = kind === "checks" ? "check" : "context source";
+      if (!(name in now)) {
+        out.push({ id: name, problem: `the ${label} was deleted, which disarms every spec that reads it` });
+        continue;
+      }
+      const then = spec?.command ?? "";
+      const nowCommand = now[name]?.command ?? "";
+      if (then !== nowCommand && CANNOT_FAIL.test(nowCommand)) {
+        out.push({ id: name, problem: `its command was replaced with one that cannot fail: ${JSON.stringify(nowCommand)}` });
+      }
+      // Evidence clipped shorter is evidence the judge stops seeing. Measured twice on
+      // files: a README cut at 2 000 chars lost the section a spec asked about and scored
+      // 0.10 on a file that plainly satisfied it.
+      const wasMax = spec?.maxChars;
+      const nowMax = now[name]?.maxChars;
+      if (typeof wasMax === "number" && typeof nowMax === "number" && nowMax < wasMax) {
+        out.push({ id: name, problem: `its evidence was clipped shorter, ${wasMax} → ${nowMax} characters` });
+      }
     }
   }
   return out;

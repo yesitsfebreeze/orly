@@ -13,7 +13,7 @@
  * on the very next judgment. That is the hot reload — no restart, no reinstall.
  */
 import { label, propose, read } from "../src/log.ts";
-import { findOrlyDir, loadSpecFile } from "../src/session.ts";
+import { findOrlyDir, loadConfig, loadSpecFile } from "../src/session.ts";
 
 const raw = await new Response(Bun.stdin.stream()).text();
 let input: any = {};
@@ -50,6 +50,17 @@ if (specs.length) {
 } else {
   lines.push("");
   lines.push("No goal specs yet — only the built-in honesty checks. `/orly:orly <goal>` writes a set.");
+}
+
+// A project with no checks block runs spec-only, and every guarantee about deterministic
+// evidence silently does not apply here. Absence is not compliance, so say it out loud.
+if (specs.length && !Object.keys(loadConfig(input.cwd ?? process.cwd()).checks ?? {}).length) {
+  lines.push("");
+  lines.push(
+    "No deterministic checks are configured, so every spec above is a judgment. " +
+      "Anything a command can decide — exit codes, counts — belongs in `checks` in " +
+      "`.orly/config.json` and is then asserted in code, for free and without drift.",
+  );
 }
 
 // What the log knows. This is the evidence the agent tunes against.

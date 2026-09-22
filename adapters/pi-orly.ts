@@ -1,194 +1,119 @@
-#!/usr/bin/env bun
-/**
- * Pi extension adapter — the only file in this plugin that knows what Pi is.
- *
- * It wires Pi's turn_end event to the portable gate: read the hook payload,
- * turn the Pi session transcript into a `Turn`, ask the judge, and translate the
- * verdict back into the hook's own JSON. Same wiring as claude-code adapter.
- */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { checkBaseline, refusal } from "../src/guard.ts";
-import { messagesFrom } from "./claude-transcript.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULTS, judge, type Turn } from "../src/gate.ts";
-import { normalizeLastTurn } from "../src/normalize.ts";
-import { projectEvidence } from "../src/evidence.ts";
-import { append as logVerdict } from "../src/log.ts";
-import {
-  advance,
-  DEFAULT_MAX_ROUNDS,
-  findOrlyDir,
-  loadSpecFile,
-  readRounds,
-  resolveKey,
-  writeRounds,
-} from "../src/session.ts";
-import { unmet } from "../src/specs.ts";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { checkBaseline, refusal } from "../src/guard.ts";
+import { findOrlyDir, loadSpecFile, resolveKey } from "../src/session.ts";
 
-/** Pi turn_end fires after the assistant has completed its turn. */
 const FLUSH_TRIES = Number(process.env.PI_FLUSH_TRIES ?? 12);
 const FLUSH_WAIT_MS = Number(process.env.PI_FLUSH_WAIT_MS ?? 150);
 
-const num = (name: string, fallback: number) => {
-  const v = process.env[name];
-  const n = v === undefined ? NaN : Number(v);
-  return Number.isFinite(n) ? n : fallback;
-};
+const OWL = `
+  ; ,
+ {@.@}
+ /) )  oRly?
+  '`;
+const BLOCKED = "[X]";
+const PASSED = "[O]";
 
-/** Every error path lands here. */
 function allow(note?: string): never {
   if (note) console.error(`pi-orly: ${note}`);
-  process.exit(0);
+  throw new Error(note ?? "");
 }
 
-/**
- * Parse Pi's turn_end JSONL transcript.
- *
- * Pi sends a JSONL file (similar to Claude Code) with events per line.
- * We filter out sidechain notices and meta markers, then collect user/assistant
- * messages — the same filtering as claude-code.ts.
- */
-export function messagesFrom(jsonl: string): Message[] {
-  const out: Message[] = [];
-  for (const line of jsonl.split("\n")) {
-    if (!line.trim()) continue;
-    let e: any;
-    try {
-      e = JSON.parse(line);
-    } catch {
-      continue; // half-written line tells us nothing
-    }
-    // Skip sidechain notices (internal Pi diagnostics)
-    if (e?.isSidechain === true) continue;
-    // Skip meta markers (hook internal comments)
-    if (e?.isMeta === true) continue;
-    // Only user and assistant messages belong in the turn
-    if (e?.type === "user" || e?.type === "assistant") {
-      out.push({ role: e.type, content: e.message?.content });
-    }
-  }
-  return out;
-}
-
-/**
- * Build a Pi turn from the transcript.
- * Mirrors claude-code.ts: read the last turn, ensure it has a user request,
- * then call judge with the same parameters.
- */
-async function buildTurn(): Promise<Turn | null> {
-  try {
-    return normalizeLastTurn(messagesFrom(await Bun.file("/tmp/pi-transcript.jsonl").text()));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Main entry point called by Pi's turn_end handler.
- * Wires Pi's turn_end -> gate judge -> verdict -> log.
- */
-async function handleTurnEnd(): void {
-  const turn = await buildTurn();
-  if (!turn) {
-    allow("turn could not be built");
-    return;
-  }
-
-  // Stop fires before the turn's closing message reaches the transcript.
-  // Judge then, a finished turn scores "nothing was reported" — because nothing has been, yet.
-  let waited = 0;
-  for (let i = 0; i < FLUSH_TRIES && !turn.conclusive && turn.actions_taken.length; i++) {
-    await Bun.sleep(FLUSH_WAIT_MS);
-    waited += FLUSH_WAIT_MS;
-    turn = (await read()) ?? turn;
-  }
-
-  if (!turn.user_request) allow("closing message never reached the transcript");
-  if (!turn.actions_taken.length && !turn.assistant_said) allow();
-  if (!turn.conclusive) allow("closing message never reached the transcript");
-
-  // Call the judge with the same parameters as claude-code adapter
-  try {
-    const result = await judge(
-      turn,
-      {
-        apiKey: resolveKey(),
-        specs: [], // specs come from .orly/specs.json if present
-        enrich: projectEvidence({ cwd: "/"),
-        endpoint: process.env.TIPService_BASE_URL,
-        model: process.env.ORLY_MODEL,
-        timeoutMs: num("ORLY_TIMEOUT_MS", 12_000),
-        thresholds: {
-          hazard: num("ORLY_HAZARD", DEFAULTS.hazard),
-          specMet: num("ORLY_SPEC_MET", DEFAULTS.specMet),
-          minCoverage: num("ORLY_MIN_COVERAGE", DEFAULTS.minCoverage),
-          minCoverageConfidence: num("ORLY_MIN_CONFIDENCE", DEFAULTS.minCoverageConfidence),
-          minActionProbability: num("ORLY_MIN_ACTION_P", DEFAULTS.minActionProbability),
-        },
-      },
-    );
-  } catch (e: any) {
-    allow(`judge unavailable (${e?.message ?? e})`);
-  }
-
-  const { verdict, answers, usage } = result!;
-
-  // Log verdict with owl marker (same format as claude-code adapter)
-  const orlyDir = findOrlyDir();
-  if (orlyDir) {
-    const scores: Record<string, number> = {};
-    for (const [id, a] of Object.entries(answers)) {
-      const v = typeof a?.noul === "number" ? a.noul : typeof a?.score === "number" ? a.score : undefined;
-      if (typeof v === "number") scores[id] = Number(v.toFixed(3));
-    }
-    logVerdict(orlyDir, {
-      at: new Date().toISOString(),
-      session: "/",
-      goal: "",
-      blocked: verdict.block,
-      scores,
-      unmet: scores.filter((r) => !r.met && !r.spec.optional).map((r) => `spec:${r.spec.id}`),
-      hazards: ["unverified_claim", "placeholder_left", "unaddressed_part", "silent_failure"].filter(
-        (h) => (scores[h] ?? 0) >= num("ORLY_HAZARD", DEFAULTS.hazard),
-      ),
-      actions: turn.actions_taken.length,
-      results: turn.command_results.length,
-    });
-  }
-
-  // Loop control: only ever loosens the verdict, never tightens it.
-  if (verdict.block && specs.length) {
-    const met = verdict.results.filter((r) => r.met).length;
-    const decision = advance(
-      readRounds(orlyDir, "/"),
-      "",
-      met,
-      "",
-    );
-    writeRounds(orlyDir, "/", decision.next);
-    if (!decision.mayBlock) {
-      console.log(
-        JSON.stringify({
-          systemMessage: `${verdict.line} · ${decision.note} · ${unmet(verdict.results).length} spec(s) still unmet`,
-        }),
+export default function (pi: ExtensionAPI) {
+  pi.on("turn_end", async (event, ctx) => {
+    // Simple baseline check
+    const specFile = loadSpecFile(ctx.cwd);
+    const specs = specFile?.specs ?? [];
+    const guardDir = findOrlyDir(ctx.cwd);
+    if (guardDir && specs.length) {
+      const basePath = join(guardDir, "baseline.json");
+      let baseline: any = null;
+      try {
+        baseline = JSON.parse(readFileSync(basePath, "utf8"));
+      } catch {
+        /* first run: current state becomes baseline */
+      }
+      const { violations, nextBaseline } = checkBaseline(
+        baseline,
+        { goal: specFile?.goal ?? "", specs },
+        { specMet: 0.8 },
       );
-      process.exit(0);
+      if (violations.length) {
+        return {
+          entries: [
+            ...event.entries,
+            {
+              type: "custom_message",
+              customType: "orly-verdict",
+              content: `${OWL}\n${BLOCKED} spec file weakened (${violations.map((v) => v.id).join(", ")})`,
+              display: true,
+            },
+          ],
+          continue: true,
+        };
+      }
+      try {
+        writeFileSync(basePath, JSON.stringify(nextBaseline, null, 2));
+      } catch {
+        /* non-writable .orly only costs backstop */
+      }
     }
-    // In Pi, we typically just finish the turn; no further rounds.
-  }
 
-  const line =
-    verdict.line +
-    (usage ? ` · ${usage.input_tokens}+${usage.output_tokens} tok` : "") +
-    (waited ? ` · waited ${waited}ms for flush` : "") +
-    (verdict.block && !decision.mayBlock ? " · block" : "");
+    // No API key? skip
+    const key = resolveKey(ctx.cwd);
+    if (!key) {
+      const marker = join(tmpdir(), `pi-orly-nokey-${ctx.sessionManager.getSessionId() ?? "unknown"}`);
+      if (!existsSync(marker)) {
+        try {
+          writeFileSync(marker, "");
+        } catch {
+          /* unwritable tmpdir only costs once-per-session part */
+        }
+        ctx.ui.notify("orly? is disabled: no TypeSafe key.", "info");
+      }
+      return {};
+    }
 
-  console.log(
-    JSON.stringify(
-      verdict.block
-        ? { decision: "block", reason: verdict.reason, systemMessage: line }
-        : { systemMessage: line },
-    ),
-  );
+    // Build Pi's turn from entries
+    const userMsg = event.message?.content ?? "";
+    const toolResults = event.toolResults?.map((tr) => tr.content).join("\n") ?? "";
+    const turnText = `user: ${userMsg}\ntool results: ${toolResults}`;
+
+    // Call the orly CLI
+    const orlyCli = join(__dirname, "../../bin/orly");
+    const result = await Bun.spawn([orlyCli, "judge"], {
+      cwd: ctx.cwd,
+      input: JSON.stringify({ transcript: turnText, cwd: ctx.cwd, session_id: ctx.sessionManager.getSessionId() ?? "unknown" }),
+      env: { ...process.env, TYPESAFE_API_KEY: key },
+      stdout: "pipe",
+      stderr: "pipe",
+    }).finished;
+
+    let verdict;
+    try {
+      verdict = JSON.parse(await result.stdout.text());
+    } catch {
+      return {};
+    }
+
+    // Return verdict as owl message
+    const line = verdict.block
+      ? `${OWL}\n${BLOCKED} blocked · ${verdict.reason ?? ""}`
+      : `${OWL}\n${PASSED} passed`;
+
+    return {
+      entries: [
+        ...event.entries,
+        {
+          type: "custom_message",
+          customType: "orly-verdict",
+          content: line,
+          display: true,
+        },
+      ],
+      continue: verdict.block ?? false,
+    };
+  });
 }

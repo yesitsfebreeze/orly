@@ -148,3 +148,15 @@ test("the backstop catches a check deleted through any route", () => {
   expect(violations.map((v) => v.id)).toEqual(["tests"]);
   expect(nextBaseline).toBe(was); // a weakening is never laundered into the baseline
 });
+
+test("a context source is guarded the same as a check", () => {
+  // It is the evidence a spec reads. Narrowing it to print less is the same move as
+  // narrowing a test command to run less.
+  const was = { context: { ticket: { command: "jira issue view $T --plain", maxChars: 6000 } } };
+  expect(checkWeakenings(was, { context: {} })[0].problem).toContain("context source was deleted");
+  expect(checkWeakenings(was, { context: { ticket: { command: "echo ok", maxChars: 6000 } } })).toHaveLength(1);
+  expect(checkWeakenings(was, { context: { ticket: { command: "jira issue view $T --plain", maxChars: 500 } } })[0].problem)
+    .toContain("clipped shorter");
+  // Fetching it differently, or showing more of it, is ordinary work.
+  expect(checkWeakenings(was, { context: { ticket: { command: "gh issue view $T", maxChars: 9000 } } })).toEqual([]);
+});

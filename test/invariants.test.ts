@@ -276,3 +276,22 @@ test("orly writing its own state is not the tree changing", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a project running spec-only is told so, rather than reading as compliant", () => {
+  // A config with no checks block means every deterministic guarantee silently does not
+  // apply, and a guard that protects an empty set looks exactly like a guard.
+  const dir = sandbox();
+  try {
+    mkdirSync(join(dir, ".orly"));
+    writeFileSync(join(dir, ".orly", "config.json"), JSON.stringify({ keyCommand: "echo k" }));
+    writeFileSync(
+      join(dir, ".orly", "specs.json"),
+      JSON.stringify({ goal: "g", specs: [{ id: "a", instructions: "is it done?", cut: 0.7 }] }),
+    );
+    const out = hook("claude-code-session.ts", { cwd: dir }, dir);
+    expect(JSON.parse(out.stdout.toString()).hookSpecificOutput.additionalContext)
+      .toContain("No deterministic checks are configured");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
