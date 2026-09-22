@@ -125,6 +125,24 @@
       "instructions": "Look at the `README.md` entry under `project.files`. Does it contain markdown links whose targets are paths under docs/, and a link to llms.txt?",
       "cut": 0.75,
       "fitted": "met>=0.84, no in-state negative (state: transcript + file evidence; .orly at the repository root)"
+    },
+    {
+      "id": "ORLY-THRESHOLD",
+      "label": "threshold logging in verdict (adapter change)",
+      "require": "verdict includes threshold value when adapter logs",
+      "fitted": true
+    },
+    {
+      "id": "ORLY-ADAPT",
+      "label": "adapter parity / no stripped adapter (adapters/pi-orly.ts intact)",
+      "require": "all adapter modules present and unstripped",
+      "fitted": true
+    },
+    {
+      "id": "ORLY-LOOP",
+      "label": "loop start reliability (mucyhkem)",
+      "require": "/orly CLI starts loop on turn_end; adapter and extension intact; no stripped modules",
+      "fitted": true
     }
   ]
 }
