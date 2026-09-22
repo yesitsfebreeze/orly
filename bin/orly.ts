@@ -148,12 +148,11 @@ if (command === "specs") {
 
   // A `require` spec is decided in code, so "could a transcript settle this?" is the wrong
   // question to ask of it — and asking anyway reports a perfectly good check as broken.
+  const problems = validateSpecs(file.specs);
   const judged = (file.specs as Spec[]).filter((s) => !s.require);
   const deterministic = (file.specs as Spec[]).length - judged.length;
   if (deterministic) console.log(`${deterministic} deterministic check(s) skipped — decided in code, not judged\n`);
   file.specs = judged;
-
-  const problems = validateSpecs(file.specs);
   const rejected = new Set(problems.map((p) => p.id));
   for (const p of problems) console.log(`✗ word   ${p.id}: ${p.problem}`);
 

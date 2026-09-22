@@ -34,6 +34,22 @@
     "unfitted_specs": {
       "command": "jq -r '.specs[] | select(has(\"require\")|not) | select(has(\"fitted\")|not) | .id' .orly/specs.json",
       "countPattern": "\\n"
+    },
+    "malformed_requires": {
+      "command": "jq -r '.specs[] | select(has(\"require\")) | select((.require|type)!=\"object\" or (.require.path|type)!=\"string\" or ([\"equals\",\"lte\",\"gte\",\"present\",\"absent\",\"contains\"]|index(.require.op))==null) | \"MALFORMED \\(.id)\"' .orly/specs.json",
+      "countPattern": "MALFORMED"
+    },
+    "foreign_state": {
+      "command": "git ls-files index.json .pi/index.json .pi/.goals-pool-snapshot.json .pi/goals",
+      "countPattern": "\\n"
+    },
+    "readme_owls": {
+      "command": "cat README.md",
+      "countPattern": "\\{@,@\\}"
+    },
+    "spec_crashes": {
+      "command": "bun -e 'import {evaluate,validateSpecs} from \"./src/specs.ts\"; const s=(await Bun.file(\".orly/specs.json\").json()).specs; for (const p of validateSpecs(s)) console.log(\"CRASH\", p.id, p.problem); for (const x of s) if (x.require) try { evaluate(x.require, {}) } catch (e) { console.log(\"CRASH\", x.id, e.message) }'",
+      "countPattern": "CRASH"
     }
   }
 }

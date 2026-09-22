@@ -9,13 +9,12 @@ I have done what you asked, here is... oRly
 
 # orly
 
-Who doesnt know this feeling, you ask specifics, ask for completion.
-What do you get back? Half verified slop where the llm is overwhelmed with a few requests.
+You ask for something specific and complete. You get back half-verified work and a
+confident "done".
 
 Your agent says it's done. orly asks the obvious question — at the end of **every** turn,
 before the stop goes through. Whatever isn't true comes back with the gap named, and the
 agent keeps working until it is.
-
 
 ```sh
 claude plugin marketplace add /path/to/orly && claude plugin install orly@orly-local
@@ -37,17 +36,6 @@ Anthropic and OpenAI message shapes both work. [Porting](docs/porting.txt) is on
 - A TODO standing in for the feature you asked for.
 - The third item of a three-item request, quietly dropped.
 - A figure in the summary that no command produced.
-
-## The owl
-
-```
-  , .  
- {@,@}  
- /) )   
-  '"  
-
-I have done what you asked, here is... oRly
-```
 
 ## Why it holds
 

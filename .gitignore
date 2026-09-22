@@ -1,7 +1,21 @@
+# Dependencies and OS noise
 node_modules/
+.DS_Store
 *.log
+
+# orly runtime state: per-machine judgments, never source
 .orly/log.jsonl
 .orly/baseline.json
 .orly/checks.json
 .orly/orly-rounds-*.json
+
+# Other tools' local state
 .kern/
+.pi/*
+!.pi/extensions/
+index.json
+
+# Editors
+.vscode/
+.idea/
+*.swp

@@ -4,54 +4,10 @@ import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { checkBaseline, refusal } from "../src/guard.ts";
 import { findOrlyDir, loadSpecFile, resolveKey } from "../src/session.ts";
+import { BLOCKED, owlBlock, statusBar } from "../src/banner.ts";
 
 const FLUSH_TRIES = Number(process.env.PI_FLUSH_TRIES ?? 12);
 const FLUSH_WAIT_MS = Number(process.env.PI_FLUSH_WAIT_MS ?? 150);
-
-const OWL_PREFF_01 = ` , .`  // first line [rints here up ro padding
-const OWL_PREFF_02 = `{@,@}` // second line [rints here up to padding
-const OWL_PREFF_03 = `/) )`  // ... and so on, rest ussed padding
-const OWL_PREFF_04 = ` '"`;  // first line [rints here
-const OWL_PAD = 7; // indent where the text starts
-const OWL_MARGIN = 3; // left margin for the complete status bar
-
-const BLOCKED = "[X]";
-const PASSED = "[O]";
-
-/**
- * One verdict, four status-bar lines.
- *
- * The CLI already joins every judgment into one `line` — verdict, specs met, coverage,
- * the next step and any hazard that fired — separated by " · ". Spreading that across
- * four rows puts an overview on the screen instead of a wall of text after every turn,
- * while the owl prefix stays on the left of each row exactly as it was drawn.
- */
-function statusBar(verdict: { block: boolean; line: string }): string[] {
-  const parts = verdict.line.split(" · ");
-  const label = verdict.block ? "BLOCK" : "PASS";
-  const info = parts.slice(1);
-  let specs = "";
-  let coverage = "";
-  let next = "";
-  const hazards: string[] = [];
-  for (const p of info) {
-    if (p.startsWith("specs ")) specs = p;
-    else if (p.startsWith("coverage ")) coverage = p;
-    else if (p.startsWith("next=")) next = p;
-    else hazards.push(p);
-  }
-  return [`${label} · ${specs}`, coverage, next, hazards.join(" · ")];
-}
-
-function owlBlock(lines: string[]): string {
-  const margin = " ".repeat(OWL_MARGIN);
-  return [
-    margin + OWL_PREFF_01.padEnd(OWL_PAD) + lines[0],
-    margin + OWL_PREFF_02.padEnd(OWL_PAD) + lines[1],
-    margin + OWL_PREFF_03.padEnd(OWL_PAD) + lines[2],
-    margin + OWL_PREFF_04.padEnd(OWL_PAD) + lines[3],
-  ].join("\n");
-}
 
 function allow(note?: string): never {
   if (note) console.error(`pi-orly: ${note}`);

@@ -88,6 +88,9 @@ const at = (obj: unknown, path: string): unknown =>
 
 /** Evaluate a `require` against gathered evidence. Undecidable means unmet, never met. */
 export function evaluate(req: Require, evidence: unknown): { met: boolean; actual: unknown } {
+  // A hand-written spec can carry any JSON here. Throwing would surface as "judge
+  // unavailable" and let the turn through — the one direction this must never fail.
+  if (typeof req?.path !== "string") return { met: false, actual: undefined };
   const actual = at(evidence, req.path);
   switch (req.op) {
     case "present":
@@ -117,6 +120,8 @@ const UNCHECKABLE = /\b(clean|elegant|readable|maintainable|idiomatic|well[- ](s
 
 export type SpecProblem = { id: string; problem: string };
 
+const OPS = ["equals", "lte", "gte", "present", "absent", "contains"];
+
 /** Reject specs that cannot be judged before they start returning numbers. */
 export function validateSpecs(specs: Spec[]): SpecProblem[] {
   const problems: SpecProblem[] = [];
@@ -128,6 +133,12 @@ export function validateSpecs(specs: Spec[]): SpecProblem[] {
     }
     if (seen.has(s.id)) problems.push({ id: s.id, problem: "duplicate id" });
     seen.add(s.id);
+    if (s.require !== undefined) {
+      const r = s.require as any;
+      if (typeof r?.path !== "string" || !OPS.includes(r?.op)) {
+        problems.push({ id: s.id, problem: `require must be {path, op} with op one of ${OPS.join(", ")}` });
+      }
+    }
     // A spec quotes the commands it is about, and those commands have names. `git clean`
     // is not a judgement about taste; neither is `cargo build --release`. Code spans are
     // stripped before the filter runs, so quoting a command is how you say one — which is
@@ -136,7 +147,8 @@ export function validateSpecs(specs: Spec[]): SpecProblem[] {
     if ((s.instructions ?? "").trim().length < 15) {
       problems.push({ id: s.id, problem: "instructions too short to judge" });
     }
-    const vague = text.match(UNCHECKABLE);
+    // Code decides a `require`; its wording is a label, never a question to the model.
+    const vague = s.require ? null : text.match(UNCHECKABLE);
     if (vague) {
       problems.push({
         id: s.id,

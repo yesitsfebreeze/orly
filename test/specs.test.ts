@@ -209,6 +209,18 @@ test("missing evidence makes a check unmet, never met", () => {
   expect(evaluate({ path: "a.b", op: "absent" }, { a: {} }).met).toBe(true);
 });
 
+test("a malformed require is unmet and rejected, never a crash that fails open", () => {
+  // A string `require` once threw inside the Stop hook, which reported "judge
+  // unavailable" and let every turn through.
+  expect(evaluate("verdict includes threshold" as any, {}).met).toBe(false);
+  const bad = validateSpecs([
+    { id: "a", instructions: "all adapter modules are present", require: "a string" as any },
+    { id: "b", instructions: "all adapter modules are present", require: { path: "x", op: "nope" } as any },
+    { id: "c", instructions: "all adapter modules are present", require: { path: "x", op: "equals", value: 0 } },
+  ]);
+  expect(bad.map((p) => p.id)).toEqual(["a", "b"]);
+});
+
 test("evidence resolves from the project root, not the working directory", () => {
   // The same spec scored 0.87 from the root and 0.11 from a subdirectory, because its
   // files silently read as missing. An agent's cwd moves; the project root does not.

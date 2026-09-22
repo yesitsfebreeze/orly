@@ -29,6 +29,7 @@ import {
   writeRounds,
 } from "../src/session.ts";
 import { unmet } from "../src/specs.ts";
+import { owlBlock, statusBar } from "../src/banner.ts";
 
 /** Stop can fire before the turn's closing message reaches the transcript. */
 const FLUSH_TRIES = Number(process.env.ORLY_FLUSH_TRIES ?? 12);
@@ -79,7 +80,7 @@ if (guardDir && specs.length) {
       JSON.stringify({
         decision: "block",
         reason: refusal(violations),
-        systemMessage: `orly ⛔ the spec file was weakened (${violations.map((v) => v.id).join(", ")})`,
+        systemMessage: "\n" + owlBlock([`[X] spec file weakened (${violations.map((v) => v.id).join(", ")})`]),
       }),
     );
     process.exit(0);
@@ -210,6 +211,9 @@ if (orlyDir) {
   });
 }
 
+// Same owl banner pi prints; a leading newline so the drawing starts on its own row.
+const banner = (l: string) => "\n" + owlBlock(statusBar({ block: verdict.block, line: l }));
+
 // Loop control: only ever loosens the verdict, never tightens it.
 let loopNote: string | undefined;
 if (verdict.block && specs.length) {
@@ -224,7 +228,7 @@ if (verdict.block && specs.length) {
   if (!decision.mayBlock) {
     console.log(
       JSON.stringify({
-        systemMessage: `${verdict.line} · ${decision.note} · ${unmet(verdict.results).length} spec(s) still unmet`,
+        systemMessage: banner(`${verdict.line} · ${decision.note} · ${unmet(verdict.results).length} spec(s) still unmet`),
       }),
     );
     process.exit(0);
@@ -241,8 +245,8 @@ const line =
 console.log(
   JSON.stringify(
     verdict.block
-      ? { decision: "block", reason: verdict.reason, systemMessage: line }
-      : { systemMessage: line },
+      ? { decision: "block", reason: verdict.reason, systemMessage: banner(line) }
+      : { systemMessage: banner(line) },
   ),
 );
 process.exit(0);

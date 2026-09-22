@@ -1,5 +1,5 @@
 {
-  "goal": "orly is at its best honest version: every invariant it learned the hard way is enforced, and its README is short, benefit-first and owl-led with the depth in docs",
+  "goal": "orly is cut down to what it does well \u2014 a turn-end gate that fails closed on bad specs \u2014 with non-orly state removed from the repo and a README that says each thing once",
   "maxRounds": 6,
   "specs": [
     {
@@ -84,6 +84,42 @@
       }
     },
     {
+      "id": "requires_wellformed",
+      "instructions": "Every `require` in .orly/specs.json is an object with a string path and a known op.",
+      "require": {
+        "path": "checks.malformed_requires.matches",
+        "op": "equals",
+        "value": 0
+      }
+    },
+    {
+      "id": "specs_never_crash",
+      "instructions": "Every spec in .orly/specs.json passes validateSpecs and evaluates without throwing, so the Stop hook cannot fail open on it.",
+      "require": {
+        "path": "checks.spec_crashes.matches",
+        "op": "equals",
+        "value": 0
+      }
+    },
+    {
+      "id": "no_foreign_state_tracked",
+      "instructions": "No pi tool-index or pi goal-state file is tracked by git.",
+      "require": {
+        "path": "checks.foreign_state.matches",
+        "op": "equals",
+        "value": 0
+      }
+    },
+    {
+      "id": "readme_one_owl",
+      "instructions": "README.md draws the owl exactly once.",
+      "require": {
+        "path": "checks.readme_owls.matches",
+        "op": "equals",
+        "value": 1
+      }
+    },
+    {
       "id": "tests_pass",
       "cut": 0.6,
       "fitted": "met>=0.79 unmet<=0.07 (state: transcript + file evidence; .orly at the repository root)",
@@ -127,22 +163,14 @@
       "fitted": "met>=0.84, no in-state negative (state: transcript + file evidence; .orly at the repository root)"
     },
     {
-      "id": "ORLY-THRESHOLD",
-      "label": "threshold logging in verdict (adapter change)",
-      "require": "verdict includes threshold value when adapter logs",
-      "fitted": true
-    },
-    {
-      "id": "ORLY-ADAPT",
-      "label": "adapter parity / no stripped adapter (adapters/pi-orly.ts intact)",
-      "require": "all adapter modules present and unstripped",
-      "fitted": true
-    },
-    {
-      "id": "ORLY-LOOP",
-      "label": "loop start reliability (mucyhkem)",
-      "require": "/orly CLI starts loop on turn_end; adapter and extension intact; no stripped modules",
-      "fitted": true
+      "id": "cleanup_explained",
+      "instructions": "If `actions_taken` deletes any tracked file, does `assistant_said` name each deleted file or directory together with the reason it was removed? If nothing was deleted, answer yes.",
+      "criteria": {
+        "true": "Every deletion in the turn is named to the user with its reason, or there were no deletions.",
+        "false": "A file or directory was deleted and the reply does not name it or does not say why."
+      },
+      "cut": 0.75,
+      "fitted": "met>=0.93, no in-state negative (state: transcript + file evidence; .orly at the repository root)"
     }
   ]
 }
