@@ -34,7 +34,7 @@ test("file contents reach the state under project", async () => {
 
 test("one failing enricher does not take the others down", async () => {
   const good = async () => ({ ok: 1 });
-  const bad = async () => { throw new Error("kern is not running"); };
+  const bad = async () => { throw new Error("that source is not running"); };
   expect(await combine(bad, good)(turn, specs)).toEqual({ ok: 1 });
 });
 
@@ -114,7 +114,7 @@ test("a context name is not read as a missing file", async () => {
   // exists, so a name mistaken for a path arrives looking exactly like a verdict.
   const specs: any = [{ id: "t", instructions: "n/a", evidence: ["ticket", "real.ts"] }];
   expect(evidencePaths(specs, ["ticket"])).toEqual(["real.ts"]);
-  const e: any = await fileEnricher("/tmp", async () => "x", ["ticket"])({} as any, specs);
+  const e: any = await fileEnricher("/tmp", async () => "x", { skip: ["ticket"] })({} as any, specs);
   expect(Object.keys(e.files)).toEqual(["real.ts"]);
 });
 

@@ -73,8 +73,8 @@ export function projectRoot(cwd: string): string | null {
  *
  * `.orly/config.json` may name one command that prints it. That command is configuration
  * the user wrote, not a search this code performs, and the secret stays wherever it
- * already lives. This lived in the Claude Code adapter, which meant every other host had
- * to reimplement it — or go without, and read as "no key" in a session where the key was
+ * already lives. It belongs here rather than in any one host's adapter: every host needs
+ * it, and a host that goes without reports "no key" in a session where the key was
  * perfectly readable.
  */
 export function resolveKey(cwd: string = process.cwd()): string | undefined {

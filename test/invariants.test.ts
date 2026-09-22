@@ -186,3 +186,21 @@ test("the session banner reports counts, and a check as a check", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the core names no vendor, no host and no harness", () => {
+  // orly is a loop: take a turn, check the specs, say what is true, what is not, and what
+  // to do next. Everything a particular tool or harness knows arrives through a command
+  // somebody declared or an adapter somebody wrote, never through a name compiled in
+  // here. The moment one appears in the core, every user of the library carries it.
+  const VENDOR = /\bkern\b|claude|anthropic|openai|cursor|opencode/i;
+  // Comments are stripped first: naming the two message dialects, or the adapter a
+  // function used to live in, is prose about a wire format and about history. What must
+  // not appear is a vendor in the CODE — an import, a spawned binary, a path.
+  const code = (f: string) =>
+    readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const shipped = [join(ROOT, "src"), join(ROOT, "bin")].flatMap((dir) =>
+    readdirSync(dir).filter((f) => f.endsWith(".ts")).map((f) => join(dir, f)),
+  );
+  const offenders = shipped.filter((f) => VENDOR.test(code(f)));
+  expect(offenders.map((f) => f.slice(ROOT.length + 1))).toEqual([]);
+});

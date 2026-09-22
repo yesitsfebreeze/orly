@@ -151,9 +151,9 @@ try {
     apiKey: key,
     specs,
     // Independent evidence: the files the specs point at, read now rather than taken
-    // from what the agent printed; the project's own checks; whatever kern knows about
-    // the goal. Wired in the library so every host gathers the same thing.
-    enrich: projectEvidence({ cwd: input.cwd, goal: specFile?.goal }),
+    // from what the agent printed, plus whatever the project declared. Wired in the
+    // library, so every host gathers the same thing.
+    enrich: projectEvidence({ cwd: input.cwd }),
     endpoint: process.env.TYPESAFE_BASE_URL,
     model: process.env.ORLY_MODEL,
     timeoutMs: num("ORLY_TIMEOUT_MS", 12_000),

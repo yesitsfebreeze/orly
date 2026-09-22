@@ -42,11 +42,27 @@ export type Spec = {
   /** A spec the agent is allowed to leave unmet if it says why. Default: false. */
   optional?: boolean;
   /**
-   * Files whose current contents the judge should be shown, read at judging time rather
-   * than taken from what the agent chose to print. This is what stops a spec about file
-   * state from being answerable only by the agent's own narration.
+   * What the judge should be shown, gathered at judging time rather than taken from what
+   * the agent chose to print. This is what stops a spec from being answerable only by the
+   * agent's own narration.
+   *
+   * Each entry is a file path, or the name of a source declared under `context` in
+   * `.orly/config.json`, or a name nothing produces — see `gather`.
    */
   evidence?: string[];
+  /**
+   * What the agent must do when this spec's evidence could not be gathered.
+   *
+   * Some evidence has no command behind it: a design review that lives in someone's head,
+   * a screenshot, an answer only a search will find. Name it in `evidence` anyway and put
+   * the instruction here. Nothing produces it, so the gate asks the agent to — in these
+   * words — and judges the next turn on what it brought back.
+   *
+   * This is the third way to fill the state, after reading a file and running a command:
+   * ask the model that is doing the work, and check the answer against the spec like any
+   * other evidence.
+   */
+  gather?: string;
 };
 
 export type SpecFile = {

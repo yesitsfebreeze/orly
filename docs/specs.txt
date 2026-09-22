@@ -71,10 +71,8 @@ agent-produced. One transcript, held constant, changing only what is on disk:
 
 Identical messages, opposite verdict, decided entirely by state the agent did not author.
 
-The second evidence source is the project's own knowledge service (kern): memory.ask on
-the goal, claims only — never another model's confidence vector, which would invite the
-judge to reason about that in place of the work. Every enricher is wrapped so that one
-being absent or down costs nothing.
+Every enricher is wrapped so that one being absent or down costs nothing: gathering
+evidence must never be the reason a turn cannot be judged.
 
 
 ANYTHING ELSE THAT DECIDES WHETHER IT IS DONE
@@ -114,6 +112,28 @@ which is an answer, and the wrong one.
 
 The integration is a command you wrote. Anything with a CLI, a curl or a script is
 already supported, and orly ships no connector for any of them.
+
+
+WHEN NOTHING CAN PRODUCE IT
+---------------------------
+
+Some evidence has no command behind it: a design review that lives in someone's head, a
+screenshot, an answer only a search will find. Name it in `evidence` anyway and say what
+to do about it:
+
+  { "id": "reviewed",
+    "evidence": ["design_review"],
+    "gather": "Paste the reviewer's verdict, with their name and the date.",
+    "instructions": "Look at `design_review` under `project`. Did the reviewer approve
+                     the approach taken in `actions_taken`?" }
+
+Nothing produces design_review, so the block says so and asks in those words. The agent
+brings it back, and the next turn is judged on what it brought — like any other evidence,
+against the same spec, by the same judge.
+
+That is the third way to fill the state: read a file, run a command, or ask the model
+doing the work. A file recorded as "[file does not exist]" is NOT one of these — that is
+a reading, and usually the very thing a spec was asking about.
 
 
 CHECK BEFORE YOU RELY ON IT

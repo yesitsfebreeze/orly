@@ -1,26 +1,30 @@
 /**
  * The evidence every host wants, wired once.
  *
- * A judgment is only as good as the state it is handed, and the three sources that make
- * that state independent of the agent's narration — the files a spec names, the project's
- * own checks, whatever kern knows about the goal — were assembled separately in the Stop
- * hook and in the CLI. They drifted: the CLI gathered files but never ran the checks, so
- * every `require` spec read as unmet through `orly judge` while passing through the hook,
- * on the same repository.
+ * A judgment is only as good as the state it is handed, and the sources that make that
+ * state independent of the agent's narration were assembled separately in the Stop hook
+ * and in the CLI. They drifted: the CLI gathered files but never ran the checks, so every
+ * `require` spec read as unmet through `orly judge` while passing through the hook, on
+ * the same repository. One function now.
  *
- * One function now. A new host gets the same evidence as the reference one by calling it.
+ * Three kinds of source, and no vendor among them:
+ *
+ *   files     the paths a spec names, read at judging time
+ *   checks    a command's exit code and match count, asserted in code
+ *   context   a command's OUTPUT, put in front of the judge to read
+ *
+ * That is the whole surface. A ticket, a deploy, a migration status, a knowledge service:
+ * each is a command somebody declares, so any tool a shell can run is already integrated
+ * and orly knows the name of none of them.
  */
 import { combine, fileEnricher, type Enricher } from "./enrich.ts";
 import { checkEnricher, type CheckSpec } from "./enrich-checks.ts";
 import { contextEnricher, type ContextSpec } from "./enrich-context.ts";
-import { kernMemoryEnricher } from "./enrich-kern.ts";
 import { loadConfig, projectRoot } from "./session.ts";
 
 export type EvidenceOptions = {
   /** Where the host is standing. The project root is found from here. */
   cwd?: string;
-  /** The goal, for the knowledge enricher. Omitted means that source is skipped. */
-  goal?: string;
   /** Override the checks from `.orly/config.json`. */
   checks?: Record<string, CheckSpec>;
   /** Override the context sources from `.orly/config.json`. */
@@ -41,12 +45,17 @@ export function projectEvidence(opts: EvidenceOptions = {}): Enricher {
   const root = projectRoot(cwd) ?? cwd;
   const config = loadConfig(cwd);
   const context = opts.context ?? config.context ?? {};
-  return combine(
+  const enrich: Enricher = async (turn, specs) => {
     // A declared context source is named in `evidence` like a file is, so the file reader
-    // has to be told which of those names are not paths.
-    fileEnricher(root, (path) => Bun.file(path).text(), Object.keys(context)),
-    kernMemoryEnricher(opts.goal ?? "", cwd),
-    checkEnricher(opts.checks ?? config.checks ?? {}, root),
-    contextEnricher(context, root),
-  );
+    // has to be told which of those names are not paths. A spec carrying a `gather`
+    // instruction names things that may not be files at all: read them if they are, and
+    // stay silent rather than reporting absence if they are not.
+    const soft = (specs ?? []).filter((s) => s.gather).flatMap((s) => s.evidence ?? []);
+    return combine(
+      fileEnricher(root, (path) => Bun.file(path).text(), { skip: Object.keys(context), soft }),
+      checkEnricher(opts.checks ?? config.checks ?? {}, root),
+      contextEnricher(context, root),
+    )(turn, specs);
+  };
+  return enrich;
 }

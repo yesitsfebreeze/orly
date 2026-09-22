@@ -23,7 +23,7 @@ leaves the gate inert. Rather than put a plaintext key in a settings file, name 
 command that produces it:
 
   .orly/config.json
-  { "keyCommand": "security find-generic-password -a typesafe/api-key -s kern -w" }
+  { "keyCommand": "security find-generic-password -s typesafe -a api-key -w" }
 
 ORLY_KEY_COMMAND does the same from the environment. The secret stays where it already
 lives, and the command is configuration you wrote.

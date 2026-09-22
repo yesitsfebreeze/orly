@@ -28,13 +28,26 @@ export type Enricher = (turn: Turn, specs: Spec[]) => Promise<Evidence>;
 const MAX_FILE_CHARS = Number(process.env.ORLY_MAX_FILE_CHARS ?? 12_000);
 const MAX_FILES = 8;
 
+export type FileOptions = {
+  /** Names that are something else entirely — a declared context source. Never read. */
+  skip?: Iterable<string>;
+  /**
+   * Names that MAY be a file. A miss is recorded as nothing rather than as absence.
+   *
+   * This is for a spec with a `gather` instruction: the name may turn out to be a path,
+   * and if it is, reading it is the cheapest answer. If it is not, saying "[file does not
+   * exist]" would be a lie about something that was never a file — and it reads as a
+   * finding, so the gate would never think to ask for it.
+   */
+  soft?: Iterable<string>;
+};
+
 /**
  * Every distinct path the specs name as evidence.
  *
- * `skip` holds the names that are something else — a declared context source, say. A name
- * that is not a path must not be read as one: the miss is recorded as "[file does not
- * exist]", which is a legitimate answer for a spec asking whether something exists, so
- * the mistake arrives looking exactly like a verdict.
+ * A name that is not a path must not be read as one: the miss is recorded as "[file does
+ * not exist]", which is a legitimate answer for a spec asking whether something exists,
+ * so the mistake arrives looking exactly like a verdict.
  */
 export function evidencePaths(specs: Spec[], skip: Iterable<string> = []): string[] {
   const not = new Set(skip);
@@ -52,10 +65,11 @@ export function evidencePaths(specs: Spec[], skip: Iterable<string> = []): strin
 export function fileEnricher(
   cwd: string,
   read: (path: string) => Promise<string>,
-  skip: Iterable<string> = [],
+  opts: FileOptions = {},
 ): Enricher {
   return async (_turn, specs) => {
-    const paths = evidencePaths(specs, skip);
+    const paths = evidencePaths(specs, opts.skip ?? []);
+    const soft = new Set(opts.soft ?? []);
     if (!paths.length) return {};
     const files: Record<string, string> = {};
     for (const path of paths) {
@@ -68,11 +82,12 @@ export function fileEnricher(
             ? `${body.slice(0, MAX_FILE_CHARS)}\n…[TRUNCATED: ${body.length - MAX_FILE_CHARS} more chars not shown — do not treat anything below as absent]`
             : body;
       } catch {
-        // A path that does not exist is itself evidence, and often the answer.
-        files[path] = "[file does not exist]";
+        // A path that does not exist is itself evidence, and often the answer — unless it
+        // was never claimed to be a path, in which case saying so would invent a finding.
+        if (!soft.has(path)) files[path] = "[file does not exist]";
       }
     }
-    return { files };
+    return Object.keys(files).length ? { files } : {};
   };
 }
 

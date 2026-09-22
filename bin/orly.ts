@@ -260,7 +260,7 @@ try {
     specs: specFile?.specs,
     // The same evidence the hook gathers, from the same place, so the CLI and a host
     // adapter can never disagree about the same repository.
-    enrich: projectEvidence({ goal: specFile?.goal }),
+    enrich: projectEvidence(),
     endpoint: process.env.TYPESAFE_BASE_URL,
     model: process.env.ORLY_MODEL,
     timeoutMs: num("ORLY_TIMEOUT_MS", 12_000),

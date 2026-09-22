@@ -42,7 +42,8 @@ directly. No model, no threshold, no drift.
 
 **Anything else that decides "done" is one command away.** Name a ticket, a deploy, a
 migration status in `.orly/config.json` and its output is judged alongside your code. No
-connectors to install.
+connectors to install. When nothing can produce it, the gate asks the agent to, in words
+you wrote.
 
 **The agent can't file it down.** Lowering a bar, deleting a check or marking one optional
 is refused by the harness — at the edit, and again at the end of the turn.

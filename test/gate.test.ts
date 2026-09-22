@@ -217,7 +217,7 @@ test("enrichment that throws never takes the judgment down", async () => {
     const { verdict } = await judge(turnStub, {
       apiKey: "k",
       enrich: async () => {
-        throw new Error("kern is down");
+        throw new Error("the evidence source is down");
       },
     });
     expect(verdict.block).toBe(false);
@@ -240,4 +240,47 @@ test("the transport is one place: a non-2xx and a wrong-shaped 200 fail the same
     expect(out.answers.q0.noul).toBe(0.9);
     expect(out.usage?.input_tokens).toBe(10);
   });
+});
+
+// ---------------------------------------------------------------- evidence that never arrived
+
+const unmetSpec = (extra: object = {}) =>
+  [{ id: "reviewed", instructions: "was it reviewed?", evidence: ["design_review"], ...extra }] as any;
+const answersFor = (p: number) => ({ ...quiet, coverage: { score: 2.9, confidence: 0.9 }, "spec:reviewed": { noul: p } });
+
+test("a spec judged on evidence that never arrived asks for it, in its own words", () => {
+  // Some evidence has no command behind it. Naming it anyway and saying what to do is the
+  // third way to fill the state: ask the model doing the work, then judge what it brings.
+  const v = compose(answersFor(0.1), DEFAULTS, unmetSpec({ gather: "Paste the reviewer's verdict." }), {});
+  expect(v.block).toBe(true);
+  expect(v.reason).toContain("evidence not available: design_review");
+  expect(v.reason).toContain("Paste the reviewer's verdict.");
+});
+
+test("a spec with no gather line still says what was missing", () => {
+  expect(compose(answersFor(0.1), DEFAULTS, unmetSpec(), {}).reason).toContain("Produce it this turn");
+});
+
+test("a file recorded as absent is a reading, not a gathering failure", () => {
+  // "[file does not exist]" is often the very answer the spec was asking for. Telling the
+  // agent to go and produce it would send it to recreate a file it deliberately deleted.
+  const specs = [{ id: "gone", instructions: "is the stub gone?", evidence: ["stub.ts"] }] as any;
+  const answers = { ...quiet, coverage: { score: 2.9, confidence: 0.9 }, "spec:gone": { noul: 0.1 } };
+  const v = compose(answers, DEFAULTS, specs, { files: { "stub.ts": "[file does not exist]" } });
+  expect(v.reason).toContain('spec "gone" is not met');
+  expect(v.reason).not.toContain("evidence not available");
+});
+
+test("a context source that failed is a gathering failure", () => {
+  const specs = [{ id: "t", instructions: "is the ticket done?", evidence: ["ticket"] }] as any;
+  const answers = { ...quiet, coverage: { score: 2.9, confidence: 0.9 }, "spec:t": { noul: 0.1 } };
+  const v = compose(answers, DEFAULTS, specs, { context: { ticket: '[context source "ticket" could not be read: exit 4]' } });
+  expect(v.reason).toContain("evidence not available: ticket");
+});
+
+test("evidence that did arrive is never asked for again", () => {
+  const specs = [{ id: "t", instructions: "is the ticket done?", evidence: ["ticket"] }] as any;
+  const answers = { ...quiet, coverage: { score: 2.9, confidence: 0.9 }, "spec:t": { noul: 0.1 } };
+  const v = compose(answers, DEFAULTS, specs, { context: { ticket: "PROJ-42 status: In Review" } });
+  expect(v.reason).not.toContain("evidence not available");
 });

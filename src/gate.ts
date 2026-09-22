@@ -167,6 +167,30 @@ const ACTION_LEAD: Record<string, string> = {
 
 // ---------------------------------------------------------------- policy
 
+/**
+ * Evidence a spec named that nothing produced.
+ *
+ * A file recorded as absent is NOT in here: "[file does not exist]" is a real reading and
+ * often the answer a spec was asking for. This is the other case — a name no file, no
+ * declared source and no command ever answered, so the judge was asked about something
+ * that was never in front of it.
+ */
+function ungathered(spec: Spec, evidence: any): string[] {
+  const out: string[] = [];
+  for (const name of spec.evidence ?? []) {
+    const file = evidence?.files?.[name];
+    const context = evidence?.context?.[name];
+    if (file !== undefined) continue;
+    if (typeof context === "string" && !context.startsWith("[context source")) continue;
+    out.push(name);
+  }
+  return out;
+}
+
+/** What to tell the agent to go and produce, in the spec's own words where it has them. */
+const GATHER_DEFAULT =
+  "Produce it this turn — read it, run whatever yields it, or find it — and leave the result in the transcript.";
+
 export type Verdict = {
   block: boolean;
   /** What to tell the agent. Empty when nothing is wrong. */
@@ -206,11 +230,20 @@ export function compose(
   if (specResults.length) parts.push(`specs ${specResults.length - failing.length}/${specResults.length}`);
   for (const r of failing) {
     // A deterministic check reports what it actually found; a probability would be a lie.
-    fired.push(
-      r.spec.require
-        ? `- check "${r.spec.id}" failed: ${r.spec.require.path} ${r.spec.require.op} ${String(r.spec.require.value ?? "")} — found ${JSON.stringify(r.actual)}`
-        : `- spec "${r.spec.id}" is not met (p=${r.p.toFixed(2)}): ${r.spec.instructions}`,
-    );
+    if (r.spec.require) {
+      fired.push(
+        `- check "${r.spec.id}" failed: ${r.spec.require.path} ${r.spec.require.op} ${String(r.spec.require.value ?? "")} — found ${JSON.stringify(r.actual)}`,
+      );
+      continue;
+    }
+    fired.push(`- spec "${r.spec.id}" is not met (p=${r.p.toFixed(2)}): ${r.spec.instructions}`);
+    // A spec judged against evidence that never arrived scores low for the wrong reason,
+    // and "not met" on its own sends the agent to redo work that may be finished. Say
+    // what was missing and ask for it instead.
+    const missing = ungathered(r.spec, evidence);
+    if (missing.length) {
+      fired.push(`  evidence not available: ${missing.join(", ")}. ${r.spec.gather ?? GATHER_DEFAULT}`);
+    }
   }
 
   for (const id of Object.keys(HAZARD_LABELS)) {

@@ -44,6 +44,10 @@ status — declare one command for it under `context` in `.orly/config.json` and
 Use a `require` check when a command can decide the answer, and a context source when
 someone has to read it.
 
+**And when nothing can produce it** — a design review, a screenshot, an answer only a
+search will find — name it in `evidence` anyway and add `"gather": "<what to do>"`. The
+block will ask for it in those words, and the next turn is judged on what you bring back.
+
 Mark a spec `"optional": true` when it is desirable but you should be allowed to end the
 turn by explaining why it was skipped.
 
