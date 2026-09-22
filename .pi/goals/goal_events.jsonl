@@ -14,3 +14,13 @@
 {"type":"completion_requested","goalId":"mucyhkem-scfrd8","at":"2026-09-22T17:48:48.737Z"}
 {"type":"audit_started","goalId":"mucyhkem-scfrd8","at":"2026-09-22T17:48:48.737Z"}
 {"type":"audit_result","goalId":"mucyhkem-scfrd8","verdict":"disapproved","report":"No focused goal (still unrefined `.pi/goals/` file); no `/goal-focus`; adapter dirty-state unverified; improvement layer unconfirmed; goal 2 missing. <disapproved/>","at":"2026-09-22T17:48:53.109Z"}
+{"type":"completion_requested","goalId":"mucyhkem-scfrd8","at":"2026-09-22T17:49:51.723Z"}
+{"type":"audit_started","goalId":"mucyhkem-scfrd8","at":"2026-09-22T17:49:51.724Z"}
+{"type":"audit_result","goalId":"mucyhkem-scfrd8","verdict":"disapproved","report":"Evidence shows: adapter (`adapters/pi-orly.ts`) dirty (modified); `.pi/goals/` unrefined (no `/goal-focus` or `create_goal`); layer only \"README.md\" with 2 insertions — single improvement at adapter/spec layer not verified against loop; previous audit rejections not resolved (unrefined goal, unconfirmed layer). Not complete.\n\n<disapproved/>\n\nReasons: `.pi/goals/` file still unrefined (no `/goal-focus`/`create_goal` — previous rejection unaddressed); adapter dirty (`adapters/pi-orly.ts` modified, git not clean); loop verification not independently confirmed (registerCommand/turn_end=3 unverified); improvement layer unconfirmed (executor only claims \"README.md only\" — not adapter/spec/CLI/harness confirmed after loop); single-improvement constraint unverified against spec/config. Executor claim rejected.","at":"2026-09-22T17:50:07.904Z"}
+{"type":"completion_requested","goalId":"mucyhkem-scfrd8","at":"2026-09-22T17:52:22.385Z"}
+{"type":"audit_started","goalId":"mucyhkem-scfrd8","at":"2026-09-22T17:52:22.385Z"}
+{"type":"audit_result","goalId":"mucyhkem-scfrd8","verdict":"disapproved","report":"Unrefined goal file (no `/goal-focus` record), adapter modifications uncommitted/dirty, layer not confirmed, single-improvement layer unverified against loop. <disapproved/>","at":"2026-09-22T17:52:35.850Z"}
+{"type":"completion_requested","goalId":"mucyhkem-scfrd8","at":"2026-09-22T17:53:02.395Z"}
+{"type":"audit_started","goalId":"mucyhkem-scfrd8","at":"2026-09-22T17:53:02.396Z"}
+{"type":"audit_result","goalId":"mucyhkem-scfrd8","verdict":"disapproved","report":"Checking artifacts for verification.\n\nAdapter `pi-orly.ts` has uncommitted dirty state; layer confirmation for improvement is missing; `work_committed actual=0`. <disapproved/>","at":"2026-09-22T17:53:04.211Z"}
+{"type":"goal_paused","goalId":"mucyhkem-scfrd8","reason":"user","status":"paused","at":"2026-09-22T17:54:38.704Z"}
