@@ -1,11 +1,16 @@
-
+```
   , .  
  {@,@}  
  /) )   
   '"  
 
+I have done what you asked, here is... orly?
+```
+
 # orly
 
+Who doesnt know this feeling, you ask specifics, ask for completion.
+What do you get back? Half verified slop where the llm is overwhelmed with a few requests.
 
 Your agent says it's done. orly asks the obvious question — at the end of **every** turn,
 before the stop goes through. Whatever isn't true comes back with the gap named, and the
