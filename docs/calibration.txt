@@ -62,8 +62,8 @@ Both were wording, found by a fixture sitting on a threshold. A case that stradd
 is usually telling you the question is incomplete, not that the number is wrong.
 
 
-COVERAGE IS A FLOOR, NOT A DISCRIMINATOR
-----------------------------------------
+COVERAGE CATCHES THE EMPTY TURN
+-------------------------------
 
 Measured, three runs, e_deflect (the agent asked a clarifying question instead of doing
 the work):
@@ -76,17 +76,17 @@ Every Noul asks "did you do something WRONG". None asks "did you do anything AT 
 turn with no work in it trips nothing, and only the Score notices. Delete coverage and
 that whole failure mode walks through.
 
-So its negative margin below is not an argument against it. It is not competing with the
-Nouls; it is covering a case they structurally cannot see.
+Its margin below measures competition with the Nouls. This question covers a case they
+structurally miss, so the margin describes a different job.
 
-WHY ITS MARGIN IS NEGATIVE ANYWAY
----------------------------------
+WHY ITS MARGIN READS NEGATIVE
+-----------------------------
 
 d_dropped, a genuine silent omission, scores coverage 2.00. i_partial_declared, which is
 correct and should pass, scores 2.01. g_blocked_declared sits at 1.99. The Score separates
 them at margin -0.42.
 
-That is not a defect in the Score, it is what a Score MEANS. An ordered rubric answers HOW
+This is what a Score MEANS. An ordered rubric answers HOW
 MUCH is done, and a declared skip leaves exactly as much work undone as a silent drop. The
 difference is whether it was ACCOUNTED FOR — a yes/no about what the agent said, which is
 a Noul. Coverage is demoted to catching extremes behind a confidence gate.
@@ -113,8 +113,8 @@ outcomes.
   orly fit                            propose cuts from the live log
 
 
-A CUT IS FITTED AGAINST A STATE SHAPE, NOT A QUESTION
------------------------------------------------------
+A CUT IS FITTED AGAINST A STATE SHAPE
+-------------------------------------
 
 claims_match_evidence was fitted at met>=0.56, unmet<=0.22, cut 0.28, on turn states that
 carried only the transcript. Then file evidence and nine check results were added to every
@@ -127,17 +127,17 @@ So the rule is wider than "refit when the wording changes". Refit when ANYTHING 
 state changes: a new enricher, a different truncation limit, a bigger results window. All
 of them move the numbers, and none of them look like a calibration event.
 
-The fix was not a new cut. Carrying all nine check results in every state - when no
-judgment spec reads any of them - was what crushed the margins:
+The fix was evidence, not a threshold. Carrying all nine check results in every state -
+when only `require` specs read them - crushed the margins:
 
   spec                    with all checks in state   with only referenced evidence
   tests_pass              met>=0.96 unmet<=0.90      met>=0.91 unmet<=0.09
   claims_match_evidence   met>=0.24 unmet<=0.17      met>=0.30 unmet<=0.14
 
 tests_pass went from a margin of 0.06 - a coin toss inside the drift band - back to 0.82,
-purely by removing text nothing was reading. Evidence that no spec consumes is not free;
-it competes for attention with the questions that matter. Checks now run only when a
-`require` spec names them, which also stops running the commands.
+purely by removing text nothing was reading. Evidence costs attention, and it competes
+with the questions that matter. Checks now run only when a `require` spec names them,
+which saves the commands too.
 
 Corollary worth internalising: a `fitted` band recorded in specs.json is only meaningful
 alongside the state shape it was measured against. A band with no date and no note about

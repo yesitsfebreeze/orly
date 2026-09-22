@@ -20,11 +20,11 @@ WHAT COUNTS AS WEAKENING
   - dropping an explicit cut that was above the default (removing a line weakens a gate
     just as effectively as editing one)
   - rewording a spec while keeping its fitted cut — wording moves the probability more
-    than the threshold does, so a rewrite makes the old number meaningless rather than
-    merely stale. Refit, or drop the cut so it is marked unfitted.
+    than the threshold does, so a rewrite makes the old number meaningless. Refit, or
+    drop the cut so it is marked unfitted.
 
-Tightening a cut and adding a spec are always allowed. An agent that makes its own
-examiner stricter is not the failure mode anyone needs protecting from.
+Tightening a cut and adding a spec are always allowed: an agent that makes its own
+examiner stricter is working in the same direction as the gate.
 
 
 TWO ENFORCEMENT POINTS
@@ -43,13 +43,13 @@ The baseline only advances when nothing was weakened, so a weakening cannot be l
 into the baseline by following it with an unrelated edit.
 
 
-THE HONEST LIMIT
-----------------
+WHAT IT COVERS
+--------------
 
-This stops the easy path, not every path. An agent that rewrites the spec's INSTRUCTIONS
-into something vacuous while raising the cut passes both checks. The wording-change rule
-catches the common case; it does not catch a determined one.
+The routes an agent actually takes: a lowered cut, a deleted spec, an optional flag, a
+dropped threshold, a reworded question carrying a stale number. The wording-change rule
+catches the common case.
 
-The real answer is that specs are the user's to own. The gate makes weakening visible and
-awkward. It does not make it impossible, and nothing that runs inside the same session as
-the agent could.
+A spec rewritten into something vacuous while its cut rises passes both checks. Specs stay
+the user's to own; the gate makes weakening visible and awkward, and that is the honest
+limit of anything running inside the agent's own session.

@@ -26,7 +26,7 @@ command that produces it:
   { "keyCommand": "security find-generic-password -a typesafe/api-key -s kern -w" }
 
 ORLY_KEY_COMMAND does the same from the environment. The secret stays where it already
-lives, and the command is configuration you wrote — not a search the plugin performs.
+lives, and the command is configuration you wrote.
 
 With no key orly disables itself and says so once per session. It does not sit there
 installed and silently never firing; that failure mode is indistinguishable from

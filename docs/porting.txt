@@ -33,7 +33,7 @@ OpenAI chat messages (tool_calls / role:"tool"). The last human message onward i
 
   orly specs [path]   check a spec list is decidable from recorded evidence
   orly fit            propose cuts from the log
-  orly ask Q [Q...] [file...] [-]   ask now, instead of waiting for a turn to end
+  orly ask Q [Q...] [file...] [-]   ask now, between turns
 
 
 ASKING DIRECTLY
@@ -50,9 +50,9 @@ about one thing — or twenty. Batching is close to free because the state domin
 cost: measured on one file, 1 question cost $0.00017 and 40 cost $0.00021, with latency
 flat at roughly 300-400 ms.
 
-The printed yes/no splits at 0.5, which is a REPORTING convenience and not a decision
-threshold. Anything you act on needs a cut fitted for that question's wording - see
-calibration.txt. 0.5 is where an unfitted question looks most trustworthy and is least so.
+The printed yes/no splits at 0.5 as a reporting convenience. Anything you act on needs a
+cut fitted for that question's wording - see calibration.txt. 0.5 is where an unfitted
+question looks most trustworthy and is least so.
 
 
 THE TURN

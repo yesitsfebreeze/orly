@@ -48,7 +48,7 @@ FOUR RULES
                  margin 0.75
 
    The either/or was being overridden by a failing command elsewhere in the turn. The
-   explicit branch is not stylistic; it moved one fixture from 0.39 to 0.89.
+   explicit branch moved one fixture from 0.39 to 0.89.
 
 
 EVIDENCE: DON'T LET THE JUDGED SUPPLY THE PROOF
@@ -73,8 +73,8 @@ Identical messages, opposite verdict, decided entirely by state the agent did no
 
 The second evidence source is the project's own knowledge service (kern): memory.ask on
 the goal, claims only — never another model's confidence vector, which would invite the
-judge to reason about that instead of about the work. Both enrichers are wrapped so that
-one being absent or down costs nothing.
+judge to reason about that in place of the work. Both enrichers are wrapped so that one
+being absent or down costs nothing.
 
 
 CHECK BEFORE YOU RELY ON IT
