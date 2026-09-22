@@ -16,11 +16,23 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeLastTurn } from "../src/normalize.ts";
+import { combine, fileEnricher, withEvidence } from "../src/enrich.ts";
+import { checkEnricher } from "../src/enrich-checks.ts";
+import { loadConfig, projectRoot } from "../src/session.ts";
 import { specQuestions, SPEC_PREFIX } from "../src/specs.ts";
 
 const KEY = process.env.TYPESAFE_API_KEY!;
 const DIR = join(import.meta.dir, "fixtures");
-const specs = JSON.parse(readFileSync(process.argv[2] ?? join(import.meta.dir, "..", "..", ".orly", "specs.json"), "utf8")).specs;
+const ROOT = projectRoot(import.meta.dir) ?? join(import.meta.dir, "..", "..");
+const ENRICH = combine(
+  fileEnricher(ROOT, (p) => Bun.file(p).text()),
+  checkEnricher(loadConfig(ROOT).checks ?? {}, ROOT),
+);
+
+const ALL_SPECS = JSON.parse(readFileSync(process.argv[2] ?? join(import.meta.dir, "..", "..", ".orly", "specs.json"), "utf8")).specs;
+// Deterministic checks are decided in code and never reach the model; fitting a cut for
+// one is meaningless. They still enrich the state, so they stay in ALL_SPECS.
+const specs = ALL_SPECS.filter((s: any) => !s.require);
 
 const names = readdirSync(DIR).filter((f) => f.endsWith(".jsonl")).map((f) => f.replace(".jsonl", "")).sort();
 const scores: Record<string, number[]> = {};
@@ -29,7 +41,11 @@ for (const name of names) {
   const msgs = readFileSync(join(DIR, `${name}.jsonl`), "utf8").split("\n").filter((l) => l.trim())
     .map((l) => JSON.parse(l)).filter((e: any) => !e.isSidechain && (e.type === "user" || e.type === "assistant"))
     .map((e: any) => ({ role: e.type, content: e.message?.content }));
-  const { conclusive, ...state } = normalizeLastTurn(msgs);
+  // Enrich exactly as production does. A cut fitted on a bare transcript does not hold
+  // once every state also carries file evidence and check results — measured, one spec
+  // moved from a 0.56 floor to 0.19 on the same fixture when enrichment was added.
+  const turn = normalizeLastTurn(msgs);
+  const { conclusive, ...state } = withEvidence(turn, await ENRICH(turn, ALL_SPECS)) as any;
   const res = await fetch("https://api.typesafe.ai/v1/systemone", {
     method: "POST", headers: { Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ state, model: "jev-latest", questions: specQuestions(specs) }),

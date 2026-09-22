@@ -34,8 +34,20 @@ const MAX_OUT = Number(process.env.ORLY_MAX_CHECK_OUT ?? 400);
  * an enricher that failed must never read as a passing gate.
  */
 export function checkEnricher(checks: Record<string, CheckSpec>, cwd: string): Enricher {
-  return async (): Promise<Evidence> => {
-    const names = Object.keys(checks ?? {});
+  return async (_turn, specs): Promise<Evidence> => {
+    // Only run the checks some `require` spec actually reads.
+    //
+    // Evidence nothing consumes is not free: it is text in every state, competing for
+    // attention with the questions that do matter. Measured — carrying all nine check
+    // results collapsed one judgment spec's separation from 0.34 to 0.07 and another's
+    // from 0.72 to 0.06, purely by being there. It also saves running the commands.
+    const wanted = new Set(
+      (specs ?? [])
+        .map((s) => s.require?.path)
+        .filter((p): p is string => typeof p === "string" && p.startsWith("checks."))
+        .map((p) => p.split(".")[1]),
+    );
+    const names = Object.keys(checks ?? {}).filter((n) => wanted.has(n));
     if (!names.length) return {};
     const out: Record<string, unknown> = {};
     for (const name of names) {

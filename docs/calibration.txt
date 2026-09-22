@@ -127,6 +127,18 @@ So the rule is wider than "refit when the wording changes". Refit when ANYTHING 
 state changes: a new enricher, a different truncation limit, a bigger results window. All
 of them move the numbers, and none of them look like a calibration event.
 
+The fix was not a new cut. Carrying all nine check results in every state - when no
+judgment spec reads any of them - was what crushed the margins:
+
+  spec                    with all checks in state   with only referenced evidence
+  tests_pass              met>=0.96 unmet<=0.90      met>=0.91 unmet<=0.09
+  claims_match_evidence   met>=0.24 unmet<=0.17      met>=0.30 unmet<=0.14
+
+tests_pass went from a margin of 0.06 - a coin toss inside the drift band - back to 0.82,
+purely by removing text nothing was reading. Evidence that no spec consumes is not free;
+it competes for attention with the questions that matter. Checks now run only when a
+`require` spec names them, which also stops running the commands.
+
 Corollary worth internalising: a `fitted` band recorded in specs.json is only meaningful
 alongside the state shape it was measured against. A band with no date and no note about
 what was in the state is a number someone will trust for longer than they should.
