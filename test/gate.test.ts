@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { compose, DEFAULTS, QUESTIONS } from "../src/gate.ts";
+import { compose, DEFAULTS, judge, QUESTIONS } from "../src/gate.ts";
 import { MAX_RESULTS, normalize, normalizeLastTurn, selectResults, type Msg } from "../src/normalize.ts";
 
 // ---------------------------------------------------------------- normalize
@@ -160,4 +160,65 @@ test("questions stay inside the API's stated limits", () => {
   expect(QUESTIONS.coverage.criteria.length).toBeLessThanOrEqual(10);
   expect(Object.keys(QUESTIONS.next_action.criteria).length).toBeGreaterThanOrEqual(2);
   for (const q of Object.values(QUESTIONS)) expect(["noul", "score", "choice"]).toContain(q.type);
+});
+
+// ---------------------------------------------------------------- the verdict carries its own results
+
+test("compose carries the spec results it was composed from", () => {
+  // The adapter logs which specs went unmet and counts how many were met. Re-scoring for
+  // that meant passing the evidence a second time, and the caller that did not got every
+  // `require` spec evaluated against nothing — recorded as failing on turns where it had
+  // passed, into the log that `orly fit` tunes on.
+  const specs = [
+    { id: "tests", instructions: "n/a", require: { path: "checks.tests.exit", op: "equals", value: 0 } },
+  ] as any;
+  const v = compose({ ...quiet, coverage: { score: 2.9, confidence: 0.9 } }, DEFAULTS, specs, {
+    checks: { tests: { exit: 0 } },
+  });
+  expect(v.block).toBe(false);
+  expect(v.results.map((r) => [r.spec.id, r.met])).toEqual([["tests", true]]);
+});
+
+// ---------------------------------------------------------------- transport
+
+/** Answer every judge request with `body`, without going near the network. */
+function withTransport<T>(body: unknown, status: number, run: () => Promise<T>): Promise<T> {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(typeof body === "string" ? body : JSON.stringify(body), { status })) as any;
+  return run().finally(() => {
+    globalThis.fetch = real;
+  });
+}
+
+const turnStub = {
+  user_request: "do the thing",
+  assistant_final_message: "done",
+  assistant_said: "done",
+  actions_taken: ["Bash: bun test"],
+  command_results: ["ok"],
+  conclusive: true,
+};
+
+test("a 200 that is not the judge is an outage, not evidence about the turn", async () => {
+  // A stray local service on the mock's port answered {"ok":true} with HTTP 200 and the
+  // hook crashed. A 200 in the wrong shape means we reached something that is not the
+  // judge; it must never be read as a verdict.
+  await withTransport({ ok: true }, 200, async () => {
+    await expect(judge(turnStub, { apiKey: "k" })).rejects.toThrow("no answers");
+  });
+});
+
+test("enrichment that throws never takes the judgment down", async () => {
+  // Gathered evidence is a bonus. A judge that cannot run because a file read failed is
+  // a wall in front of the agent for a reason that has nothing to do with the turn.
+  await withTransport({ answers: { ...quiet, coverage: { score: 2.9, confidence: 0.9 } } }, 200, async () => {
+    const { verdict } = await judge(turnStub, {
+      apiKey: "k",
+      enrich: async () => {
+        throw new Error("kern is down");
+      },
+    });
+    expect(verdict.block).toBe(false);
+  });
 });

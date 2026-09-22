@@ -19,7 +19,8 @@ import { existsSync } from "node:fs";
 import { combine, fileEnricher } from "../src/enrich.ts";
 import { kernMemoryEnricher } from "../src/enrich-kern.ts";
 import { label, propose, read } from "../src/log.ts";
-import { findOrlyDir, loadSpecFile, projectRoot } from "../src/session.ts";
+import { checkEnricher } from "../src/enrich-checks.ts";
+import { findOrlyDir, loadConfig, loadSpecFile, projectRoot } from "../src/session.ts";
 import { validateSpecs, type Spec } from "../src/specs.ts";
 
 const fail = (msg: string, code = 1): never => {
@@ -186,7 +187,11 @@ if (command === "fit") {
   console.log(`${records.length} judged turns · ${blocks.length} blocked · ${worked} bought work · ${explained} talked past`);
 
   const cuts: Record<string, number> = {};
-  for (const sp of specFile?.specs ?? []) cuts[`spec:${sp.id}`] = sp.cut ?? DEFAULTS.specMet;
+  // Loaded here, not from the module-level `specFile`: that is declared below, in the
+  // judge path, so reading it from this branch is a temporal-dead-zone crash.
+  for (const sp of loadSpecFile(process.cwd())?.specs ?? []) {
+    cuts[`spec:${sp.id}`] = sp.cut ?? DEFAULTS.specMet;
+  }
   const proposals = propose(records, cuts);
   if (!proposals.length) {
     console.log("\nNothing to propose: not enough labelled blocks yet, or no cut separates them.");
@@ -238,6 +243,10 @@ try {
     enrich: combine(
       fileEnricher(projectRoot(process.cwd()) ?? process.cwd(), (path) => Bun.file(path).text()),
       kernMemoryEnricher(specFile?.goal ?? ""),
+      // Same evidence the hook gathers. Without it every `require` spec resolves to
+      // nothing, which reads as unmet — the CLI would disagree with the hook on the
+      // same repo, and the deterministic half of the gate would be the part that broke.
+      checkEnricher(loadConfig(process.cwd()).checks ?? {}, projectRoot(process.cwd()) ?? process.cwd()),
     ),
     endpoint: process.env.TYPESAFE_BASE_URL,
     model: process.env.ORLY_MODEL,

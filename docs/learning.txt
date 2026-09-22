@@ -10,8 +10,6 @@ HOT RELOAD
 
 The plugin source is a directory link and the hook spawns a fresh process every turn.
 Edit the code or the specs and the next judgment uses them — no restart, no reinstall.
-This was used in anger: a bug found by the gate in one turn was fixed and live in the
-next.
 
 
 THE LOG

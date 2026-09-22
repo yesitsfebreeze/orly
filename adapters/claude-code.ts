@@ -15,7 +15,7 @@ import { messagesFrom } from "./claude-transcript.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULTS, judge, type Turn } from "../src/gate.ts";
-import { normalizeLastTurn, type Msg } from "../src/normalize.ts";
+import { normalizeLastTurn } from "../src/normalize.ts";
 import { combine, fileEnricher } from "../src/enrich.ts";
 import { append as logVerdict } from "../src/log.ts";
 import { kernMemoryEnricher } from "../src/enrich-kern.ts";
@@ -30,8 +30,7 @@ import {
   readRounds,
   writeRounds,
 } from "../src/session.ts";
-import { scoreSpecs as scoreSpecsFor } from "../src/specs.ts";
-import { scoreSpecs, unmet } from "../src/specs.ts";
+import { unmet } from "../src/specs.ts";
 
 /** Stop can fire before the turn's closing message reaches the transcript. */
 const FLUSH_TRIES = Number(process.env.ORLY_FLUSH_TRIES ?? 12);
@@ -235,7 +234,9 @@ if (orlyDir) {
     const v = typeof a?.noul === "number" ? a.noul : typeof a?.score === "number" ? a.score : undefined;
     if (typeof v === "number") scores[id] = Number(v.toFixed(3));
   }
-  const scored = scoreSpecsFor(specs, answers, DEFAULTS.specMet);
+  // The results the verdict used, evidence and all. Re-scoring here would drop it and
+  // log every deterministic check as unmet.
+  const scored = verdict.results;
   logVerdict(orlyDir, {
     at: new Date().toISOString(),
     session: String(input.session_id ?? "unknown"),
@@ -254,7 +255,7 @@ if (orlyDir) {
 // Loop control: only ever loosens the verdict, never tightens it.
 let loopNote: string | undefined;
 if (verdict.block && specs.length) {
-  const met = scoreSpecs(specs, answers, DEFAULTS.specMet).filter((r) => r.met).length;
+  const met = verdict.results.filter((r) => r.met).length;
   const decision = advance(
     readRounds(tmpdir(), input.session_id ?? "unknown"),
     specFile!.goal ?? "",
@@ -265,7 +266,7 @@ if (verdict.block && specs.length) {
   if (!decision.mayBlock) {
     console.log(
       JSON.stringify({
-        systemMessage: `${verdict.line} · ${decision.note} · ${unmet(scoreSpecs(specs, answers, DEFAULTS.specMet)).length} spec(s) still unmet`,
+        systemMessage: `${verdict.line} · ${decision.note} · ${unmet(verdict.results).length} spec(s) still unmet`,
       }),
     );
     process.exit(0);

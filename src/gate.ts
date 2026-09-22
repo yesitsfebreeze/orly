@@ -14,7 +14,7 @@
  */
 
 import { withEvidence, type Enricher } from "./enrich.ts";
-import { scoreSpecs, specQuestions, unmet, type Spec } from "./specs.ts";
+import { scoreSpecs, specQuestions, unmet, type Spec, type SpecResult } from "./specs.ts";
 
 export const ENDPOINT_DEFAULT = "https://api.typesafe.ai/v1/systemone";
 
@@ -172,6 +172,16 @@ export type Verdict = {
   reason: string;
   /** One line for a human watching. Always present. */
   line: string;
+  /**
+   * The spec results this verdict was actually composed from.
+   *
+   * Carried out rather than left to be re-derived: scoring a spec again elsewhere means
+   * passing the evidence again, and the caller that forgets gets a `require` spec
+   * evaluated against nothing — which reads as unmet, silently. That went into the log
+   * and into the loop's progress counter, so every deterministic check was recorded as
+   * failing on turns where it had passed, and the dataset `orly fit` tunes on was wrong.
+   */
+  results: SpecResult[];
 };
 
 /**
@@ -233,7 +243,7 @@ export function compose(
   if (action?.choice) parts.push(`next=${action.choice} ${actionP.toFixed(2)}`);
 
   const line = `orly ${fired.length ? "⛔ block" : "✓ pass"} · ${parts.join(" · ")}`;
-  if (!fired.length) return { block: false, reason: "", line };
+  if (!fired.length) return { block: false, reason: "", line, results: specResults };
 
   // The hazards decide whether to block; the Choice decides what the block asks for.
   const lead =
@@ -251,6 +261,7 @@ export function compose(
       "If it genuinely cannot be finished, say so explicitly to the user and name what is left and why — that also satisfies the gate.",
     ].join("\n"),
     line,
+    results: specResults,
   };
 }
 

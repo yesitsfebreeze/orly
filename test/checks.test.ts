@@ -76,3 +76,15 @@ test("a check nothing reads is never run", async () => {
   const e = await checkEnricher({ unused: { command: "echo noise" } }, "/tmp")(turn, reads("other"));
   expect(e).toEqual({});
 });
+
+test("a check's output is trimmed so it cannot drown the evidence around it", async () => {
+  // A `require` spec reads `exit` and `matches`; the text is only there for a human
+  // reading a blocked turn. Dumping a whole test run into state pushed one state from
+  // 6 300 to 27 762 characters and the file-evidence specs stopped finding what they
+  // were pointed at.
+  const e: any = await checkEnricher({ loud: { command: "head -c 5000 /dev/zero | tr '\\0' 'x'" } }, "/tmp")(
+    turn,
+    reads("loud"),
+  );
+  expect(e.checks.loud.out.length).toBeLessThanOrEqual(400);
+});

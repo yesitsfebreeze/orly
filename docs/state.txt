@@ -1,9 +1,9 @@
 THE STATE IS THE HARD PART
 ==========================
 
-Ten wrong numbers while building this. None of them were the model. Every one was state
-built badly or a fixture labelled wrongly — and each looked exactly like model error:
-nothing threw, nothing errored, the number was just wrong.
+Every wrong number while building this was state built badly or a fixture labelled
+wrongly. Not one was the model. Each looked exactly like model error: nothing threw,
+nothing errored, the number was just wrong.
 
   judge state that was handed to you,
   never state you read out of a file another process is still writing.
@@ -112,3 +112,27 @@ turn's conclusion exists — which is why it needs the poll described below.
    z_readme_unmeasured added to the fixture directory but not to the label map, so it
    defaulted to should-pass and collapsed a margin. Both times the model was right and
    the harness was lying.
+
+
+17. THE LOG THAT RECORDED EVERY CHECK AS FAILING
+    The verdict scored the specs with the gathered evidence. The adapter then scored them
+    a SECOND time, to write the log line and to count progress for the loop — and did not
+    pass the evidence. Every `require` spec resolved against nothing, which reads as
+    unmet.
+
+    So every judgment recorded all nine deterministic checks as failing, including on
+    turns where they passed, and that log is the dataset `orly fit` proposes cuts from.
+    The loop's stall detector was counting the same wrong number.
+
+    The verdict now carries the results it was composed from. Derived state gets computed
+    once, at the point that has the inputs — same family as bugs 10 and 14.
+
+18. THE COMMAND THAT COULD NEVER HAVE RUN
+    `orly fit` read a module-level const declared further down the file, so it crashed in
+    the temporal dead zone after printing its first line. The one command that turns
+    logged turns into better cuts had never worked.
+
+    Nothing imports the CLI, so no unit test could have caught it. The suite now spawns
+    it. The same pass found `orly judge` gathering file evidence but never running the
+    project's checks: every `require` spec read unmet through the CLI while passing
+    through the hook, on the same repo.
