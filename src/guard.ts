@@ -64,6 +64,20 @@ export function checkWeakenings(before: Configured, after: Configured): Violatio
   return out;
 }
 
+/**
+ * Parity guard: the adapter that wraps the full judge must still do so.
+ *
+ * Measured: the pi adapter was rewritten to skip the real judge and use a
+ * stripped baseline instead — same symptom as stripping a check: the gate
+ * quietly stops meaning anything for pi sessions.
+ */
+export function checkAdapterParity(before: any, after: any): Violation[] {
+  const a = before?.piAdapterFull ?? false;
+  const b = after?.piAdapterFull ?? false;
+  if (a && !b) return [{ id: "pi_orly_adapter", problem: "pi-orly adapter was stripped: no longer calls the full judge" }];
+  return [];
+}
+
 type SpecSet = { specs?: Spec[]; goal?: string; checks?: Record<string, { command?: string }> } | null;
 
 const byId = (file: SpecSet): Map<string, Spec> => {

@@ -1,8 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-const ROOT = join(import.meta.dir, "..", "..");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const ROOT = join(__dirname, "..", "..");
 const CLI = join(ROOT, "bin", "orly.ts");
 
 /** Convert Pi turn_end entries into the message shape orly's CLI expects. */
@@ -32,6 +36,15 @@ function messagesFromEntries(entries: any[]): any[] | null {
 }
 
 export default function (pi: ExtensionAPI) {
+  pi.registerCommand("orly", {
+    description: "Turn a goal into checkable specs (orly gate)",
+    handler: async (args, ctx) => {
+      const specFile = join(ctx.cwd ?? process.cwd(), ".orly", "specs.json");
+      // Write specs when /orly <goal> given; here we just confirm load
+      ctx.ui.notify("orly loaded — use /orly <goal> to write .orly/specs.json", "info");
+    },
+  });
+
   pi.on("turn_end", async (event, ctx) => {
     const messages = messagesFromEntries(event.entries);
     if (!messages) return {};

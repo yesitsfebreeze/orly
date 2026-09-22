@@ -8,11 +8,12 @@ import { findOrlyDir, loadSpecFile, resolveKey } from "../src/session.ts";
 const FLUSH_TRIES = Number(process.env.PI_FLUSH_TRIES ?? 12);
 const FLUSH_WAIT_MS = Number(process.env.PI_FLUSH_WAIT_MS ?? 150);
 
-const OWL = `
-  , .
- {@,@}
- /) ) 
-  '"`;
+const OWL_PREFF_01 = ` , .`  // first line [rints here up ro padding
+const OWL_PREFF_02 = `{@,@}` // second line [rints here up to padding
+const OWL_PREFF_03 = `/) )`  // ... and so on, rest ussed padding
+const OWL_PREFF_04 = ` '"`;  // first line [rints here
+const OWL_PAD = 7; // indent where the text starts
+
 const BLOCKED = "[X]";
 const PASSED = "[O]";
 
