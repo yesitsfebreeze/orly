@@ -272,3 +272,17 @@ test("the key resolves for any host, not just the one with a hook", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a spec may name the command it forbids, without that reading as taste", () => {
+  // `git clean -fd` is a command, not an opinion. The filter matched the substring and
+  // rejected a spec whose whole point was to forbid a destructive command — found by
+  // someone writing specs for their own project.
+  expect(validateSpecs([
+    { id: "no_destructive_git", instructions: "Do `command_results` show no `git clean -fd` and no `git reset --hard`?" },
+  ])).toEqual([]);
+  // Quoting is not a way out: taste outside a code span still fails.
+  expect(validateSpecs([{ id: "taste", instructions: "Is the code clean and well structured after `git commit`?" }]))
+    .toHaveLength(1);
+  // And a spec that is only a code span is still too short to judge.
+  expect(validateSpecs([{ id: "thin", instructions: "`bun test`" }])).toHaveLength(1);
+});

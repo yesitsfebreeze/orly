@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { refusal, weakenings } from "../src/guard.ts";
+import { checkWeakenings, refusal, weakenings } from "../src/guard.ts";
 import type { Spec } from "../src/specs.ts";
 
 const set = (specs: Spec[]) => ({ specs });
@@ -107,4 +107,44 @@ test("weakening is still refused within the same goal", () => {
   const before = { goal: g, specs: base.specs };
   const after = { goal: g, specs: [{ ...base.specs[0], cut: 0.01 }, base.specs[1]] };
   expect(checkBaseline(before, after).violations).toHaveLength(1);
+});
+
+// ---------------------------------------------------------------- the checks are half the gate
+
+const cfg = (command: string) => ({ checks: { tests: { command } } });
+
+test("deleting a check is refused, because it disarms every spec asserting on it", () => {
+  const v = checkWeakenings(cfg("bun test"), { checks: {} });
+  expect(v[0].problem).toContain("disarms");
+  expect(v[0].id).toBe("tests");
+});
+
+test("replacing a command with one that cannot fail is refused", () => {
+  for (const sneaky of ["true", "exit 0", " : ", "echo ok"]) {
+    expect(checkWeakenings(cfg("bun test"), cfg(sneaky))).toHaveLength(1);
+  }
+});
+
+test("changing a command to another real one is ordinary work", () => {
+  expect(checkWeakenings(cfg("bun test"), cfg("bun test --coverage"))).toEqual([]);
+  expect(checkWeakenings(cfg("npm test"), cfg("bun test 2>&1 | tail -5"))).toEqual([]);
+});
+
+test("adding a check is always allowed", () => {
+  expect(checkWeakenings(cfg("bun test"), { checks: { tests: { command: "bun test" }, lint: { command: "eslint ." } } })).toEqual([]);
+});
+
+test("a config that never had checks is not a weakening", () => {
+  expect(checkWeakenings(null, cfg("bun test"))).toEqual([]);
+});
+
+test("the backstop catches a check deleted through any route", () => {
+  // The same reasoning as the spec backstop: PreToolUse only sees edit tools, and a
+  // config rewritten by another process never passes it at all. That is not theoretical —
+  // it is how all nine checks here were dropped.
+  const was = { goal: "g", specs: [{ id: "a", instructions: "x" }], checks: { tests: { command: "bun test" } } };
+  const now = { goal: "g", specs: [{ id: "a", instructions: "x" }], checks: {} };
+  const { violations, nextBaseline } = checkBaseline(was, now, 0.7);
+  expect(violations.map((v) => v.id)).toEqual(["tests"]);
+  expect(nextBaseline).toBe(was); // a weakening is never laundered into the baseline
 });

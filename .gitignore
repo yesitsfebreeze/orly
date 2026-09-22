@@ -4,3 +4,4 @@ node_modules/
 .orly/baseline.json
 .orly/checks.json
 .orly/orly-rounds-*.json
+.kern/

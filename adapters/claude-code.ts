@@ -22,6 +22,7 @@ import {
   advance,
   DEFAULT_MAX_ROUNDS,
   findOrlyDir,
+  loadConfig,
   loadSpecFile,
   readRounds,
   resolveKey,
@@ -70,7 +71,7 @@ if (guardDir && specs.length) {
   }
   const { violations, nextBaseline } = checkBaseline(
     baseline,
-    { goal: specFile?.goal, specs },
+    { goal: specFile?.goal, specs, checks: loadConfig(input.cwd ?? process.cwd()).checks },
     DEFAULTS.specMet,
   );
   if (violations.length) {

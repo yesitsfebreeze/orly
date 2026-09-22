@@ -14,7 +14,44 @@ import type { Spec } from "./specs.ts";
 
 export type Violation = { id: string; problem: string };
 
-type SpecSet = { specs?: Spec[]; goal?: string } | null;
+/**
+ * The checks are half the gate, and nothing was watching them.
+ *
+ * A `require` spec asserts on a command's exit code, so the command IS the criterion.
+ * Rewriting `bun test` to `true` leaves the spec list untouched and every check green,
+ * and deleting the checks block disarms nine of them at once. The spec file was guarded;
+ * the file that says what the specs MEAN was not.
+ *
+ * Seen for real: a config rewrite dropped all nine checks here, silently.
+ *
+ * Only the direction that makes the gate easier is refused. Adding a check, or changing a
+ * command while keeping one, is ordinary work.
+ */
+export function checkWeakenings(
+  before: { checks?: Record<string, { command?: string }> } | null,
+  after: { checks?: Record<string, { command?: string }> } | null,
+): Violation[] {
+  const out: Violation[] = [];
+  const was = before?.checks ?? {};
+  const now = after?.checks ?? {};
+  for (const [name, spec] of Object.entries(was)) {
+    if (!(name in now)) {
+      out.push({ id: name, problem: "the check was deleted, which disarms every spec asserting on it" });
+      continue;
+    }
+    const before_ = spec?.command ?? "";
+    const after_ = now[name]?.command ?? "";
+    if (before_ === after_) continue;
+    // A command that cannot fail is not a check. These are the shapes that show up when
+    // one is filed down rather than fixed.
+    if (/^\s*(true|:|exit 0|echo\b[^|]*)\s*$/.test(after_)) {
+      out.push({ id: name, problem: `its command was replaced with one that cannot fail: ${JSON.stringify(after_)}` });
+    }
+  }
+  return out;
+}
+
+type SpecSet = { specs?: Spec[]; goal?: string; checks?: Record<string, { command?: string }> } | null;
 
 const byId = (file: SpecSet): Map<string, Spec> => {
   const m = new Map<string, Spec>();
@@ -88,7 +125,9 @@ export function checkBaseline(
   // it is the point. Without this, the first goal a repo ever had could never be replaced,
   // because every later spec set would read as deletions of it.
   if ((baseline as any).goal !== (current as any).goal) return { violations: [], nextBaseline: current };
-  const violations = weakenings(baseline, current, defaultCut);
+  // The specs say what must hold; the checks say what the deterministic ones MEAN. Both
+  // have to be compared, or the gate is guarded at one end and open at the other.
+  const violations = [...weakenings(baseline, current, defaultCut), ...checkWeakenings(baseline, current)];
   // Only record a new baseline when nothing was weakened, so a weakening can never be
   // laundered into the baseline by following it with an unrelated edit.
   return { violations, nextBaseline: violations.length ? baseline : current };

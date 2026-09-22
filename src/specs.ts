@@ -128,8 +128,12 @@ export function validateSpecs(specs: Spec[]): SpecProblem[] {
     }
     if (seen.has(s.id)) problems.push({ id: s.id, problem: "duplicate id" });
     seen.add(s.id);
-    const text = s.instructions ?? "";
-    if (text.trim().length < 15) {
+    // A spec quotes the commands it is about, and those commands have names. `git clean`
+    // is not a judgement about taste; neither is `cargo build --release`. Code spans are
+    // stripped before the filter runs, so quoting a command is how you say one — which is
+    // how a spec should be written anyway.
+    const text = (s.instructions ?? "").replace(/`[^`]*`/g, " ");
+    if ((s.instructions ?? "").trim().length < 15) {
       problems.push({ id: s.id, problem: "instructions too short to judge" });
     }
     const vague = text.match(UNCHECKABLE);
