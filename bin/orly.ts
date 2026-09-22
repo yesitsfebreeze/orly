@@ -197,7 +197,12 @@ if (command === "specs") {
   // cases correctly", and simulating execution is the one thing Jev is confidently wrong
   // about.
   const path = process.argv[3];
-  const file = path ? JSON.parse(await Bun.file(path).text()) : loadSpecFile(process.cwd());
+  let file: any;
+  try {
+    file = path ? JSON.parse(await Bun.file(path).text()) : loadSpecFile(process.cwd());
+  } catch (e: any) {
+    fail(`could not read ${path}: ${e?.code === "ENOENT" ? "no such file" : "not JSON"}`);
+  }
   if (!file?.specs?.length) fail("no specs found — pass a path, or create .orly/specs.json");
 
   // A `require` spec is decided in code, so "could a transcript settle this?" is the wrong

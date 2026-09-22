@@ -39,3 +39,9 @@ test("a bad shape is named and points at `orly schema`, before any key is needed
     expect(r.stderr.toString()).toContain("orly schema");
   }
 });
+
+test("orly specs on a missing or broken file says so, without a stack trace", () => {
+  const missing = run(["specs", "/nonexistent/specs.json"]);
+  expect(missing.exitCode).toBe(1);
+  expect(missing.stderr.toString()).toBe("orly: could not read /nonexistent/specs.json: no such file\n");
+});

@@ -49,7 +49,10 @@ THE CLI
 `messages` accepts either dialect: Anthropic content blocks (tool_use / tool_result) or
 OpenAI chat messages (tool_calls / role:"tool"). The last human message onward is judged.
 `{"turn":{...}}` takes a pre-normalised turn for logs that are neither shape.
+`orly schema` prints both shapes with a working example. A malformed input exits 1 naming
+the bad field, before the key is read and before any request is spent.
 
+  orly schema         print the accepted input shapes and the output shape
   orly watch          run the declared checks on every change, off the critical path
   orly specs [path]   check a spec list is decidable from recorded evidence
   orly fit            propose cuts from the log
