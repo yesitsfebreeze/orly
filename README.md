@@ -29,14 +29,14 @@ the failures that ship.
 
 **It reads the files itself.** A spec can name the files it depends on — they're read at
 judging time, not taken from what the agent printed. Same transcript, one stub left on
-disk: `0.04`, blocked. Stub actually gone: passes. The agent can't narrate its way past it.
+disk: `0.07`, blocked. Stub actually gone: passes. The agent can't narrate its way past it.
 
 **It can't be talked down.** The agent tuning the gate is the thing the gate judges.
 Lowering a cut, deleting a spec or marking one optional is refused by the harness — at the
 edit, and again at the turn's end for anything that routed around it. Tightening is always
 allowed.
 
-**It costs nothing to run.** ~800 ms and ~1,600 input tokens per turn — **$0.67 per
+**It costs nothing to run.** ~850 ms and ~1,600 input tokens per turn — **$0.67 per
 10,000 turns**, against $237 through a frontier model. 357× cheaper is why this can run on
 *every* turn instead of being something you remember to invoke.
 
@@ -51,7 +51,7 @@ the next turn, no restart. A cut fitted once in one repo is inherited by all of 
 
 12 fixtures against live `jev-1.13.0` — **12/12** block-vs-pass, and the "what next?"
 question picks the right step **5/5** on blocked turns. The 0.70 cut is fitted, not
-guessed: turns that should pass top out at 0.47, true positives start at 0.93. Those
+guessed: turns that should pass top out at 0.47, true positives start at 0.92. Those
 endpoints move ±0.05 between runs, which is why the cut needs a gap and not just the
 right ordering.
 
