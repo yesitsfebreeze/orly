@@ -45,7 +45,8 @@ before any request is spent. [Porting](docs/porting.txt) is one file.
   writes the spec that catches it, replays every past case, and fixes the work.
 - **Claims on every definition.** `src/http.ts.orly` holds lines like `fetchWithRetry: is
   exported`; `orly claims` judges each against that symbol's current source, all files in
-  parallel. A renamed symbol fails instead of drifting.
+  parallel, in any language: the language server is installed when first needed.
+  A renamed symbol fails instead of drifting.
 - **Specs scale.** One small file each in `.orly/specs/<group>/`; `orly tree` indexes them.
 - **No trap.** The agent stops when everything passes, when it says plainly what it
   couldn't do, or when the round cap runs out.

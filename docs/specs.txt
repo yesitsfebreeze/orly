@@ -200,7 +200,22 @@ Gate on it with a check and a require spec:
 
   "claims": { "command": "orly claims 2>&1 || true", "countPattern": "(?:^|\\n)(?:FAIL|orly: )" }
 
-TypeScript and JavaScript today, through the TypeScript parser.
+Any language with a language server: symbols come from `textDocument/documentSymbol`.
+Servers arrive the way Mason brings them to nvim, when a file first needs one:
+
+  .ts .tsx .js .jsx   typescript-language-server@latest via bunx
+  .py                 pyright@latest via bunx
+  .rs                 rust-analyzer, downloaded from its GitHub releases
+  .go                 gopls, built with `go install`
+  .c .h .cc .cpp      clangd from PATH
+
+Downloads land in ~/.orly/servers/bin and are fetched again once a week old; a server
+already on PATH is used if it answers --version. Anything else, in .orly/config.json:
+
+  "lsp": { ".kt": { "command": ["kotlin-language-server"], "languageId": "kotlin" } }
+
+No server for a file means its symbol claims fail and say what to install; `@file`
+claims are still judged.
 
 
 CHECK BEFORE YOU RELY ON IT

@@ -24,7 +24,8 @@ import { label, propose, read } from "../src/log.ts";
 import { basename, dirname, join } from "node:path";
 import { findOrlyDir, loadConfig, loadSpecFile, projectRoot, resolveKey } from "../src/session.ts";
 import { validateSpecs, type Spec } from "../src/specs.ts";
-import { definitions, judgeSidecar, pool, supported, type ClaimResult } from "../src/claims.ts";
+import { judgeSidecar, pool, type ClaimResult } from "../src/claims.ts";
+import { indexFiles } from "../src/lsp.ts";
 import { EXT, formatSpec, loadTree, renderTree, TREE } from "../src/spectree.ts";
 import { check, listTurns, promote, readCases, readTurn, recordRun, saveTurn, type Outcome } from "../src/cases.ts";
 
@@ -363,19 +364,18 @@ if (command === "turns") {
 
 if (command === "symbols") {
   const path = process.argv[3];
-  if (!path || !supported(path)) fail("usage: orly symbols <file.ts|tsx|js|jsx|mts|cts|mjs|cjs>");
-  let text = "";
-  try {
-    text = await Bun.file(path!).text();
-  } catch {
-    fail(`could not read ${path}`);
-  }
-  for (const d of definitions(path!, text)) console.log(`${d.anchor.padEnd(40)} ${d.kind.padEnd(12)} ${d.from}-${d.to}`);
+  if (!path) fail("usage: orly symbols <file>");
+  const text = await Bun.file(path!).text().catch(() => fail(`could not read ${path}`));
+  const root = projectRoot(process.cwd()) ?? process.cwd();
+  const defs = (await indexFiles(root, [{ path: path!, text: text as string }], loadConfig(process.cwd()).lsp)).get(path!)!;
+  if (defs instanceof Error) fail(defs.message);
+  for (const d of defs as any[]) console.log(`${d.anchor.padEnd(40)} ${d.kind.padEnd(12)} ${d.from}-${d.to}`);
   process.exit(0);
 }
 
 if (command === "claims") {
-  // Every sidecar in the repository, one request per source file, many files at once.
+  // Every sidecar in the repository: each language's server indexes its files, then one
+  // judge request per source file, many files at once.
   const root = projectRoot(process.cwd()) ?? process.cwd();
   const listed = Bun.spawnSync(["git", "ls-files", "-co", "--exclude-standard", "*.orly"], { cwd: root, stdout: "pipe" });
   const only = process.argv.slice(3);
@@ -390,15 +390,20 @@ if (command === "claims") {
   const cut = num("ORLY_CLAIM_CUT", DEFAULTS.specMet);
   const transport = { apiKey: key5!, endpoint: process.env.TYPESAFE_BASE_URL, model: process.env.ORLY_MODEL, timeoutMs: num("ORLY_TIMEOUT_MS", 12_000) };
   const t0 = performance.now();
-  const perFile = await pool(sidecars, num("ORLY_CLAIMS_PARALLEL", 8), async (car): Promise<[string, ClaimResult[]]> => {
-    const src = car.slice(0, -".orly".length);
-    const source = await Bun.file(join(root, src)).text().catch(() => null);
-    const sidecar = await Bun.file(join(root, car)).text();
+  const files = await Promise.all(
+    sidecars.map(async (car) => {
+      const path = car.slice(0, -".orly".length);
+      return { car, path, text: await Bun.file(join(root, path)).text().catch(() => null), sidecar: await Bun.file(join(root, car)).text() };
+    }),
+  );
+  const index = await indexFiles(root, files.filter((f) => f.text !== null) as any, loadConfig(process.cwd()).lsp);
+  const tIndex = performance.now();
+  const perFile = await pool(files, num("ORLY_CLAIMS_PARALLEL", 8), async (f): Promise<[string, ClaimResult[]]> => {
     try {
-      if (!supported(src)) throw new Error(`no parser for ${src}`);
-      return [src, await judgeSidecar(src, source, sidecar, (st, q) => askJudge(st, q, transport), cut)];
+      const defs = index.get(f.path) ?? new Error(`${f.path} does not exist`);
+      return [f.path, await judgeSidecar(f.path, f.text, defs, f.sidecar, (st, q) => askJudge(st, q, transport), cut)];
     } catch (e: any) {
-      return [src, [{ anchor: "@file", claim: "", line: 0, ok: false, problem: e?.message ?? String(e) }]];
+      return [f.path, [{ anchor: "@file", claim: "", line: 0, ok: false, problem: e?.message ?? String(e) }]];
     }
   });
   let total = 0;
@@ -410,7 +415,8 @@ if (command === "claims") {
       const p = typeof r.p === "number" ? r.p.toFixed(2) : "  - ";
       console.log(`${r.ok ? "ok  " : "FAIL"} ${p}  ${src}:${r.line} ${r.anchor}: ${r.claim}${r.problem ? `  — ${r.problem}` : ""}`);
     }
-  console.log(`\n${total - bad}/${total} claims hold across ${sidecars.length} file(s) in ${Math.round(performance.now() - t0)} ms (cut ${cut})`);
+  const ms = (t: number) => Math.round(t);
+  console.log(`\n${total - bad}/${total} claims hold across ${sidecars.length} file(s) — index ${ms(tIndex - t0)} ms, judge ${ms(performance.now() - tIndex)} ms (cut ${cut})`);
   process.exit(bad ? 2 : 0);
 }
 

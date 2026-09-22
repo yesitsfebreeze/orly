@@ -11,71 +11,18 @@
  * different code after the first edit above it and keeps "passing" on the wrong lines. A
  * name that no longer resolves fails the claim, so a rename blocks instead of drifting.
  *
- * Each claim is asked with only its definition's current source in front of the judge,
+ * Definitions come from the language's own server (src/lsp.ts), so any language with one
+ * works. Each claim is asked with only its definition's current source in front of the judge,
  * and about what the code SAYS. Asked what code does at runtime, the judge answers
  * confidently and wrongly (docs/specs.txt), so behaviour words are refused up front —
  * behaviour belongs to a test's output.
  */
-import ts from "typescript";
-import { extname } from "node:path";
+import type { Definition } from "./lsp.ts";
 
-export type Definition = { anchor: string; kind: string; from: number; to: number; text: string };
+export type { Definition };
 export type Claim = { anchor: string; claim: string; line: number };
 export type ClaimResult = Claim & { p?: number; ok: boolean; problem?: string };
 export type Asker = (state: unknown, questions: Record<string, unknown>) => Promise<{ answers: Record<string, any> }>;
-
-const KINDS: Partial<Record<ts.SyntaxKind, string>> = {
-  [ts.SyntaxKind.FunctionDeclaration]: "function",
-  [ts.SyntaxKind.ClassDeclaration]: "class",
-  [ts.SyntaxKind.InterfaceDeclaration]: "interface",
-  [ts.SyntaxKind.TypeAliasDeclaration]: "type",
-  [ts.SyntaxKind.EnumDeclaration]: "enum",
-  [ts.SyntaxKind.VariableDeclaration]: "variable",
-  [ts.SyntaxKind.MethodDeclaration]: "method",
-  [ts.SyntaxKind.PropertyDeclaration]: "property",
-  [ts.SyntaxKind.Constructor]: "constructor",
-  [ts.SyntaxKind.GetAccessor]: "getter",
-  [ts.SyntaxKind.SetAccessor]: "setter",
-  [ts.SyntaxKind.PropertySignature]: "property",
-  [ts.SyntaxKind.MethodSignature]: "method",
-  [ts.SyntaxKind.EnumMember]: "member",
-};
-
-const SCRIPT: Record<string, ts.ScriptKind> = {
-  ".ts": ts.ScriptKind.TS, ".mts": ts.ScriptKind.TS, ".cts": ts.ScriptKind.TS, ".tsx": ts.ScriptKind.TSX,
-  ".js": ts.ScriptKind.JS, ".mjs": ts.ScriptKind.JS, ".cjs": ts.ScriptKind.JS, ".jsx": ts.ScriptKind.JSX,
-};
-
-export const supported = (path: string) => extname(path) in SCRIPT;
-
-/**
- * Every named definition in a file: top-level declarations and the members of classes,
- * interfaces and enums, anchored as `Name` or `Owner.member`. Function bodies are not
- * descended into — a local is not something a claim should be pinned to.
- */
-export function definitions(path: string, text: string): Definition[] {
-  const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, SCRIPT[extname(path)] ?? ts.ScriptKind.TS);
-  const out: Definition[] = [];
-  const line = (pos: number) => sf.getLineAndCharacterOfPosition(pos).line + 1;
-  const visit = (node: ts.Node, owner: string) => {
-    const kind = KINDS[node.kind];
-    const name = (node as any).name;
-    const id = node.kind === ts.SyntaxKind.Constructor ? "constructor" : name && ts.isIdentifier(name) ? name.text : name?.getText?.(sf);
-    if (kind && id) {
-      // A `const x = …` statement is what a reader thinks of as the definition, export and all.
-      const whole = ts.isVariableDeclaration(node) ? node.parent.parent : node;
-      const anchor = owner ? `${owner}.${id}` : id;
-      out.push({ anchor, kind, from: line(whole.getStart(sf)), to: line(whole.getEnd()), text: whole.getText(sf) });
-      if (ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node) || ts.isEnumDeclaration(node))
-        node.members.forEach((m: ts.Node) => visit(m, anchor));
-      return;
-    }
-    if (ts.isSourceFile(node) || ts.isVariableStatement(node) || ts.isVariableDeclarationList(node) || ts.isModuleBlock(node))
-      ts.forEachChild(node, (c) => visit(c, owner));
-  };
-  visit(sf, "");
-  return out;
-}
 
 /** `anchor: claim` per line; blank lines and `#` comments skipped. */
 export function parseSidecar(text: string): { claims: Claim[]; problems: Claim[] } {
@@ -84,9 +31,10 @@ export function parseSidecar(text: string): { claims: Claim[]; problems: Claim[]
   text.split("\n").forEach((raw, i) => {
     const l = raw.trim();
     if (!l || l.startsWith("#")) return;
-    const m = l.match(/^(@file|[A-Za-z_$][\w$]*(?:\.[\w$]+)*)\s*:\s*(.+)$/);
-    if (m) claims.push({ anchor: m[1], claim: m[2].trim(), line: i + 1 });
-    else if (/^\d+\s*:/.test(l)) problems.push({ anchor: l.split(":")[0], claim: "a line number drifts with every edit above it — anchor to a symbol name (`orly symbols <file>` lists them)", line: i + 1 });
+    // The anchor runs to the first ": ", so `Foo::new` and `impl Foo.bar` are anchors too.
+    const m = l.match(/^(@file|[^\s:][^:]*?(?:::[^:\s]+)*)\s*:\s+(.+)$/);
+    if (/^\d+\s*:/.test(l)) problems.push({ anchor: l.split(":")[0], claim: "a line number drifts with every edit above it — anchor to a symbol name (`orly symbols <file>` lists them)", line: i + 1 });
+    else if (m) claims.push({ anchor: m[1], claim: m[2].trim(), line: i + 1 });
     else problems.push({ anchor: "?", claim: `expected "anchor: claim", got ${JSON.stringify(l)}`, line: i + 1 });
   });
   return { claims, problems };
@@ -106,11 +54,24 @@ const MAX_CHARS = 12_000;
  * Judge one sidecar against its source file in a single request. Anything that cannot be
  * judged — a bad line, an unresolved anchor, a refused claim — fails, never passes.
  */
-export async function judgeSidecar(sourcePath: string, source: string | null, sidecar: string, ask: Asker, cut: number): Promise<ClaimResult[]> {
+export async function judgeSidecar(
+  sourcePath: string,
+  source: string | null,
+  defsOrError: Definition[] | Error,
+  sidecar: string,
+  ask: Asker,
+  cut: number,
+): Promise<ClaimResult[]> {
   const { claims, problems } = parseSidecar(sidecar);
   const out: ClaimResult[] = problems.map((p) => ({ ...p, ok: false, problem: p.claim }));
   if (source === null) return [...out, ...claims.map((c) => ({ ...c, ok: false, problem: `${sourcePath} does not exist` }))];
-  const defs = new Map(definitions(sourcePath, source).map((d) => [d.anchor, d]));
+  if (defsOrError instanceof Error) {
+    // No symbols means no anchor can be checked. @file claims still can.
+    const needs = claims.filter((c) => c.anchor !== "@file");
+    out.push(...needs.map((c) => ({ ...c, ok: false, problem: defsOrError.message })));
+    claims.splice(0, claims.length, ...claims.filter((c) => c.anchor === "@file"));
+  }
+  const defs = new Map((defsOrError instanceof Error ? [] : defsOrError).map((d) => [d.anchor, d]));
   const symbols: Record<string, string> = {};
   const questions: Record<string, unknown> = {};
   const asked: Array<[string, Claim]> = [];

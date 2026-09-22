@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { claimProblem, definitions, judgeSidecar, parseSidecar, pool } from "../src/claims.ts";
+import { claimProblem, judgeSidecar, parseSidecar, pool } from "../src/claims.ts";
+import { ensureServer, flatten, serverFor } from "../src/lsp.ts";
 
 const SRC = `export const PACKAGE = "xyz";
 export class RetryPolicy {
@@ -13,16 +14,45 @@ export async function fetchWithRetry(url: string) {
 }
 `;
 
-test("definitions are anchored by name, members by Owner.member, locals skipped", () => {
-  const d = definitions("http.ts", SRC);
-  expect(d.map((x) => x.anchor)).toEqual(["PACKAGE", "RetryPolicy", "RetryPolicy.max", "RetryPolicy.delay", "Opts", "Opts.timeout", "fetchWithRetry"]);
-  expect(d.find((x) => x.anchor === "PACKAGE")!.text).toBe('export const PACKAGE = "xyz";');
-  expect(d.find((x) => x.anchor === "fetchWithRetry")).toMatchObject({ kind: "function", from: 7, to: 10 });
+// What a language server answers for SRC to textDocument/documentSymbol (0-based lines).
+const r = (a: number, b: number) => ({ start: { line: a, character: 0 }, end: { line: b, character: 1 } });
+const LSP = [
+  { name: "PACKAGE", kind: 14, range: r(0, 0) },
+  { name: "RetryPolicy", kind: 5, range: r(1, 4), children: [
+    { name: "max", kind: 7, range: r(2, 2) },
+    { name: "delay", kind: 6, range: r(3, 3), children: [{ name: "n", kind: 13, range: r(3, 3) }] },
+  ] },
+  { name: "Opts", kind: 11, range: r(5, 5), children: [{ name: "timeout", kind: 7, range: r(5, 5) }] },
+  { name: "fetchWithRetry", kind: 12, range: r(6, 9), children: [{ name: "inner", kind: 13, range: r(7, 7) }] },
+];
+const DEFS = flatten(LSP as any, SRC);
+
+test("a documentSymbol tree becomes Name / Owner.member anchors; locals in bodies are skipped", () => {
+  expect(DEFS.map((x) => x.anchor)).toEqual(["PACKAGE", "RetryPolicy", "RetryPolicy.max", "RetryPolicy.delay", "Opts", "Opts.timeout", "fetchWithRetry"]);
+  expect(DEFS.find((x) => x.anchor === "PACKAGE")!.text).toBe('export const PACKAGE = "xyz";');
+  expect(DEFS.find((x) => x.anchor === "fetchWithRetry")).toMatchObject({ kind: "function", from: 7, to: 10 });
+});
+
+test("servers are picked by extension, config wins, and a missing one says what to install", async () => {
+  expect(serverFor("a.rs")?.languageId).toBe("rust");
+  expect(serverFor("a.py")?.command[0]).toBe("bunx");
+  expect(serverFor("a.kt")).toBeUndefined();
+  expect(serverFor("a.kt", { ".kt": { command: ["kls"], languageId: "kotlin" } })?.languageId).toBe("kotlin");
+  const none = { command: ["orly-no-such-server"], languageId: "x", hint: "install it from example" };
+  const prev = process.env.ORLY_SERVER_DIR;
+  process.env.ORLY_SERVER_DIR = "/nonexistent-orly-servers";
+  try {
+    await expect(ensureServer(none, ".x")).rejects.toThrow("put orly-no-such-server on PATH (install it from example)");
+  } finally {
+    process.env.ORLY_SERVER_DIR = prev;
+  }
 });
 
 test("a sidecar line is `anchor: claim`; line numbers and junk are problems, not claims", () => {
-  const { claims, problems } = parseSidecar("# header\n\n@file: names package xyz\nRetryPolicy.max: is set to 3\n100: must export module\nnonsense\n");
-  expect(claims.map((c) => [c.anchor, c.line])).toEqual([["@file", 3], ["RetryPolicy.max", 4]]);
+  const { claims, problems } = parseSidecar(
+    "# header\n\n@file: names package xyz\nRetryPolicy.max: is set to 3\n100: must export module\nnonsense\nimpl RetryPolicy.new: sets max\n",
+  );
+  expect(claims.map((c) => [c.anchor, c.line])).toEqual([["@file", 3], ["RetryPolicy.max", 4], ["impl RetryPolicy.new", 7]]);
   expect(problems[0].claim).toContain("line number drifts");
   expect(problems[1].claim).toContain('expected "anchor: claim"');
 });
@@ -41,14 +71,17 @@ test("each claim sees only its definition; anything unjudgeable fails, never pas
     return { answers: Object.fromEntries(Object.keys(qs).map((k, i) => [k, { noul: i === 0 ? 0.95 : 0.2 }])) };
   };
   const sidecar = "RetryPolicy.max: is set to 3\nfetchWithRetry: is exported\nrenamedAway: is exported\nPACKAGE: works correctly\n";
-  const r = await judgeSidecar("http.ts", SRC, sidecar, ask, 0.7);
-  expect(r.map((x) => [x.anchor, x.ok])).toEqual([["RetryPolicy.max", true], ["fetchWithRetry", false], ["renamedAway", false], ["PACKAGE", false]]);
-  expect(r[2].problem).toContain("renamed or deleted");
-  expect(r[3].problem).toContain("behaviour");
+  const res = await judgeSidecar("http.ts", SRC, DEFS, sidecar, ask, 0.7);
+  expect(res.map((x) => [x.anchor, x.ok])).toEqual([["RetryPolicy.max", true], ["fetchWithRetry", false], ["renamedAway", false], ["PACKAGE", false]]);
+  expect(res[2].problem).toContain("renamed or deleted");
+  expect(res[3].problem).toContain("behaviour");
   expect(Object.keys(seen.state.symbols)).toEqual(["RetryPolicy.max", "fetchWithRetry"]);
-  expect(seen.state.symbols["RetryPolicy.max"]).toBe("max = 3;");
+  expect(seen.state.symbols["RetryPolicy.max"]).toBe("  max = 3;");
   // A deleted source file fails every claim in its sidecar.
-  expect((await judgeSidecar("gone.ts", null, "x: is exported\n", ask, 0.7))[0].problem).toContain("does not exist");
+  expect((await judgeSidecar("gone.ts", null, [], "x: is exported\n", ask, 0.7))[0].problem).toContain("does not exist");
+  // No language server: every symbol claim fails with why; @file claims are still judged.
+  const noServer = await judgeSidecar("a.kt", SRC, new Error("no language server for .kt"), "@file: names xyz\nFoo: is exported\n", ask, 0.7);
+  expect(noServer.map((x) => [x.anchor, x.ok, x.problem])).toEqual([["@file", true, undefined], ["Foo", false, "no language server for .kt"]]);
 });
 
 test("the pool keeps order and never exceeds its limit", async () => {
