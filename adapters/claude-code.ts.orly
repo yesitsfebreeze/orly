@@ -1,0 +1,3 @@
+FLUSH_TRIES: defaults to 12 unless ORLY_FLUSH_TRIES is set
+FLUSH_WAIT_MS: defaults to 150 unless ORLY_FLUSH_WAIT_MS is set
+allow: exits 0 so the agent may stop

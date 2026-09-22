@@ -10,13 +10,15 @@
  * servers run through `bunx …@latest` and stay current by themselves. A binary server is
  * downloaded from its own release page, or built with its toolchain, into ~/.orly/servers,
  * and fetched again once it is a week old. One already on PATH is used as it is.
- * `.orly/config.json` adds or overrides any extension:
+ * Extensions outside the table below are discovered from the joined Linguist / Mason /
+ * lspconfig index in src/registry.ts. `.orly/config.json` adds or overrides any extension:
  * `"lsp": { ".kt": { "command": ["kotlin-language-server"], "languageId": "kotlin" } }`.
  */
 import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { candidatesFor, loadIndex, rememberChoice, serverFromCandidate } from "./registry.ts";
 
 /** How to get a server that is not on PATH. */
 export type Install =
@@ -75,6 +77,8 @@ const KIND: Record<number, string> = {
 };
 // A local inside a body is not something a claim should be pinned to.
 const BODY = new Set([6, 9, 12]);
+const VALUE = new Set([13, 14]);
+const MEMBER = new Set([7, 8, 22]);
 
 type Sym = { name: string; kind: number; range: { start: { line: number }; end: { line: number } }; children?: Sym[] };
 
@@ -84,10 +88,15 @@ export function flatten(symbols: Sym[], text: string): Definition[] {
   const out: Definition[] = [];
   const walk = (list: Sym[], owner: string) => {
     for (const s of list) {
+      // Callbacks show up as `<function>` or `map() callback`: not something to pin a claim to.
+      if (/[()<>]/.test(s.name)) continue;
       const anchor = owner ? `${owner}.${s.name}` : s.name;
       const { start, end } = s.range;
       out.push({ anchor, kind: KIND[s.kind] ?? "symbol", from: start.line + 1, to: end.line + 1, text: lines.slice(start.line, end.line + 1).join("\n") });
-      if (s.children && !BODY.has(s.kind)) walk(s.children, anchor);
+      // Under a variable only object-literal members are anchors; anything else is a local
+      // inside an arrow function's body.
+      if (s.children && !BODY.has(s.kind))
+        walk(VALUE.has(s.kind) ? s.children.filter((c) => MEMBER.has(c.kind)) : s.children, anchor);
     }
   };
   walk(symbols, "");
@@ -171,7 +180,7 @@ export async function startServer(server: Server, root: string, command = server
   })();
 
   const rootUri = pathToFileURL(root).href;
-  await request("initialize", {
+  const init = await request("initialize", {
     processId: process.pid,
     rootUri,
     workspaceFolders: [{ uri: rootUri, name: "root" }],
@@ -179,6 +188,10 @@ export async function startServer(server: Server, root: string, command = server
     initializationOptions: server.init ?? {},
   }, 120_000); // the first bunx run installs the server
   send({ method: "initialized", params: {} });
+  if (!init?.capabilities?.documentSymbolProvider) {
+    proc.kill();
+    throw new Error(`${command[0].split("/").at(-1)} does not list symbols`);
+  }
 
   return {
     async symbols(path: string, text: string): Promise<Definition[]> {
@@ -212,7 +225,9 @@ const fromFlat = (s: any): Sym => ({
 
 /**
  * Index many files at once: one server per language, all languages in parallel, every
- * file's symbols requested together. A file whose server cannot start gets that Error.
+ * file's symbols requested together. The server is the config's, else the built-in one,
+ * else the first discovered candidate that starts and lists symbols. A file whose server
+ * cannot be found or started gets that Error.
  */
 export async function indexFiles(
   root: string,
@@ -220,20 +235,47 @@ export async function indexFiles(
   config: Record<string, Server> = {},
 ): Promise<Map<string, Definition[] | Error>> {
   const out = new Map<string, Definition[] | Error>();
-  const groups = new Map<Server, typeof files>();
+  const groups = new Map<string, typeof files>();
   for (const f of files) {
-    const s = serverFor(f.path, config);
-    if (!s) out.set(f.path, new Error(`no language server known for ${extname(f.path) || f.path} — set "lsp" in .orly/config.json`));
-    else groups.set(s, [...(groups.get(s) ?? []), f]);
+    const key = config[extname(f.path)] || SERVERS[extname(f.path)] ? `known:${JSON.stringify(serverFor(f.path, config))}` : `ext:${extname(f.path)}`;
+    groups.set(key, [...(groups.get(key) ?? []), f]);
   }
+  const index = [...groups.keys()].some((k) => k.startsWith("ext:")) ? await loadIndex().catch((e: Error) => e) : undefined;
   await Promise.all(
-    [...groups].map(async ([server, group]) => {
+    [...groups].map(async ([key, group]) => {
+      const ext = extname(group[0].path);
       let running: Awaited<ReturnType<typeof startServer>> | undefined;
       try {
-        running = await startServer(server, root, await ensureServer(server, extname(group[0].path)));
-        await Promise.all(
-          group.map(async (f) => out.set(f.path, await running!.symbols(f.path, f.text).catch((e: Error) => e))),
-        );
+        if (key.startsWith("known:")) {
+          const server = serverFor(group[0].path, config)!;
+          running = await startServer(server, root, await ensureServer(server, ext));
+        } else {
+          if (index instanceof Error) throw new Error(`no language server for ${ext}: the language index could not be built (${index.message})`);
+          const tried: string[] = [];
+          // ponytail: first five candidates; widen if a language's good server ranks lower.
+          for (const c of candidatesFor(index!, group[0].path).slice(0, 5)) {
+            let trial: Awaited<ReturnType<typeof startServer>> | undefined;
+            try {
+              const server = await serverFromCandidate(c);
+              trial = await startServer(server, root, server.command);
+              const found = await Promise.all(group.map((f) => trial!.symbols(f.path, f.text).catch((e: Error) => e)));
+              // Advertising symbols is not listing them: a server that finds none in any
+              // file is the wrong server for this language, not an empty file.
+              if (!found.some((r) => Array.isArray(r) && r.length)) throw new Error("listed no symbols");
+              group.forEach((f, i) => out.set(f.path, found[i]));
+              rememberChoice(ext, c.package);
+              running = trial;
+              break;
+            } catch (e: any) {
+              await trial?.stop();
+              tried.push(`${c.package}: ${e.message}`);
+            }
+          }
+          if (!running)
+            throw new Error(tried.length ? `no working language server for ${ext} (${tried.join("; ")})` : `no language server known for ${ext || group[0].path} — set "lsp" in .orly/config.json`);
+          return;
+        }
+        await Promise.all(group.map(async (f) => out.set(f.path, await running!.symbols(f.path, f.text).catch((e: Error) => e))));
       } catch (e: any) {
         for (const f of group) out.set(f.path, e instanceof Error ? e : new Error(String(e)));
       } finally {

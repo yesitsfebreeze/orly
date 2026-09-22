@@ -24,11 +24,16 @@ const LSP = [
   ] },
   { name: "Opts", kind: 11, range: r(5, 5), children: [{ name: "timeout", kind: 7, range: r(5, 5) }] },
   { name: "fetchWithRetry", kind: 12, range: r(6, 9), children: [{ name: "inner", kind: 13, range: r(7, 7) }] },
+  // An arrow function held in a constant: its locals are not members.
+  { name: "PACKAGE_LOCAL", kind: 14, range: r(0, 0), children: [{ name: "tmp", kind: 13, range: r(0, 0) }] },
+  // Callbacks some servers report as symbols: never an anchor.
+  { name: "<function>", kind: 12, range: r(8, 8) },
+  { name: "map() callback", kind: 12, range: r(8, 8) },
 ];
 const DEFS = flatten(LSP as any, SRC);
 
 test("a documentSymbol tree becomes Name / Owner.member anchors; locals in bodies are skipped", () => {
-  expect(DEFS.map((x) => x.anchor)).toEqual(["PACKAGE", "RetryPolicy", "RetryPolicy.max", "RetryPolicy.delay", "Opts", "Opts.timeout", "fetchWithRetry"]);
+  expect(DEFS.map((x) => x.anchor)).toEqual(["PACKAGE", "RetryPolicy", "RetryPolicy.max", "RetryPolicy.delay", "Opts", "Opts.timeout", "fetchWithRetry", "PACKAGE_LOCAL"]);
   expect(DEFS.find((x) => x.anchor === "PACKAGE")!.text).toBe('export const PACKAGE = "xyz";');
   expect(DEFS.find((x) => x.anchor === "fetchWithRetry")).toMatchObject({ kind: "function", from: 7, to: 10 });
 });
@@ -77,6 +82,14 @@ test("each claim sees only its definition; anything unjudgeable fails, never pas
   expect(res[3].problem).toContain("behaviour");
   expect(Object.keys(seen.state.symbols)).toEqual(["RetryPolicy.max", "fetchWithRetry"]);
   expect(seen.state.symbols["RetryPolicy.max"]).toBe("  max = 3;");
+  // The judge being down fails each asked claim on its own line, never the whole file as one.
+  const down = await judgeSidecar("http.ts", SRC, DEFS, "PACKAGE: is xyz\nOpts: has timeout\n", async () => {
+    throw new Error("520 <!DOCTYPE html>\n<html>…");
+  }, 0.7);
+  expect(down.map((x) => [x.anchor, x.problem])).toEqual([["PACKAGE", "judge unavailable (520 <!DOCTYPE html>)"], ["Opts", "judge unavailable (520 <!DOCTYPE html>)"]]);
+  // A name defined twice is ambiguous, never a guess.
+  const twice = [...DEFS, { ...DEFS[0], text: "const PACKAGE = 2;" }];
+  expect((await judgeSidecar("http.ts", SRC, twice, "PACKAGE: is xyz\n", ask, 0.7))[0].problem).toContain("more than one definition");
   // A deleted source file fails every claim in its sidecar.
   expect((await judgeSidecar("gone.ts", null, [], "x: is exported\n", ask, 0.7))[0].problem).toContain("does not exist");
   // No language server: every symbol claim fails with why; @file claims are still judged.

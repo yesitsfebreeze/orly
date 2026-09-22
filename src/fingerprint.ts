@@ -25,7 +25,7 @@ import { join } from "node:path";
  * read them, and this repository has one that does. Only the files orly produces are
  * excluded, never the ones it is given.
  */
-const OWN_STATE = /^\.orly\/(checks\.json|log\.jsonl|baseline\.json|orly-rounds-.*\.json)$/;
+const OWN_STATE = /^\.orly\/(checks\.json|log\.jsonl|baseline\.json|orly-rounds-.*\.json|replay\.jsonl|turns\/.*)$/;
 
 /** A short string that changes whenever anything a command could read has changed. */
 export function treeFingerprint(root: string): string | null {

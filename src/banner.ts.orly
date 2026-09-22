@@ -1,0 +1,7 @@
+BLOCKED: is "[X]"
+PASSED: is "[O]"
+OWL: has four rows
+OWL_PAD: is 7
+OWL_MARGIN: is 3
+statusBar: returns four lines, the first starting with BLOCK or PASS
+owlBlock: prefixes each owl row with OWL_MARGIN spaces and pads it to OWL_PAD before the text

@@ -82,9 +82,17 @@ Headers: `cut`, `require: <path> <op> <value>`, `evidence: a, b`, `optional: yes
 `bun ${CLAUDE_PLUGIN_ROOT}/bin/orly.ts tree` prints the index.
 
 **Claims on code.** For what a definition must state — an export, a constant, a header it
-sends — write `<file>.orly` beside the source, `symbol: claim` per line (`orly symbols
-<file>` lists the anchors), and gate on `orly claims` with a check. Behaviour still goes
-through a test's output.
+sends — use a sidecar beside the source, `symbol: claim` per line:
+
+1. `bun ${CLAUDE_PLUGIN_ROOT}/bin/orly.ts symbols <file> --draft` stubs `<file>.orly` with a
+   commented line per definition; the language server is found and installed for you.
+2. Replace each stub with what that definition's own text states — a value, a call, an
+   export. Not behaviour ("works", "handles"): that goes through a test's output.
+3. `bun ${CLAUDE_PLUGIN_ROOT}/bin/orly.ts claims <file>` until every claim holds. A claim
+   below the cut is either untrue — fix the claim or the code — or worded as a paraphrase:
+   restate it as what the text literally says.
+4. Gate on it: a `claims` check (`orly claims 2>&1 || true`, countPattern
+   `(?:^|\n)(?:FAIL|orly: )`) and a `require: checks.claims.matches equals 0` spec.
 
 ## Do this in order
 

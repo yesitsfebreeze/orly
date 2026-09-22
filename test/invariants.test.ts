@@ -230,6 +230,12 @@ test("a cached check is used only while the tree it was measured on is unchanged
     const hit: any = await checkEnricher({ slow: { command: "exit 0" } }, root)({} as any, spec);
     expect(hit.checks.slow.out).toBe("from the cache");
 
+    // What orly writes about a judgment is not a change to the tree being judged.
+    mkdirSync(join(root, ".orly", "turns"));
+    writeFileSync(join(root, ".orly", "turns", "t.json"), "{}");
+    writeFileSync(join(root, ".orly", "replay.jsonl"), "{}\n");
+    expect(treeFingerprint(root)).toBe(fingerprint);
+
     // Touch the tree: the stamp no longer matches, so the command runs and wins.
     writeFileSync(join(root, "new.txt"), "changed\n");
     const miss: any = await checkEnricher({ slow: { command: "exit 0" } }, root)({} as any, spec);

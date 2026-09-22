@@ -71,7 +71,12 @@ export async function judgeSidecar(
     out.push(...needs.map((c) => ({ ...c, ok: false, problem: defsOrError.message })));
     claims.splice(0, claims.length, ...claims.filter((c) => c.anchor === "@file"));
   }
-  const defs = new Map((defsOrError instanceof Error ? [] : defsOrError).map((d) => [d.anchor, d]));
+  const defs = new Map<string, Definition>();
+  const twice = new Set<string>();
+  for (const d of defsOrError instanceof Error ? [] : defsOrError) {
+    if (defs.has(d.anchor)) twice.add(d.anchor);
+    else defs.set(d.anchor, d);
+  }
   const symbols: Record<string, string> = {};
   const questions: Record<string, unknown> = {};
   const asked: Array<[string, Claim]> = [];
@@ -80,6 +85,9 @@ export async function judgeSidecar(
     if (refused) return out.push({ ...c, ok: false, problem: refused });
     const def = c.anchor === "@file" ? { text: source } : defs.get(c.anchor);
     if (!def) return out.push({ ...c, ok: false, problem: `no definition named "${c.anchor}" in ${sourcePath} — renamed or deleted?` });
+    // Two definitions with one name (script-level locals in separate blocks): judging either
+    // would be a coin toss about which code the claim meant.
+    if (twice.has(c.anchor)) return out.push({ ...c, ok: false, problem: `"${c.anchor}" names more than one definition in ${sourcePath} — anchor to something unique` });
     symbols[c.anchor] = def.text.slice(0, MAX_CHARS);
     const where = c.anchor === "@file" ? `the whole file under \`symbols["@file"]\`` : `\`symbols["${c.anchor}"]\`, the current source of that definition`;
     questions[`c${i}`] = {
@@ -89,7 +97,14 @@ export async function judgeSidecar(
     asked.push([`c${i}`, c]);
   });
   if (!asked.length) return out;
-  const { answers } = await ask({ file: sourcePath, symbols }, questions);
+  let answers: Record<string, any>;
+  try {
+    ({ answers } = await ask({ file: sourcePath, symbols }, questions));
+  } catch (e: any) {
+    // Every claim that was asked fails, each on its own line, with the first line of why.
+    const why = `judge unavailable (${String(e?.message ?? e).split("\n")[0].slice(0, 120)})`;
+    return [...out, ...asked.map(([, c]) => ({ ...c, ok: false, problem: why }))].sort((a, b) => a.line - b.line);
+  }
   for (const [id, c] of asked) {
     const p = answers?.[id]?.noul;
     if (typeof p !== "number") out.push({ ...c, ok: false, problem: "no answer from the judge" });

@@ -1,0 +1,9 @@
+SERVERS: maps .rs to rust-analyzer and .go to gopls
+serverFor: lets the config entry for an extension win over SERVERS
+ensureServer: uses a server on PATH only when it exits 0 for --version
+ensureServer: downloads a GitHub release asset and gunzips it into SERVER_DIR
+MAX_AGE_MS: is seven days
+flatten: skips symbols whose names contain parentheses or angle brackets
+startServer: throws when the server's capabilities have no documentSymbolProvider
+indexFiles: tries at most five discovered candidates per extension
+indexFiles: rejects a discovered server that lists no symbols in any file

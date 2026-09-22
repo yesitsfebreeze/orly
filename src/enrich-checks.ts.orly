@@ -1,0 +1,6 @@
+MAX_OUT: defaults to 400 unless ORLY_MAX_CHECK_OUT is set
+CACHE_NAME: is "checks.json"
+cached: returns only entries whose fingerprint equals the given fingerprint
+checkEnricher: runs only the checks that some spec's require path names
+checkEnricher: runs the commands in parallel with Promise.all
+checkEnricher: records matches as null when the countPattern is not a valid regular expression

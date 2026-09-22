@@ -1,0 +1,7 @@
+DEFAULTS: sets specMet and hazard to 0.7 and minCoverage to 1.5
+QUESTIONS: includes unverified_claim, placeholder_left, unaddressed_part and silent_failure
+judge: removes checks from the evidence before building the state sent to the model
+judge: falls through with no evidence when the enricher throws
+compose: takes the answers, thresholds, specs and evidence
+Turn: has user_request, assistant_said, actions_taken, command_results and conclusive
+Verdict: has block, reason, line and results

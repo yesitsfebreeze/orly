@@ -201,18 +201,31 @@ Gate on it with a check and a require spec:
   "claims": { "command": "orly claims 2>&1 || true", "countPattern": "(?:^|\\n)(?:FAIL|orly: )" }
 
 Any language with a language server: symbols come from `textDocument/documentSymbol`.
-Servers arrive the way Mason brings them to nvim, when a file first needs one:
+Which server speaks which file is discovered, not configured. Three public indexes are
+joined into ~/.orly/servers/index.json and rebuilt weekly:
 
-  .ts .tsx .js .jsx   typescript-language-server@latest via bunx
-  .py                 pyright@latest via bunx
-  .rs                 rust-analyzer, downloaded from its GitHub releases
-  .go                 gopls, built with `go install`
-  .c .h .cc .cpp      clangd from PATH
+  Linguist languages.yml     extension -> language (594 extensions)
+  Mason registry             language  -> LSP package and how to install it
+  nvim-lspconfig             package   -> the command line that starts it
 
-Downloads land in ~/.orly/servers/bin and are fetched again once a week old; a server
-already on PATH is used if it answers --version. Anything else, in .orly/config.json:
+The extension's own language wins, then a pure language server over a linter that also
+speaks LSP, then a one-language server over a many-language tool. Up to five are tried;
+one that does not list symbols is skipped, and the one that worked is remembered in
+~/.orly/servers/chosen.json. Servers install when first needed, the way Mason does it in
+nvim: npm through bunx, PyPI through uvx (both at @latest), Go through `go install`,
+GitHub releases unpacked into ~/.orly/servers. A server already on PATH is used if it
+answers --version.
+
+  orly servers [--refresh]   languages in this repository and the server each one gets
+  orly symbols FILE --draft  append a commented line to FILE.orly per unclaimed definition
+
+TypeScript, JavaScript, Python, Rust, Go and C/C++ skip discovery through a built-in
+table. Anything can be pinned in .orly/config.json:
 
   "lsp": { ".kt": { "command": ["kotlin-language-server"], "languageId": "kotlin" } }
+
+A name defined twice in one file (script-level locals in separate blocks) fails as
+ambiguous; claim something unique instead. A judge timeout or 5xx is retried once.
 
 No server for a file means its symbol claims fail and say what to install; `@file`
 claims are still judged.

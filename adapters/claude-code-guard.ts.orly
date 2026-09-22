@@ -1,0 +1,2 @@
+allow: exits 0 without printing a decision
+projected: returns null when an edit's old_string is not found in the current text

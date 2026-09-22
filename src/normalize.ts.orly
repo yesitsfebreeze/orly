@@ -1,0 +1,10 @@
+MAX_RESULTS: is 12
+MAX_ACTIONS: is 40
+MAX_RESULT_CHARS: is 600
+MAX_MESSAGE_CHARS: is 4000
+FAILURE: matches the words traceback, panic and timed out
+clip: returns s.slice(0, n) followed by a count of the remaining characters when s is longer than n
+textOf: joins the text of every block whose type is "text"
+selectResults: returns the results unchanged when there are no more than max
+normalizeLastTurn: starts from the last user message that has text and is not a tool result
+Msg: has a role, optional content and optional tool_calls

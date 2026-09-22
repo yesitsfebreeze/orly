@@ -1,0 +1,12 @@
+SOURCES: fetches Linguist languages.yml, the Mason registry zip and the nvim-lspconfig tarball
+MAX_AGE_MS: is seven days
+RANK: lists npm first and github second
+lspconfigCmd: returns undefined when any element of cmd is not a string literal
+compileIndex: keeps only registry packages whose categories include LSP
+compileIndex: removes a package that appears twice for the same extension
+loadIndex: returns the old index when rebuilding fails
+serverFromCandidate: runs npm packages through bunx at @latest
+serverFromCandidate: runs PyPI packages through uvx when uvx is on PATH
+unpack: uses unzip for zip files and tar for tarballs
+rememberChoice: writes the extension and package into chosen.json
+candidatesFor: puts the package from chosen.json first

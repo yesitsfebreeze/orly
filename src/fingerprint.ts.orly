@@ -1,0 +1,3 @@
+OWN_STATE: matches checks.json, log.jsonl, baseline.json, replay.jsonl and the turns directory under .orly
+treeFingerprint: returns null when git ls-files fails
+treeFingerprint: hashes HEAD plus the size and mtime of each modified or untracked file that OWN_STATE does not match

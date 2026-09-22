@@ -56,7 +56,8 @@ the bad field, before the key is read and before any request is spent.
   orly turns          recently judged turns
   orly case ...       freeze a turn that went wrong, write its spec, replay all
   orly tree           index the spec tree
-  orly symbols FILE   definitions a claim can anchor to
+  orly servers        languages here and the language server each one gets
+  orly symbols FILE   definitions a claim can anchor to (--draft: stub them into FILE.orly)
   orly claims [PATH]  judge every *.orly sidecar against its code, in parallel
   orly replay         re-judge every case; exit 2 if any is wrong
   orly watch          run the declared checks on every change, off the critical path
