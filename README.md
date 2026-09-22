@@ -16,7 +16,6 @@ Your agent says it's done. orly asks the obvious question — at the end of **ev
 before the stop goes through. Whatever isn't true comes back with the gap named, and the
 agent keeps working until it is.
 
-A library and a CLI. Claude Code is one adapter, in one file.
 
 ```sh
 claude plugin marketplace add /path/to/orly && claude plugin install orly@orly-local
