@@ -2,6 +2,9 @@ import { expect, test } from "bun:test";
 import { checkEnricher } from "../src/enrich-checks.ts";
 import { evaluate } from "../src/specs.ts";
 import type { Turn } from "../src/gate.ts";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as j } from "node:path";
 
 const turn = {} as Turn;
 
@@ -38,4 +41,25 @@ test("a check that cannot run never reads as passing", async () => {
 
 test("no configured checks means no evidence key at all", async () => {
   expect(await checkEnricher({}, "/tmp")(turn, [])).toEqual({});
+});
+
+test("checks run where the command expects, not where the agent stands", async () => {
+  // Every check command is written relative to the project root. Run from a subdirectory,
+  // `cd sub && ...` fails and the shell's error text — which has a newline in it — is
+  // counted by countPattern as a violation. Four checks reported false failures this way.
+  const root = j(tmpdir(), `orly-checks-${Date.now()}`);
+  mkdirSync(j(root, ".orly"), { recursive: true });
+  mkdirSync(j(root, "sub"), { recursive: true });
+  writeFileSync(j(root, "marker.txt"), "ok\n");
+  try {
+    const spec = { cat: { command: "cat marker.txt", countPattern: "\\n" } };
+    const fromRoot: any = await checkEnricher(spec, root)({} as Turn, []);
+    expect(fromRoot.checks.cat.exit).toBe(0);
+    expect(fromRoot.checks.cat.matches).toBe(1);
+
+    const fromSub: any = await checkEnricher(spec, j(root, "sub"))({} as Turn, []);
+    expect(fromSub.checks.cat.exit).not.toBe(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

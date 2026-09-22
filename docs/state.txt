@@ -95,7 +95,19 @@ turn's conclusion exists — which is why it needs the poll described below.
     `bun test` hit the endpoint. The suite ran in 3.5s instead of 31ms and spent money on
     every run, while passing — so nothing ever drew attention to it.
 
-14-15. FIXTURE LABELS
+14. A BROKEN CHECK THAT REPORTED A PLAUSIBLE NUMBER
+    Check commands are written relative to the project root; the enricher ran them from
+    the agent's cwd. From a subdirectory `cd orly && bun test` fails — and the shell's
+    error message contains a newline, which countPattern counted as one violation.
+
+    Four deterministic checks reported failures on a tree where the tests passed and git
+    was clean. Nothing errored: a check that cannot run produces a number that looks
+    exactly like a real finding.
+
+    Same root cause as bug 10, fixed in one place and not the other. When a path resolves
+    against cwd anywhere, look for every other place it does too.
+
+15-16. FIXTURE LABELS
    c_stub "failing" a claims-vs-evidence spec: its claim was true, its fault is a stub.
    z_readme_unmeasured added to the fixture directory but not to the label map, so it
    defaulted to should-pass and collapsed a margin. Both times the model was right and

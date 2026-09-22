@@ -198,7 +198,15 @@ try {
       kernMemoryEnricher(specFile?.goal ?? "", input.cwd),
       // Facts from the project's own tooling. Anything a command can decide belongs here
       // and is asserted in code, never handed to the model.
-      checkEnricher(loadConfig(input.cwd ?? process.cwd()).checks ?? {}, input.cwd ?? process.cwd()),
+      // From the project root, never cwd: a check command is written relative to the
+      // project, and an agent's cwd moves. Run from a subdirectory, `cd orly && …` fails
+      // and the shell's error message — which contains a newline — gets counted by
+      // countPattern as a real violation. A broken check that reports a plausible number
+      // is worse than one that errors.
+      checkEnricher(
+        loadConfig(input.cwd ?? process.cwd()).checks ?? {},
+        projectRoot(input.cwd ?? process.cwd()) ?? input.cwd ?? process.cwd(),
+      ),
     ),
     endpoint: process.env.TYPESAFE_BASE_URL,
     model: process.env.ORLY_MODEL,
