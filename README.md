@@ -9,20 +9,18 @@ I have done what you asked, here is... oRly
 
 # orly
 
-You ask for something specific and complete. You get back half-verified work and a
-confident "done".
+**Your agent says "done". orly says "oh rly?"** — and checks, at the end of every turn,
+before the stop goes through. If it isn't true, the agent is sent back with the gap named.
 
-Your agent says it's done. orly asks the obvious question — at the end of **every** turn,
-before the stop goes through. Whatever isn't true comes back with the gap named, and the
-agent keeps working until it is.
+## Install
 
 ```sh
 claude plugin marketplace add /path/to/orly && claude plugin install orly@orly-local
 ```
 
-Then `/orly:orly <your goal>` — it writes the checks, then holds you to them.
+Then `/orly:orly <your goal>`. It writes the checks, then holds the agent to them.
 
-Any other loop — opencode, pi, your own — pipes its message log in and reads the exit code:
+Other loops (opencode, your own) pipe the message log in and read the exit code:
 
 ```sh
 echo '{"messages":[…]}' | orly judge   # 0 = may stop, 2 = not done yet
@@ -30,53 +28,37 @@ echo '{"messages":[…]}' | orly judge   # 0 = may stop, 2 = not done yet
 
 Anthropic and OpenAI message shapes both work. [Porting](docs/porting.txt) is one file.
 
-## What it catches that a test suite can't
+## What you get
 
-- Tests it said it ran, and didn't.
-- A TODO standing in for the feature you asked for.
-- The third item of a three-item request, quietly dropped.
-- A figure in the summary that no command produced.
+- **No fake "tests pass".** A claim without the command output behind it is blocked.
+- **No stubs shipped as features.** A TODO where the work should be is blocked.
+- **Nothing silently dropped.** Item three of a three-item request gets done.
+- **No invented numbers.** A figure no command produced is blocked.
+- **Checks on real files.** Specs read your files at judging time, not the agent's summary.
+- **Hard facts decided in code.** Exit codes and counts are asserted directly; no model.
+- **Your own sources.** Any command in `.orly/config.json` (ticket, deploy, migration)
+  becomes evidence. No connectors.
+- **An examiner the agent can't edit down.** Loosening a cut or deleting a spec is refused.
+- **A malformed spec blocks.** It never waves the turn through.
+- **No trap.** The agent stops when everything passes, when it says plainly what it
+  couldn't do, or when the round cap runs out.
 
-## Why it holds
-
-**It reads your files, not the agent's story about them.** A check names the files it
-depends on; orly opens them itself at judging time. Stub still on disk → blocked.
-
-**Facts are decided in code.** Exit codes, diagnostic counts, line counts: asserted
-directly. No model, no threshold, no drift.
-
-**Anything else that decides "done" is one command away.** Name a ticket, a deploy, a
-migration status in `.orly/config.json` and its output is judged alongside your code. No
-connectors to install. When nothing can produce it, the gate asks the agent to, in words
-you wrote.
-
-**The agent can't file it down.** Lowering a bar, deleting a check or marking one optional
-is refused by the harness — at the edit, and again at the end of the turn.
-
-**It can't trap you.** Three exits, all in code: everything passes, you say plainly what
-you couldn't do, or the round cap runs out.
-
-## What it costs
-
-One request per turn. Measured on a real turn, 5 runs: **312–536 ms, 2,610 input tokens —
-about $1.10 per 10,000 turns.**
-
-## Between turns
+## Ask between turns
 
 ```sh
 orly ask "is the stub gone?" "is there a test for it?" src/thing.ts
 git diff | orly ask --json "does this touch auth?" -
 ```
 
-Same judge, same key, answers in under a second. Batching is nearly free, so ask twenty
-things at once. `--json` for a program on the other end; exit 2 if any answer is no.
+Same judge. Batch many questions at once. Exit 2 if any answer is no.
 
 ## Does it work
 
-12 fixtures against the live judge: **12/12** right about block-vs-pass, and on blocked
-turns it names the right next step **5/5**. Regenerate with `bun test/calibrate.ts --write`.
+12 fixtures against the live judge: **12/12** right on block-vs-pass, and **5/5** right
+next step on blocked turns. Reproduce: `bun test/calibrate.ts`.
+Cost and latency: [measured](docs/measured.txt).
 
-## Deeper
+## More
 
 [`docs/`](docs/), indexed for machines in [`llms.txt`](llms.txt):
 [why the turn boundary](docs/why.txt) · [install](docs/install.txt) ·

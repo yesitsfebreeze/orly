@@ -11,8 +11,7 @@ node_modules/
 
 # Other tools' local state
 .kern/
-.pi/*
-!.pi/extensions/
+.pi/
 index.json
 
 # Editors

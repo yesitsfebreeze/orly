@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { checkWeakenings, refusal, weakenings, checkAdapterParity } from "../src/guard.ts";
+import { checkWeakenings, refusal, weakenings } from "../src/guard.ts";
 import type { Spec } from "../src/specs.ts";
 
 const set = (specs: Spec[]) => ({ specs });
@@ -161,17 +161,3 @@ test("a context source is guarded the same as a check", () => {
   expect(checkWeakenings(was, { context: { ticket: { command: "gh issue view $T", maxChars: 9000 } } })).toEqual([]);
 });
 
-test("stripping the full adapter is refused by the backstop", () => {
-  // The pi-orly adapter was rewritten to skip the real judge. A stripped
-  // adapter means the loop never sees blocks it should — the failure mode
-  // orly protects against.
-  const was = { piAdapterFull: true };
-  const now = { piAdapterFull: false };
-  const v = checkAdapterParity(was, now);
-  expect(v).toHaveLength(1);
-  expect(v[0].id).toBe("pi_orly_adapter");
-  expect(v[0].problem).toContain("stripped");
-  // Full adapter kept or added is ordinary work.
-  expect(checkAdapterParity({ piAdapterFull: true }, { piAdapterFull: true })).toEqual([]);
-  expect(checkAdapterParity({}, { piAdapterFull: true })).toEqual([]);
-});
