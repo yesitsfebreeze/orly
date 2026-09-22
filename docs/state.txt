@@ -69,7 +69,33 @@ turn's conclusion exists — which is why it needs the poll described below.
    limit is now 12 000 characters and any truncation announces itself inside the text, so
    a low score cannot be mistaken for a verdict about the whole file.
 
-10-11. FIXTURE LABELS
+10. EVIDENCE RESOLVED AGAINST A MOVING TARGET
+    Spec `evidence` paths were resolved against the working directory. An agent's cwd
+    moves inside a project; the project root does not. The same spec scored 0.87 from the
+    root and 0.11 from a subdirectory, because its files silently read as missing.
+
+    Nothing errored. A missing evidence file is recorded as "[file does not exist]",
+    which is a legitimate answer for a spec asking whether something exists — so the
+    failure looked exactly like a verdict. Paths now resolve from the directory holding
+    .orly.
+
+11. THE HOOK'S OWN BLOCK MESSAGE BECAME THE REQUEST
+    Claude Code injects hook feedback as a USER message. Left in, the next judgment sliced
+    the turn at orly's own complaint and treated it as the user's request: the real goal
+    disappeared and the turn shrank from 16 actions to 1. The gate was judging whether the
+    agent had satisfied the gate. isMeta marks every injected message.
+
+12. A CHECK THAT DROWNED ITS OWN EVIDENCE
+    The checks enricher dumped 2 000 characters of test output into state, pushing one
+    state from 6 300 to 27 762 characters. A `require` spec reads only `exit` and
+    `matches`; the text was pure noise. Trimmed to 400.
+
+13. TESTS THAT CALLED THE LIVE API
+    A salvaged probe script named crit_test.ts matched bun's `_test.` pattern, so every
+    `bun test` hit the endpoint. The suite ran in 3.5s instead of 31ms and spent money on
+    every run, while passing — so nothing ever drew attention to it.
+
+14-15. FIXTURE LABELS
    c_stub "failing" a claims-vs-evidence spec: its claim was true, its fault is a stub.
    z_readme_unmeasured added to the fixture directory but not to the label map, so it
    defaulted to should-pass and collapsed a margin. Both times the model was right and
