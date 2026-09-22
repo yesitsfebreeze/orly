@@ -1,1 +1,3 @@
 {"type":"goal_created","goalId":"mucwg68z-lch4gb","objective":"1) Restore .orly/config.json checks (tests, build, readme_lines, net_in_tests, todos, fixtures, git_dirty, docs, unfitted_specs) — they were stripped. 2) Commit all dirty files. 3) Verify fixtures labelled, docs resolve, specs fitted. 4) Add 2 new spec requirements: (A) threshold logging in verdict (from adapter change), (B) adapter parity / no stripped adapter. 5) Re-verify with `bun test` and check block clears.","sisyphus":false,"autoContinue":true,"at":"2026-09-22T16:39:36.611Z"}
+{"type":"completion_requested","goalId":"mucwg68z-lch4gb","at":"2026-09-22T16:47:54.992Z"}
+{"type":"audit_started","goalId":"mucwg68z-lch4gb","at":"2026-09-22T16:47:54.997Z"}
