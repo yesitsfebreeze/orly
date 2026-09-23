@@ -26,9 +26,9 @@ const verdict = (block: boolean, unmet: string[] = []) =>
 
 test("a judged turn is kept, found by `last` or an id prefix, and capped", () => {
   const dir = scratch(join(tmpdir(), "orly-cases-"));
-  for (let i = 0; i < 203; i++) saveTurn(dir, saved(new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString()));
+  for (let i = 0; i < 53; i++) saveTurn(dir, saved(new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString()));
   const ids = listTurns(dir);
-  expect(ids).toHaveLength(200);
+  expect(ids).toHaveLength(50);
   expect(ids[0]).toStartWith("2026-01-01T00-00-03");
   expect(readTurn(dir, "last").turn.user_request).toBe(turn.user_request);
   expect(readTurn(dir, "2026-01-01T00-00-05").evidence).toEqual({ files: { a: "x" } });

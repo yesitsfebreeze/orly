@@ -3,17 +3,16 @@
  * A block is labelled by the next turn: real work means it found something, talk only means
  * it probably did not. Labels are weak evidence; nothing rewrites a threshold from them.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export const LOG_NAME = "log.jsonl";
+export const KEEP_RECORDS = 1000; // ponytail: newest win; raise if `orly fit` starves for support.
 
 export type Judged = {
   /** ISO timestamp. */
   at: string;
   session: string;
-  /** The goal these specs came from, so records outlive a changed spec set. */
-  goal?: string;
   blocked: boolean;
   /** Every question id to its probability (or Score value). */
   scores: Record<string, number>;
@@ -38,6 +37,8 @@ export function append(orlyDir: string, record: Judged): void {
   try {
     mkdirSync(dirname(logPath(orlyDir)), { recursive: true });
     appendFileSync(logPath(orlyDir), `${JSON.stringify(record)}\n`);
+    const lines = readFileSync(logPath(orlyDir), "utf8").split("\n").filter(Boolean);
+    if (lines.length > KEEP_RECORDS) writeFileSync(logPath(orlyDir), `${lines.slice(-KEEP_RECORDS).join("\n")}\n`);
   } catch {
     // Logging must never be the reason a turn cannot be judged.
   }

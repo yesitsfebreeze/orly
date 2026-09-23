@@ -43,8 +43,8 @@ Found by walking up from the working directory, the way git finds .git.
   .orly/specs/         one .spec file per spec, in folders          (committed)
   .orly/cases/         mistakes frozen as regression cases          (committed)
   .orly/config.json    keyCommand, checks, context sources          (committed)
-  .orly/log.jsonl      one line per judgment                        (local)
-  .orly/turns/         the last 200 judged turns, with evidence     (local)
+  .orly/log.jsonl      one line per judgment, newest 1000 kept      (local)
+  .orly/turns/         the last 50 judged turns, with evidence      (local)
   .orly/replay.jsonl   one line per `orly replay`                   (local)
   .orly/baseline.json  strictest spec set seen, for the guard       (local)
 

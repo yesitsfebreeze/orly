@@ -191,7 +191,6 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
     logVerdict(orlyDir, {
       at,
       session: sessionId,
-      goal: specFile?.goal,
       blocked: verdict.block,
       scores,
       unmet: unmetIds,

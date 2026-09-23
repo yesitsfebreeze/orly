@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as j } from "node:path";
-import { append, label, propose, read, type Judged } from "../src/log.ts";
+import { append, KEEP_RECORDS, label, propose, read, type Judged } from "../src/log.ts";
 
 const rec = (o: Partial<Judged>): Judged => ({
   at: "t", session: "s", blocked: false, scores: {}, unmet: [], hazards: [],
@@ -87,4 +87,18 @@ test("an unlabelled block is not evidence for loosening anything", () => {
   );
   expect(label(log).every((r) => r.outcome === undefined)).toBe(true);
   expect(propose(log, { "spec:a": 0.7 })).toEqual([]);
+});
+
+test("the log keeps only its newest records", () => {
+  const dir = j(tmpdir(), `orly-log-cap-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const was = process.env.ORLY_NO_LOG;
+  delete process.env.ORLY_NO_LOG;
+  for (let i = 0; i < KEEP_RECORDS + 5; i++) append(dir, rec({ at: String(i) }));
+  if (was !== undefined) process.env.ORLY_NO_LOG = was;
+  const kept = read(dir);
+  expect(kept.length).toBe(KEEP_RECORDS);
+  expect(kept[0].at).toBe("5");
+  rmSync(dir, { recursive: true, force: true });
 });

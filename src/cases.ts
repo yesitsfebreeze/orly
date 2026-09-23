@@ -11,8 +11,8 @@ import type { Evidence } from "./enrich.ts";
 export const TURNS = "turns";
 export const CASES = "cases";
 export const HISTORY = "replay.jsonl";
-// ponytail: fixed window of recent turns; make it configurable if 200 proves too few to find a mistake in.
-const KEEP_TURNS = 200;
+// ponytail: fixed window of recent turns; a mistake is reported within a few turns, raise if 50 proves too few.
+const KEEP_TURNS = 50;
 
 export type SavedTurn = {
   at: string;
