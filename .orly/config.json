@@ -59,8 +59,8 @@
       "command": "d=$(mktemp -d); r=$PWD; cd \"$d\" && mkdir .orly && bun \"$r/bin/orly.ts\" goal a \"first\" >/dev/null && bun \"$r/bin/orly.ts\" goal \"second\" >/dev/null && [ \"$(grep -c '^- ' .orly/goal)\" -eq 2 ]; s=$?; rm -rf \"$d\"; exit $s"
     },
     "goal_tests": {
-      "command": "bun test test/goals.test.ts 2>&1",
-      "countPattern": "\\(pass\\)"
+      "command": "bun test test/goals.test.ts 2>&1 | grep -E '^ *[0-9]+ pass' | awk '{for(i=0;i<$1;i++)print \"PASS\"}'",
+      "countPattern": "PASS"
     },
     "goal_docs": {
       "command": "grep -oh 'orly goal' docs/specs.txt README.md commands/orly.md",
