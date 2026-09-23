@@ -128,7 +128,7 @@ export function loadSpecFile(cwd: string): SpecFile | null {
   }
 }
 
-const statePath = (dir: string, sessionId: string) => join(dir, `orly-rounds-${sessionId}.json`);
+export const statePath = (dir: string, sessionId: string) => join(dir, `orly-rounds-${sessionId}.json`);
 
 export function readRounds(dir: string, sessionId: string): RoundState | null {
   try {

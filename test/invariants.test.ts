@@ -3,7 +3,7 @@
  * end to end, the CLI, and the check cache.
  */
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CACHE_NAME, checkEnricher } from "../src/enrich-checks.ts";
@@ -182,6 +182,16 @@ test("the session banner reports counts, and a check as a check", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("SessionEnd deletes the Stop hook's per-session temp files", () => {
+  // macOS does not reliably clean $TMPDIR, so without this they pile up one pair per session.
+  const id = `inv-end-${process.pid}`;
+  const files = [join(tmpdir(), `orly-rounds-${id}.json`), join(tmpdir(), `orly-nokey-${id}`)];
+  for (const f of files) writeFileSync(f, "{}");
+  const r = hook("claude-code.ts", { hook_event_name: "SessionEnd", session_id: id }, tmpdir());
+  expect(r.exitCode).toBe(0);
+  expect(files.filter((f) => existsSync(f))).toEqual([]);
 });
 
 test("the core names no vendor, no host and no harness", () => {

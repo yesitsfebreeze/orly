@@ -5,6 +5,7 @@
  *   Stop          transcript_path -> Turn -> gate -> {decision: "block", reason} or a banner
  *   SessionStart  the brief, as additionalContext
  *   PreToolUse    an Edit/Write to a spec file, refused if it weakens the gate
+ *   SessionEnd    deletes the session's temp files
  *
  * Also the adapter for every host that speaks this dialect: Factory Droid, Qwen Code,
  * Continue, JetBrains Junie and Antigravity read the same stdin fields and honour the
@@ -12,7 +13,7 @@
  */
 import { sessionBrief } from "../src/brief.ts";
 import { editTarget, guardEdit, plannedEdit } from "../src/editguard.ts";
-import { gateTurn } from "../src/turnend.ts";
+import { endSession, gateTurn } from "../src/turnend.ts";
 import { join } from "node:path";
 import { emit, findTranscript, home, readPayload, silent, turnFromFile } from "./shared.ts";
 
@@ -20,6 +21,11 @@ const input = await readPayload();
 const cwd = input.cwd ?? process.cwd();
 const event = String(input.hook_event_name ?? (input.tool_name ? "PreToolUse" : "Stop"));
 const root = process.env.CLAUDE_PLUGIN_ROOT ?? process.env.DROID_PLUGIN_ROOT;
+
+if (event === "SessionEnd") {
+  endSession(String(input.session_id ?? "unknown"));
+  silent();
+}
 
 if (event === "SessionStart") {
   const brief = sessionBrief(cwd, {

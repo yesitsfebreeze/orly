@@ -6,7 +6,7 @@
  *
  * Fails open at every step: a judge that is down must not become a wall.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { owlBlock, statusBar } from "./banner.ts";
@@ -18,6 +18,7 @@ import { append as logVerdict } from "./log.ts";
 import {
   advance,
   DEFAULT_MAX_ROUNDS,
+  statePath,
   findOrlyDir,
   loadConfig,
   loadSpecFile,
@@ -82,6 +83,14 @@ export type GateOutcome = {
 };
 
 const ALLOW = (note?: string): GateOutcome => (note ? { block: false, note } : { block: false });
+
+/**
+ * Delete this session's temp files when it ends; macOS does not reliably clean $TMPDIR,
+ * so they would pile up one pair per session.
+ */
+export function endSession(sessionId: string): void {
+  for (const f of [statePath(tmpdir(), sessionId), join(tmpdir(), `orly-nokey-${sessionId}`)]) rmSync(f, { force: true });
+}
 
 /** Run the gate on one turn. Never throws. */
 export async function gateTurn(input: GateInput): Promise<GateOutcome> {
