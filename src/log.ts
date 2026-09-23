@@ -1,16 +1,7 @@
 /**
- * The verdict log — the only thing that makes orly get better instead of staying still.
- *
- * Every judgment appends one record. That log is the dataset: real turns, real
- * probabilities, real outcomes, instead of fixtures one person imagined. Cuts fitted on
- * nine hand-written fixtures are fitted on one person's idea of what going wrong looks
- * like; cuts fitted on a thousand logged turns are fitted on what actually happens.
- *
- * The labels come free. When the gate blocks and the agent's next turn does real work —
- * edits, commands — the block found something. When the gate blocks and the next turn only
- * explains itself and then passes, the block probably cost more than it was worth. Neither
- * label is certain, which is why `orly fit` reports them as evidence and never silently
- * rewrites a threshold.
+ * The verdict log: one record per judgment, the dataset `orly fit` proposes cuts from.
+ * A block is labelled by the next turn: real work means it found something, talk only means
+ * it probably did not. Labels are weak evidence; nothing rewrites a threshold from them.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -33,14 +24,7 @@ export type Judged = {
   /** Counts, to tell a thin turn from a long one without storing the transcript. */
   actions: number;
   results: number;
-  /**
-   * The thresholds this verdict was actually decided at.
-   *
-   * Without them a turn blocked at a raised cut is indistinguishable from one blocked at
-   * the default, and the environment that set it is nowhere in the record. `orly fit`
-   * reads this log to propose cuts, so a log that does not say which cut produced each
-   * outcome is proposing against an unknown.
-   */
+  /** The cuts this verdict was decided at, so `orly fit` knows which cut produced each outcome. */
   thresholds?: Record<string, number>;
   /** Set on the NEXT judgment of the same session: what the agent did after a block. */
   outcome?: "worked" | "explained" | "unknown";
@@ -49,8 +33,7 @@ export type Judged = {
 export const logPath = (orlyDir: string) => join(orlyDir, LOG_NAME);
 
 export function append(orlyDir: string, record: Judged): void {
-  // A dry run must not enter the dataset the gate later tunes itself on. Fixture replays
-  // and smoke tests look exactly like real turns once they are a line in the log.
+  // Dry runs (fixture replays, smoke tests) must not enter the tuning dataset.
   if (process.env.ORLY_NO_LOG) return;
   try {
     mkdirSync(dirname(logPath(orlyDir)), { recursive: true });
@@ -76,14 +59,9 @@ export function read(orlyDir: string): Judged[] {
 }
 
 /**
- * Label a block by what the agent did next.
- *
- * `worked`   — the following turn ran commands or made edits: the block bought something.
- * `explained`— the following turn only talked and then passed: the block probably cost a
- *              round for nothing, which is the signal a cut is too tight.
- *
- * This is a weak label and it is meant to be. It is evidence to look at, not a fact, and
- * nothing may act on it automatically in the loosening direction.
+ * Label a block by the same session's next turn: `worked` if it ran commands or made edits,
+ * `explained` if it only talked (a sign the cut is too tight). Weak evidence; nothing may
+ * loosen a cut from it automatically.
  */
 export function label(records: Judged[]): Judged[] {
   const out = records.map((r) => ({ ...r }));
@@ -109,11 +87,8 @@ export type Proposal = {
 };
 
 /**
- * Propose a cut per spec from logged turns.
- *
- * A block whose next turn did real work is a case the spec SHOULD have caught; a block
- * whose next turn only explained is one it should not have. The usable cut sits between
- * those two populations, exactly as in the fixture harness — but measured on real work.
+ * Propose a cut per spec from logged turns: midway between the probabilities of blocks
+ * that led to work (should fire) and blocks that were only explained (should not).
  */
 export function propose(records: Judged[], currentCuts: Record<string, number>, minSupport = 6): Proposal[] {
   const met: Record<string, number[]> = {};

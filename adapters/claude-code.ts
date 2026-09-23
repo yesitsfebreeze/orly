@@ -1,13 +1,8 @@
 #!/usr/bin/env bun
 /**
- * Claude Code adapter — the only file in this plugin that knows what Claude Code is.
- *
- * It maps Claude Code's Stop hook to the portable gate: read the hook payload, turn the
- * session transcript into a `Turn`, ask the judge, and translate the verdict back into
- * the hook's own JSON. Porting the gate to another agent means writing a file this size.
- *
- * Everything here that is not translation is defence: every failure path ends in "let
- * the agent stop", because a judge that is down must not become a wall.
+ * Claude Code Stop hook: reads the hook payload on stdin, turns the transcript into a
+ * `Turn`, judges it and prints the verdict as hook JSON. Fails open: every error lets
+ * the agent stop.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { checkBaseline, refusal } from "../src/guard.ts";
@@ -60,8 +55,7 @@ try {
 const specFile = loadSpecFile(input.cwd ?? process.cwd());
 const specs = specFile?.specs ?? [];
 
-// Before judging anything, check the gate itself has not been filed down this turn.
-// A spec file rewritten through a shell command never passes the PreToolUse guard.
+// Block if specs weakened since the baseline: catches shell edits the PreToolUse guard never sees.
 const guardDir = findOrlyDir(input.cwd ?? process.cwd());
 if (guardDir && specs.length) {
   const basePath = join(guardDir, "baseline.json");
@@ -93,18 +87,13 @@ if (guardDir && specs.length) {
   }
 }
 
-// Without goal specs the gate has only the built-in hazards, and those are a one-shot
-// sanity check: block once, let the agent answer, done. Claude Code sets stop_hook_active
-// while the agent is already working off a previous block, so this caps the chain at one.
-//
-// With specs there is something concrete to converge on, so the loop is allowed to run —
-// but bounded by the round cap and stall detection in session.ts, never by the model.
+// Without specs, block at most once (stop_hook_active = already answering a block).
+// With specs, rounds are bounded by the cap and stall detection in session.ts.
 if (input.stop_hook_active && !specs.length) allow();
 
 const key = resolveKey(input.cwd ?? process.cwd());
 if (!key) {
-  // Say this once per session. A gate that disables itself quietly looks installed and
-  // never fires, and nobody goes looking for a hook that never errors.
+  // Warn once per session, so a disabled gate is not mistaken for a passing one.
   const marker = join(tmpdir(), `orly-nokey-${input.session_id ?? "unknown"}`);
   if (!existsSync(marker)) {
     try {
@@ -133,9 +122,7 @@ const read = async (): Promise<Turn | null> => {
 let turn = await read();
 if (!turn) allow("transcript unreadable");
 
-// Stop fires before Claude Code has flushed the turn's closing message. Judged then, a
-// finished turn scores "nothing was reported" — because nothing has been, yet. Wait for
-// the agent to have spoken after its last action.
+// Stop can fire before the closing message is flushed; wait until the agent spoke after its last action.
 let waited = 0;
 for (let i = 0; i < FLUSH_TRIES && !turn!.conclusive && turn!.actions_taken.length; i++) {
   await Bun.sleep(FLUSH_WAIT_MS);
@@ -145,7 +132,6 @@ for (let i = 0; i < FLUSH_TRIES && !turn!.conclusive && turn!.actions_taken.leng
 
 if (!turn!.user_request) allow();
 if (!turn!.actions_taken.length && !turn!.assistant_said) allow();
-// A turn whose conclusion never arrived is a turn we have no business judging.
 if (!turn!.conclusive) allow("closing message never reached the transcript");
 
 // The evidence the judge saw, kept with the turn so a replay judges exactly this state.
@@ -157,9 +143,7 @@ try {
   result = await judge(turn!, {
     apiKey: key,
     specs,
-    // Independent evidence: the files the specs point at, read now rather than taken
-    // from what the agent printed, plus whatever the project declared. Wired in the
-    // library, so every host gathers the same thing.
+    // Evidence read from disk, not from what the agent printed.
     enrich: async (t, s) => (seen = await gather(t, s)),
     endpoint: process.env.TYPESAFE_BASE_URL,
     model: process.env.ORLY_MODEL,
@@ -178,9 +162,7 @@ try {
 
 const { verdict, answers, usage } = result!;
 
-// Record the judgment before acting on it. Without a log there is nothing to fit a cut
-// against but fixtures somebody imagined, and the gate can never get better than the day
-// it was written.
+// Log the judgment before acting on it; `orly fit` fits cuts from this log.
 const orlyDir = findOrlyDir(input.cwd ?? process.cwd());
 if (orlyDir) {
   const scores: Record<string, number> = {};
@@ -188,8 +170,7 @@ if (orlyDir) {
     const v = typeof a?.noul === "number" ? a.noul : typeof a?.score === "number" ? a.score : undefined;
     if (typeof v === "number") scores[id] = Number(v.toFixed(3));
   }
-  // The results the verdict used, evidence and all. Re-scoring here would drop it and
-  // log every deterministic check as unmet.
+  // Use the verdict's results: re-scoring without evidence would log every deterministic check as unmet.
   const scored = verdict.results;
   const unmetIds = scored.filter((r) => !r.met && !r.spec.optional).map((r) => `spec:${r.spec.id}`);
   saveTurn(orlyDir, {
@@ -212,8 +193,7 @@ if (orlyDir) {
     ),
     actions: turn!.actions_taken.length,
     results: turn!.command_results.length,
-    // What this verdict was actually decided at, including every per-spec cut, so the
-    // record explains its own outcome without knowing the environment that produced it.
+    // Every threshold used, per-spec cuts included, so the record is self-explaining.
     thresholds: {
       hazard: num("ORLY_HAZARD", DEFAULTS.hazard),
       specMet: num("ORLY_SPEC_MET", DEFAULTS.specMet),
@@ -225,7 +205,7 @@ if (orlyDir) {
   });
 }
 
-// Same owl banner pi prints; a leading newline so the drawing starts on its own row.
+// Leading newline so the owl starts on its own row.
 const banner = (l: string) => "\n" + owlBlock(statusBar({ block: verdict.block, line: l }));
 
 // Loop control: only ever loosens the verdict, never tightens it.

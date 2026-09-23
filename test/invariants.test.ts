@@ -1,10 +1,6 @@
 /**
- * The invariants in docs/notes/state.txt that no single module owns.
- *
- * Each of these cost a wrong number, a silent bill or a session-long wall while this was
- * being built, and each was fixed in a place where nothing else would notice it breaking
- * again. The suite's own hygiene is in here too: the one bug that hid best was a probe
- * script `bun test` was quietly running against the live API on every run.
+ * Cross-cutting invariants no single module owns: the suite's own hygiene, the hooks
+ * end to end, the CLI, and the check cache.
  */
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
@@ -29,21 +25,16 @@ function testFiles(dir: string, out: string[] = []): string[] {
 }
 
 test("nothing bun test collects reaches the live API", () => {
-  // A salvaged probe named crit_test.ts matched bun's test pattern, so every `bun test`
-  // hit the endpoint: 3.5s instead of 31ms, money on every run, and passing throughout —
-  // so nothing ever drew attention to it. The name is the whole hazard, not the folder.
+  // Any *_test.ts anywhere is collected, so scan by name pattern, not folder.
   const NETWORK = /\bfetch\s*\(|api\.typesafe\.ai|TYPESAFE_BASE_URL/;
   const offenders = testFiles(ROOT)
-    // This file names those strings in order to look for them; it is the one exemption.
+    // This file names the strings to find them.
     .filter((f) => f !== import.meta.path)
     .filter((f) => NETWORK.test(readFileSync(f, "utf8")));
   expect(offenders.map((f) => f.slice(ROOT.length + 1))).toEqual([]);
 });
 
 test("every fixture is labelled, because an unlabelled one defaults to should-pass", () => {
-  // z_readme_unmeasured was added to the directory and not to the label map. It silently
-  // counted as a turn that should pass and collapsed a margin — the model was right and
-  // the harness was lying.
   const calibrate = readFileSync(join(ROOT, "test", "calibrate.ts"), "utf8");
   const unlabelled = readdirSync(join(ROOT, "test", "fixtures"))
     .filter((f) => f.endsWith(".jsonl"))
@@ -66,9 +57,7 @@ const hook = (script: string, payload: unknown, cwd: string) =>
   });
 
 test("the Stop hook lets the agent stop when it cannot do its job", () => {
-  // Every failure path in the adapter ends in "allow". A judge that is down, a payload it
-  // cannot parse or a transcript it cannot read must never become a wall in front of work
-  // that has nothing to do with it.
+  // Fail open: bad payload, unreadable transcript or a down judge all allow.
   const dir = sandbox();
   try {
     for (const payload of [
@@ -103,8 +92,7 @@ const edit = (dir: string, path: string, from: string, to: string) => ({
 });
 
 test("the edit guard reconstructs the file and refuses a weakening", () => {
-  // src/guard.ts is tested on two parsed spec sets. This is the part in between: the hook
-  // has only the tool call, and has to work out what the file would say afterwards.
+  // The hook has only the tool call and must project the resulting file itself.
   const { dir, path } = specSandbox(0.7);
   try {
     const r = hook("claude-code-guard.ts", edit(dir, path, '"cut": 0.7', '"cut": 0.3'), dir);
@@ -129,9 +117,7 @@ test("the edit guard stays out of the way of tightening and of other files", () 
 // ---------------------------------------------------------------- the CLI
 
 test("orly fit reads the log and proposes from it", () => {
-  // `fit` read a module-level const declared further down the file, so the one command
-  // that turns logged turns into better cuts crashed in the temporal dead zone before
-  // printing a line. Nothing imports it, so nothing else would have caught it.
+  // Guards a TDZ crash in bin/orly.ts that no import would surface.
   const dir = sandbox();
   try {
     mkdirSync(join(dir, ".orly"));
@@ -157,10 +143,8 @@ test("orly fit reads the log and proposes from it", () => {
 });
 
 test("the session banner reports counts, and a check as a check", () => {
-  // The banner is the only thing telling a fresh session what the gate holds it to, and
-  // nothing imported it. Its history line had lost both interpolations — "History here:
-  // judged turn, blocked" — and every `require` spec was rendered with a default cut it
-  // does not have, which reads as nine deterministic checks waiting to be fitted.
+  // Nothing imports the banner, so only this catches a broken history line or a
+  // `require` spec shown with a cut it does not have.
   const dir = sandbox();
   try {
     mkdirSync(join(dir, ".orly"));
@@ -190,14 +174,9 @@ test("the session banner reports counts, and a check as a check", () => {
 });
 
 test("the core names no vendor, no host and no harness", () => {
-  // orly is a loop: take a turn, check the specs, say what is true, what is not, and what
-  // to do next. Everything a particular tool or harness knows arrives through a command
-  // somebody declared or an adapter somebody wrote, never through a name compiled in
-  // here. The moment one appears in the core, every user of the library carries it.
+  // Host knowledge lives in adapters and declared commands, never in src/.
   const VENDOR = /\bkern\b|claude|anthropic|openai|cursor|opencode/i;
-  // Comments are stripped first: naming the two message dialects, or the adapter a
-  // function used to live in, is prose about a wire format and about history. What must
-  // not appear is a vendor in the CODE — an import, a spawned binary, a path.
+  // Comments are stripped: only a vendor in code (import, binary, path) counts.
   const code = (f: string) =>
     readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   const shipped = [join(ROOT, "src"), join(ROOT, "bin")].flatMap((dir) =>
@@ -208,9 +187,7 @@ test("the core names no vendor, no host and no harness", () => {
 });
 
 test("a cached check is used only while the tree it was measured on is unchanged", async () => {
-  // A watcher takes the checks off the critical path, and a cache that could go stale
-  // unnoticed would let the gate report a passing suite for a tree where it fails — the
-  // exact lie it exists to catch. Being out of date must cost time, never correctness.
+  // A stale cache could report a passing suite for a failing tree.
   const root = mkdtempSync(join(tmpdir(), "orly-cache-"));
   try {
     mkdirSync(join(root, ".orly"));
@@ -247,8 +224,7 @@ test("a cached check is used only while the tree it was measured on is unchanged
 });
 
 test("no fingerprint means no cache, never a weak one", async () => {
-  // Outside a git repository there is nothing cheap that establishes "unchanged", so the
-  // answer is to run the command, not to guess.
+  // Outside git nothing cheap proves "unchanged", so run the command.
   const root = mkdtempSync(join(tmpdir(), "orly-nogit-"));
   try {
     mkdirSync(join(root, ".orly"));
@@ -263,8 +239,7 @@ test("no fingerprint means no cache, never a weak one", async () => {
 });
 
 test("orly writing its own state is not the tree changing", () => {
-  // The cache lives inside .orly, so counting it would mean every write invalidated the
-  // entry it had just stamped, and no cached result would ever be usable.
+  // The cache lives in .orly; counting it would invalidate every entry on write.
   const root = mkdtempSync(join(tmpdir(), "orly-fp-"));
   try {
     mkdirSync(join(root, ".orly"));
@@ -274,8 +249,7 @@ test("orly writing its own state is not the tree changing", () => {
     writeFileSync(join(root, ".orly", "log.jsonl"), "{}\n");
     expect(treeFingerprint(root)).toBe(before!);
 
-    // A spec file is an input, not orly's own scratch: a check may read it, and this
-    // repository has one that does.
+    // Spec files are inputs a check may read, so they do count.
     writeFileSync(join(root, ".orly", "specs.json"), '{"specs":[]}');
     expect(treeFingerprint(root)).not.toBe(before!);
   } finally {
@@ -284,8 +258,6 @@ test("orly writing its own state is not the tree changing", () => {
 });
 
 test("a project running spec-only is told so, rather than reading as compliant", () => {
-  // A config with no checks block means every deterministic guarantee silently does not
-  // apply, and a guard that protects an empty set looks exactly like a guard.
   const dir = sandbox();
   try {
     mkdirSync(join(dir, ".orly"));

@@ -1,16 +1,7 @@
 #!/usr/bin/env bun
 /**
- * SessionStart adapter — the half that makes orly improvable.
- *
- * The Stop hook makes the agent finish its work. This one makes the agent able to tune the
- * gate itself, for this repository, during ordinary work. Without it a fresh session has
- * no idea that editing the spec set is in scope, so the gate stays exactly as good as the
- * day it was written, forever.
- *
- * It prints what the log already knows: which specs fire, which blocks bought something,
- * and which ones the agent talked its way past. Because the plugin is a directory-linked
- * source and the hook spawns a fresh process each turn, any edit the agent makes is live
- * on the very next judgment. That is the hot reload — no restart, no reinstall.
+ * Claude Code SessionStart hook: tells the agent the gate is active, which specs it
+ * enforces, what the log says each one bought, and the rules for tuning it.
  */
 import { label, propose, read } from "../src/log.ts";
 import { findOrlyDir, loadConfig, loadSpecFile } from "../src/session.ts";
@@ -39,9 +30,7 @@ if (specs.length) {
   lines.push("");
   lines.push("Specs enforced at the end of every turn:");
   for (const s of specs) {
-    // A `require` spec is decided in code and has no cut. Reporting a default one sends
-    // the agent off to fit a threshold for an exit-code comparison, and makes nine
-    // deterministic checks read as the unfitted, shaky part of the gate.
+    // `require` specs are decided in code and have no cut; show the check instead.
     const how = s.require
       ? `check: ${s.require.path} ${s.require.op} ${String(s.require.value ?? "")}`
       : `cut ${typeof s.cut === "number" ? s.cut.toFixed(2) : "0.70, unfitted"}`;
@@ -52,8 +41,7 @@ if (specs.length) {
   lines.push("No goal specs yet — only the built-in honesty checks. `/orly:orly <goal>` writes a set.");
 }
 
-// A project with no checks block runs spec-only, and every guarantee about deterministic
-// evidence silently does not apply here. Absence is not compliance, so say it out loud.
+// No `checks` means every spec is a judgment; say so rather than stay silent.
 if (specs.length && !Object.keys(loadConfig(input.cwd ?? process.cwd()).checks ?? {}).length) {
   lines.push("");
   lines.push(
@@ -63,7 +51,6 @@ if (specs.length && !Object.keys(loadConfig(input.cwd ?? process.cwd()).checks ?
   );
 }
 
-// What the log knows. This is the evidence the agent tunes against.
 const blocks = records.filter((r) => r.blocked);
 if (records.length) {
   const worked = blocks.filter((r) => r.outcome === "worked").length;
@@ -74,10 +61,8 @@ if (records.length) {
       (worked + explained ? ` — ${worked} led to real work, ${explained} the agent only explained away.` : "."),
   );
 
-  // Unlabelled is NOT the same as worthless. A block only earns a label once the same
-  // session judges another turn after it; until then the honest report is "unknown".
-  // Counting unknown as "never bought anything" would argue for loosening a cut on no
-  // evidence at all — the exact drift this whole layer has to avoid.
+  // A block is labelled only after its session judges a later turn. Keep unlabelled
+  // separate: counting it as worthless would argue for loosening on no evidence.
   const firing: Record<string, { n: number; worked: number; explained: number; unknown: number }> = {};
   for (const r of blocks) {
     for (const id of [...r.unmet, ...r.hazards]) {

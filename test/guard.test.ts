@@ -34,8 +34,7 @@ test("marking a spec optional is refused", () => {
 });
 
 test("dropping an explicit cut that was above the default is refused", () => {
-  // Removing a line weakens the gate just as effectively as editing one: the cut falls
-  // back to the default, which here is lower than what was written.
+  // The cut falls back to the lower default.
   const strict = set([{ id: "a", instructions: "Does it hold?", cut: 0.9 }]);
   const loose = set([{ id: "a", instructions: "Does it hold?" }]);
   expect(weakenings(strict, loose, 0.7)[0].problem).toContain("0.90 → 0.70");
@@ -48,8 +47,7 @@ test("dropping a cut that was below the default is not a weakening", () => {
 });
 
 test("rewording while keeping a fitted cut is refused", () => {
-  // Wording moves the probability more than the threshold does, so a rewrite makes the
-  // old fitted number meaningless rather than merely stale.
+  // A cut is fitted to its wording; a rewrite invalidates it.
   const after = set([{ ...base.specs[0], instructions: "Totally different question?" }, base.specs[1]]);
   expect(weakenings(base, after)[0].problem).toContain("refit");
 });
@@ -75,8 +73,7 @@ test("the backstop catches a weakening that never passed an edit tool", () => {
   const weaker = set([{ ...base.specs[0], cut: 0.1 }, base.specs[1]]);
   const { violations, nextBaseline } = checkBaseline(base, weaker);
   expect(violations).toHaveLength(1);
-  // The baseline must not absorb the weakened file, or one blocked turn would be enough
-  // to make the weaker version the new normal.
+  // Else one blocked turn would make the weaker file the new baseline.
   expect(nextBaseline).toBe(base);
 });
 
@@ -93,8 +90,7 @@ test("the first run adopts whatever is on disk", () => {
 });
 
 test("a new goal may replace the previous goal's specs", () => {
-  // Otherwise the first goal a repo ever had could never be replaced: every later spec
-  // set would read as deletions of it, and /orly would be unusable a second time.
+  // Otherwise every later spec set would read as deleting the first goal's specs.
   const before = { goal: "ship the parser", specs: base.specs };
   const after = { goal: "something else entirely", specs: [{ id: "fresh", instructions: "Does the deploy succeed?" }] };
   const { violations, nextBaseline } = checkBaseline(before, after);
@@ -139,9 +135,7 @@ test("a config that never had checks is not a weakening", () => {
 });
 
 test("the backstop catches a check deleted through any route", () => {
-  // The same reasoning as the spec backstop: PreToolUse only sees edit tools, and a
-  // config rewritten by another process never passes it at all. That is not theoretical —
-  // it is how all nine checks here were dropped.
+  // PreToolUse only sees edit tools; a config rewritten by another process bypasses it.
   const was = { goal: "g", specs: [{ id: "a", instructions: "x" }], checks: { tests: { command: "bun test" } } };
   const now = { goal: "g", specs: [{ id: "a", instructions: "x" }], checks: {} };
   const { violations, nextBaseline } = checkBaseline(was, now, 0.7);
@@ -150,8 +144,6 @@ test("the backstop catches a check deleted through any route", () => {
 });
 
 test("a context source is guarded the same as a check", () => {
-  // It is the evidence a spec reads. Narrowing it to print less is the same move as
-  // narrowing a test command to run less.
   const was = { context: { ticket: { command: "jira issue view $T --plain", maxChars: 6000 } } };
   expect(checkWeakenings(was, { context: {} })[0].problem).toContain("context source was deleted");
   expect(checkWeakenings(was, { context: { ticket: { command: "echo ok", maxChars: 6000 } } })).toHaveLength(1);

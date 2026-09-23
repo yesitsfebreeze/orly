@@ -1,15 +1,7 @@
 /**
- * Goal specs — the part that makes the gate about *this* goal rather than about agents
- * in general.
- *
- * The built-in questions in gate.ts catch how agents stop early no matter what they were
- * asked. They cannot catch "the migration is reversible" or "the endpoint returns 429 on
- * the eleventh request", because those are properties of one goal. So an LLM turns the
- * goal into a list of specs once, and from then on every turn is checked against them by
- * a model that costs a fraction of a cent and answers in typed numbers.
- *
- * A spec becomes one Noul. Phrased positively — "is this satisfied?" — so a reader of
- * the list sees acceptance criteria rather than a list of accusations.
+ * Goal specs: acceptance criteria for one goal, checked every turn alongside the built-in
+ * questions in gate.ts. A `require` spec is decided in code; any other becomes one Noul,
+ * phrased positively ("is this satisfied?").
  */
 
 /** One acceptance criterion, checkable against a turn's own evidence. */
@@ -21,46 +13,22 @@ export type Spec = {
   /** What satisfied and unsatisfied concretely look like. */
   criteria?: { true?: string; false?: string };
   /**
-   * The probability at or above which this spec counts as met.
-   *
-   * Per-spec because a spec's natural scale depends on its wording, not on its truth.
-   * Measured: "does the agent avoid claiming what the output doesn't show" tops out at
-   * 0.77 on turns that plainly satisfy it, so a global 0.70 marks most correct turns as
-   * failures. Fit each one with test/spec-calibrate.ts; the default is only a starting
-   * point for a spec nobody has measured yet.
+   * Probability at or above which the spec is met. Per-spec because the scale depends on the
+   * wording; fit it with test/spec-calibrate.ts.
    */
   cut?: number;
-  /**
-   * A deterministic check over gathered evidence, instead of a judgment.
-   *
-   * If a fact can be decided — a diagnostic count, an exit code, whether a symbol exists —
-   * it must not go to a probabilistic judge. A `require` is evaluated in code, costs
-   * nothing, has no threshold, and cannot drift. Reserve the model for what genuinely
-   * needs semantic understanding.
-   */
+  /** A deterministic check over gathered evidence, evaluated in code instead of by the model. */
   require?: Require;
   /** A spec the agent is allowed to leave unmet if it says why. Default: false. */
   optional?: boolean;
   /**
-   * What the judge should be shown, gathered at judging time rather than taken from what
-   * the agent chose to print. This is what stops a spec from being answerable only by the
-   * agent's own narration.
-   *
-   * Each entry is a file path, or the name of a source declared under `context` in
-   * `.orly/config.json`, or a name nothing produces — see `gather`.
+   * Evidence gathered at judging time, not taken from the agent's narration. Each entry is a
+   * file path, a `context` source from `.orly/config.json`, or a name nothing produces (see `gather`).
    */
   evidence?: string[];
   /**
-   * What the agent must do when this spec's evidence could not be gathered.
-   *
-   * Some evidence has no command behind it: a design review that lives in someone's head,
-   * a screenshot, an answer only a search will find. Name it in `evidence` anyway and put
-   * the instruction here. Nothing produces it, so the gate asks the agent to — in these
-   * words — and judges the next turn on what it brought back.
-   *
-   * This is the third way to fill the state, after reading a file and running a command:
-   * ask the model that is doing the work, and check the answer against the spec like any
-   * other evidence.
+   * Instruction to the agent for evidence nothing can gather (a screenshot, a search result).
+   * The gate asks in these words and judges the next turn on what came back.
    */
   gather?: string;
 };
@@ -88,8 +56,7 @@ const at = (obj: unknown, path: string): unknown =>
 
 /** Evaluate a `require` against gathered evidence. Undecidable means unmet, never met. */
 export function evaluate(req: Require, evidence: unknown): { met: boolean; actual: unknown } {
-  // A hand-written spec can carry any JSON here. Throwing would surface as "judge
-  // unavailable" and let the turn through — the one direction this must never fail.
+  // Hand-written specs carry any JSON; throwing would fail open, so return unmet.
   if (typeof req?.path !== "string") return { met: false, actual: undefined };
   const actual = at(evidence, req.path);
   switch (req.op) {
@@ -110,12 +77,7 @@ export function evaluate(req: Require, evidence: unknown): { met: boolean; actua
   }
 }
 
-/**
- * A spec is only useful if the answer is visible in what the turn recorded. "The code is
- * well structured" has nothing to check against and will return a confident number that
- * means nothing. These are the words that most often signal an uncheckable spec; the
- * generator prompt forbids them and this is the backstop.
- */
+/** Words of taste that signal a spec with nothing in the recorded evidence to check against. */
 const UNCHECKABLE = /\b(clean|elegant|readable|maintainable|idiomatic|well[- ](structured|designed|written)|good|nice|proper|appropriate|robust|scalable|performant|secure enough|best practice)\b/i;
 
 export type SpecProblem = { id: string; problem: string };
@@ -142,10 +104,7 @@ export function validateSpecs(specs: Spec[]): SpecProblem[] {
         problems.push({ id: s.id, problem: `require must be {path, op} with op one of ${OPS.join(", ")}` });
       }
     }
-    // A spec quotes the commands it is about, and those commands have names. `git clean`
-    // is not a judgement about taste; neither is `cargo build --release`. Code spans are
-    // stripped before the filter runs, so quoting a command is how you say one — which is
-    // how a spec should be written anyway.
+    // Code spans are stripped first, so a quoted command like `git clean` is not taste.
     const text = (s.instructions ?? "").replace(/`[^`]*`/g, " ");
     if ((s.instructions ?? "").trim().length < 15) {
       problems.push({ id: s.id, problem: "instructions too short to judge" });
@@ -184,11 +143,8 @@ export function specQuestions(specs: Spec[]): Record<string, any> {
 export type SpecResult = { spec: Spec; p: number; met: boolean; actual?: unknown };
 
 /**
- * Score every spec. A spec is met at or above `threshold`.
- *
- * The threshold is a fitted number, not a natural one: Jev ranks well and scales badly,
- * so a cut that works for one set of spec wordings is not transferable to another. Refit
- * whenever the spec prose changes materially.
+ * Score every spec: met at or above its own `cut`, else `threshold`. Cuts are fitted to the
+ * wording (Jev ranks well, scales badly), so refit when the wording changes.
  */
 export function scoreSpecs(
   specs: Spec[],

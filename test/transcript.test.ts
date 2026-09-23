@@ -9,8 +9,7 @@ const transcript = [
   line({ type: "assistant", message: { content: [{ type: "tool_use", name: "Edit", input: { file_path: "p.ts" } }] } }),
   line({ type: "user", message: { content: [{ type: "tool_result", content: "ok" }] } }),
   line({ type: "assistant", message: { content: [{ type: "text", text: "done" }] } }),
-  // What Claude Code injects after a Stop hook blocks — a USER message carrying orly's
-  // own complaint.
+  // Injected after a Stop hook block: a user message carrying orly's own complaint.
   line({ type: "user", isMeta: true, message: { content: "Stop hook feedback:\norly is not satisfied…" } }),
   line({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "bun test" } }] } }),
   line({ type: "user", message: { content: [{ type: "tool_result", content: "3 pass" }] } }),
@@ -24,8 +23,7 @@ test("the hook's own block message never becomes the user's request", () => {
 });
 
 test("work done before a block stays in the turn being judged", () => {
-  // Slicing at the injected message would shrink the turn to whatever came after it,
-  // hiding everything the block was complaining about.
+  // Slicing at the injected message would hide the work the block was about.
   const t = normalizeLastTurn(messagesFrom(transcript));
   expect(t.actions_taken).toEqual(["Edit: p.ts", "Bash: bun test"]);
   expect(t.command_results).toEqual(["ok", "3 pass"]);

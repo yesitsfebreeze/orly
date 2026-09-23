@@ -1,14 +1,8 @@
-THE AGENT EDITS ITS OWN EXAMINER
-================================
+THE GUARD
+=========
 
-The agent tuning the gate is the thing the gate judges. Left alone, the cheapest way to
-pass is to lower a cut or mark a spec optional. Do that a few times and you have a gate
-that never fires and a session that feels great.
-
-An instruction not to do this is exactly the kind of thing an agent talks itself past at
-2am with one spec left failing, and it only has to succeed once.
-
-So weakening is REFUSED by the harness, not discouraged in prose.
+The agent that tunes the gate is the one the gate judges. Left alone, the cheapest way to
+pass is to lower a cut. So weakening is refused by the harness, not discouraged in prose.
 
 
 WHAT COUNTS AS WEAKENING
@@ -17,39 +11,28 @@ WHAT COUNTS AS WEAKENING
   - lowering a cut
   - deleting a spec
   - marking a spec optional
-  - dropping an explicit cut that was above the default (removing a line weakens a gate
-    just as effectively as editing one)
-  - rewording a spec while keeping its fitted cut — wording moves the probability more
-    than the threshold does, so a rewrite makes the old number meaningless. Refit, or
-    drop the cut so it is marked unfitted.
+  - dropping an explicit cut that was above the default
+  - rewording a spec while keeping its fitted cut (refit it, or drop the cut)
+  - deleting a check or context source, or replacing its command with one that cannot
+    fail (true, exit 0, a bare echo)
+  - clipping a source's maxChars shorter
 
-Tightening a cut and adding a spec are always allowed: an agent that makes its own
-examiner stricter is working in the same direction as the gate.
-
-
-TWO ENFORCEMENT POINTS
-----------------------
-
-PreToolUse reconstructs the file the edit would produce, compares it with what is on
-disk, and denies the call if the difference makes the gate easier to pass.
-
-That only sees edit tools. A spec file rewritten through a shell command never reaches
-it — a real hole, found by testing the guard rather than trusting it. So Stop keeps a
-baseline: the strictest spec set ever seen. Every judgment compares against it, whatever
-route the edit took. A weakened gate is caught before the turn it was weakened for can
-end.
-
-The baseline only advances when nothing was weakened, so a weakening cannot be laundered
-into the baseline by following it with an unrelated edit.
+Tightening a cut, adding a spec or check, and rewording with a refit are always allowed.
 
 
-WHAT IT COVERS
---------------
+WHERE IT IS ENFORCED
+--------------------
 
-The routes an agent actually takes: a lowered cut, a deleted spec, an optional flag, a
-dropped threshold, a reworded question carrying a stale number. The wording-change rule
-catches the common case.
+PreToolUse: an Edit or Write to a spec file or the goal is replayed against the whole
+spec tree before it happens, and denied if the result is weaker.
 
-A spec rewritten into something vacuous while its cut rises passes both checks. Specs stay
-the user's to own; the gate makes weakening visible and awkward, and that is the honest
-limit of anything running inside the agent's own session.
+Stop: shell edits never reach PreToolUse, so every judgment also compares the specs and
+checks with the strictest set seen (.orly/baseline.json). A weakened gate blocks the turn.
+The baseline only advances when nothing was weakened.
+
+
+LIMIT
+-----
+
+A spec reworded into something vacuous, with its cut raised, passes both. The gate makes
+weakening visible and awkward; owning the specs stays with you.

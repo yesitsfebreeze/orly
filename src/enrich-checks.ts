@@ -1,15 +1,7 @@
 /**
- * Running the project's own checks and putting the results in evidence.
- *
- * This is what turns orly from "judge the transcript" into a pipeline over live code. A
- * language server, a type checker, a linter or a test runner already knows the truth —
- * exactly, not probably. Run it, put the numbers in `project.checks`, and let a `require`
- * spec assert on them in code.
- *
- * The division of labour that matters: if a check can answer it, the model must not be
- * asked. Diagnostics counts, exit codes and symbol presence are facts. The model is for
- * what is left over — whether the work matches what was asked, whether a claim is backed,
- * whether a stub stands in for the request. Those have no command that decides them.
+ * Runs the project's own checks (tests, type checker, linter) and puts exit codes and
+ * match counts in `project.checks` for `require` specs to assert on in code. If a check
+ * can answer it, the model is not asked.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,32 +16,15 @@ export type CheckSpec = {
   timeoutMs?: number;
 };
 
-// Small on purpose. A `require` spec asserts on `exit` and `matches`; the text is only
-// there for a human reading a blocked turn. Dumping a whole test run into state buries
-// the evidence a judgment actually needs — measured, it pushed one state from 6k to 28k
-// chars and the file-evidence specs stopped finding what they were pointed at.
+// Small: `require` reads only `exit`/`matches`; the text is for humans. Full output
+// buried the evidence other specs needed.
 const MAX_OUT = Number(process.env.ORLY_MAX_CHECK_OUT ?? 400);
 
-/**
- * Turn `{name: {command}}` into `project.checks[name] = {exit, out, matches}`.
- *
- * A check that cannot run records `exit: null`, which no numeric `require` will satisfy —
- * an enricher that failed must never read as a passing gate.
- */
 export const CACHE_NAME = "checks.json";
 
 /**
- * Results some other process already computed, usable only while the tree is unchanged.
- *
- * A watcher can run the checks continuously and leave its answers here, which takes them
- * off the critical path entirely — measured on this repository, nine checks cost 325 ms
- * in parallel, against a judge round trip of roughly 450 ms.
- *
- * The gate never trusts the file. It computes the fingerprint itself and ignores any
- * entry that does not match, then runs the command. A cache that could go stale without
- * being noticed would let the gate report a passing test suite for a tree where the tests
- * fail — the exact lie it exists to catch — so being out of date must cost time, never
- * correctness.
+ * Results a watcher computed earlier. The gate recomputes the tree fingerprint and drops
+ * any entry that does not match: staleness may cost time, never correctness.
  */
 function cached(root: string, fingerprint: string | null): Record<string, any> {
   if (!fingerprint) return {};
@@ -65,14 +40,14 @@ function cached(root: string, fingerprint: string | null): Record<string, any> {
   }
 }
 
+/**
+ * Turn `{name: {command}}` into `project.checks[name] = {exit, out, matches}`. A check that
+ * cannot run records `exit: null`, which no numeric `require` satisfies (fails closed).
+ */
 export function checkEnricher(checks: Record<string, CheckSpec>, cwd: string): Enricher {
   return async (_turn, specs): Promise<Evidence> => {
-    // Only run the checks some `require` spec actually reads.
-    //
-    // Evidence nothing consumes is not free: it is text in every state, competing for
-    // attention with the questions that do matter. Measured — carrying all nine check
-    // results collapsed one judgment spec's separation from 0.34 to 0.07 and another's
-    // from 0.72 to 0.06, purely by being there. It also saves running the commands.
+    // Only checks some `require` spec reads: unused evidence costs run time and dilutes
+    // every other judgment in the state.
     const wanted = new Set(
       (specs ?? [])
         .map((s) => s.require?.path)
@@ -85,13 +60,8 @@ export function checkEnricher(checks: Record<string, CheckSpec>, cwd: string): E
     const fresh = cached(cwd, treeFingerprint(cwd));
     const toRun = names.filter((n) => !(n in fresh));
     if (!toRun.length) return { checks: Object.fromEntries(names.map((n) => [n, fresh[n]])) };
-    // In parallel: these are the gate's own latency, and they are the only local cost in
-    // a judgment that is not microseconds — measured on this repository, nine checks cost
-    // 1 069 ms run one after another and are bounded by the slowest at 522 ms. The judge
-    // round trip alongside them is around 480 ms, so a sequential sweep doubles the wait.
-    //
-    // The commands must therefore be independent of each other. That is what a check is —
-    // a question about the tree, not a step in a build — and every CI runs them this way.
+    // In parallel, since checks are the gate's main local latency; commands must
+    // therefore be independent of each other.
     const entries = await Promise.all(
       toRun.map(async (name) => {
       const spec = checks[name];

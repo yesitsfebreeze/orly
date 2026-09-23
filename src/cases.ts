@@ -1,16 +1,7 @@
 /**
- * Regression cases — every mistake becomes a check the next version has to pass.
- *
- * A fixture somebody imagined proves the gate catches what that person imagined. What
- * actually goes wrong is in real turns, so every judged turn is kept (locally, never
- * committed) with the exact evidence the judge saw. When one of them went wrong — a block
- * that should not have fired, a pass that let a lie through — it is promoted to a case:
- * the frozen turn, what the verdict should have been, and which spec must catch it.
- *
- * Replay runs every case through the live judge with the CURRENT specs. A new spec proves
- * itself by catching its case without breaking any other; a reworded spec or a moved cut
- * has to keep every earlier case right. The history of replays is the long-term record of
- * whether the gate is getting better.
+ * Regression cases. Every judged turn is saved locally (never committed) with the evidence
+ * the judge saw; a misjudged one is promoted to a case: frozen turn, expected verdict, and
+ * the spec that must catch it. Replay runs every case against the current specs.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";

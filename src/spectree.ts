@@ -1,10 +1,7 @@
 /**
- * The spec tree — one small file per spec, folders for grouping.
- *
- * Every mistake is meant to become a spec, so a spec set grows without bound. One JSON file
- * does not survive that: every addition is an edit in the middle of everything else, and a
- * single stray comma disables the whole gate. A file per spec makes adding one a new file,
- * and the folders are the index.
+ * The spec tree: one `.spec` file per spec, named by its id; folders only group. A file is
+ * `key: value` header lines, a blank line, then the question. A file that does not parse
+ * becomes a spec that can never be met, so a typo blocks instead of dropping a check.
  *
  *   .orly/goal                      the goal, optionally headed by `rounds: 6`
  *   .orly/specs/readme/one_owl.spec
@@ -12,11 +9,6 @@
  *     require: checks.readme_owls.matches equals 1
  *
  *     README.md draws the owl exactly once.
- *
- * Header lines (`key: value`) up to the first blank line, then the question. The file name
- * is the id; the folders are only for people. A file that does not parse still becomes a
- * spec — one that can never be met — so a typo blocks the turn instead of silently
- * removing a check.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";

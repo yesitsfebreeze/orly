@@ -11,13 +11,7 @@ const OWL_MARGIN = 3; // left margin for the complete status bar
 export const BLOCKED = "[X]";
 export const PASSED = "[O]";
 
-/**
- * One verdict, four status-bar lines.
- *
- * The CLI already joins every judgment into one `line` — verdict, specs met, coverage,
- * the next step and any hazard that fired — separated by " · ". Spreading that across
- * four rows puts an overview on the screen instead of a wall of text after every turn.
- */
+/** Split the CLI's " · "-joined verdict `line` into four rows: verdict and specs, coverage, next, the rest. */
 export function statusBar(verdict: { block: boolean; line: string }): string[] {
   const label = verdict.block ? "BLOCK" : "PASS";
   let specs = "";

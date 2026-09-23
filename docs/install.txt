@@ -1,32 +1,26 @@
 INSTALLING ORLY
 ===============
 
-Requires bun on PATH and a TypeSafe API key (https://console.typesafe.ai).
+Needs bun on PATH and a TypeSafe API key (https://console.typesafe.ai).
 
   claude plugin marketplace add /path/to/orly
   claude plugin install orly@orly-local
 
-Then /orly:orly <your goal>. That writes the spec tree in .orly/, validates it, and starts work.
-Without a spec file the built-in honesty checks still run as a one-shot sanity check.
+Then /orly:orly <your goal>: it writes the spec tree in .orly/, validates it, and starts
+work. With no specs, only the built-in honesty checks run, blocking at most once per turn.
 
 
 THE KEY
 -------
 
-The library reads TYPESAFE_API_KEY and nothing else. It will not search keychains or
-credential stores.
-
-But a hook does not inherit your shell's environment, so exporting the key in .zshrc
-leaves the gate inert. Rather than put a plaintext key in a settings file, name one
-command that produces it:
+orly reads TYPESAFE_API_KEY. A hook does not inherit your shell's environment, so name a
+command that prints the key instead of storing it in a file:
 
   .orly/config.json
   { "keyCommand": "security find-generic-password -s typesafe -a api-key -w" }
 
-ORLY_KEY_COMMAND does the same from the environment. The secret stays where it already
-lives, and the command is configuration you wrote.
-
-With no key orly disables itself and says so once per session.
+ORLY_KEY_COMMAND does the same from the environment. With no key, orly disables itself
+and says so once per session.
 
 
 WHERE .orly LIVES
@@ -34,35 +28,39 @@ WHERE .orly LIVES
 
 Found by walking up from the working directory, the way git finds .git.
 
-  .orly/goal           the goal
-  .orly/specs/         one .spec file per spec, in folders
-  .orly/cases/         mistakes frozen as regression cases (committed)
-  .orly/config.json    keyCommand, optional
-  .orly/baseline.json  strictest spec set seen, for the anti-weakening backstop
-  .orly/log.jsonl      one line per judgment
+  .orly/goal           the goal, optionally headed by `rounds: N`
+  .orly/specs/         one .spec file per spec, in folders          (committed)
+  .orly/cases/         mistakes frozen as regression cases          (committed)
+  .orly/config.json    keyCommand, checks, context sources          (committed)
+  .orly/log.jsonl      one line per judgment                        (local)
+  .orly/turns/         the last 200 judged turns, with evidence     (local)
+  .orly/replay.jsonl   one line per `orly replay`                   (local)
+  .orly/baseline.json  strictest spec set seen, for the guard       (local)
 
-A user-level ~/.orly is merged underneath: ~/.orly/specs.json holds specs that apply in
-every project, ~/.orly/cuts.json maps a spec id to a cut fitted once and inherited
-everywhere. The project always wins.
+~/.orly is merged underneath: ~/.orly/specs.json holds specs for every project,
+~/.orly/cuts.json maps a spec id to a fitted cut. The project always wins.
 
 
-CONFIGURATION
--------------
+ENVIRONMENT
+-----------
 
-  TYPESAFE_API_KEY      required, unless .orly/config.json names a keyCommand
-  ORLY_KEY_COMMAND      command that prints the key
-  ORLY_HAZARD           0.70   built-in hazard probability that blocks
-  ORLY_SPEC_MET         0.70   default cut for a spec that states none
-  ORLY_MIN_COVERAGE     1.5    coverage Score below this blocks
-  ORLY_MIN_CONFIDENCE   0.35   Score confidence needed before coverage may block
-  ORLY_MIN_ACTION_P     0.5    winning-option probability before the Choice is used
-  ORLY_CHECKABLE        0.35   cut used by `orly specs`
-  ORLY_FLUSH_TRIES      12     polls waiting for the closing message
-  ORLY_FLUSH_WAIT_MS    150    delay per poll
-  ORLY_NO_LOG           set to keep a dry run out of the dataset
-  ORLY_ASK_CUT          0.5    yes/no split used by `orly ask`
-  ORLY_WATCH_MS         2000   how often `orly watch` looks for a change
-  ORLY_MAX_CONTEXT_CHARS 6000  cap per declared context source
-  ORLY_MODEL            jev-latest
-  ORLY_TIMEOUT_MS       12000
-  TYPESAFE_BASE_URL     override the endpoint
+  TYPESAFE_API_KEY        the key, unless a keyCommand provides it
+  ORLY_KEY_COMMAND        command that prints the key
+  TYPESAFE_BASE_URL       override the endpoint
+  ORLY_MODEL              jev-latest
+  ORLY_TIMEOUT_MS         12000
+  ORLY_HAZARD             0.70   built-in hazard probability that blocks
+  ORLY_SPEC_MET           0.70   cut for a spec that states none
+  ORLY_MIN_COVERAGE       1.5    coverage below this blocks
+  ORLY_MIN_CONFIDENCE     0.35   coverage confidence needed before it may block
+  ORLY_MIN_ACTION_P       0.5    confidence needed to name a next step
+  ORLY_CHECKABLE          0.35   cut used by `orly specs`
+  ORLY_ASK_CUT            0.5    yes/no split printed by `orly ask`
+  ORLY_FLUSH_TRIES        12     polls waiting for the closing message
+  ORLY_FLUSH_WAIT_MS      150    delay per poll
+  ORLY_WATCH_MS           2000   how often `orly watch` looks for a change
+  ORLY_MAX_FILE_CHARS     12000  cap per evidence file
+  ORLY_MAX_CHECK_OUT      400    output kept per check
+  ORLY_MAX_CONTEXT_CHARS  6000   cap per context source
+  ORLY_SESSION            cli    session name `orly judge` saves turns under
+  ORLY_NO_LOG             set to keep a dry run out of the log and turns

@@ -1,17 +1,9 @@
 #!/usr/bin/env bun
 /**
- * The portable entry point. Any agent, in any language, on any harness, can use the gate
- * by piping JSON in and reading JSON out — no plugin, no hook, no runtime coupling.
- *
- *   echo '{"messages":[…]}' | orly judge
- *   echo '{"turn":{…}}'     | orly judge
- *
- * `messages` is a chat log in either the Anthropic (content blocks) or OpenAI
- * (tool_calls / role:"tool") dialect; the last human message onward is judged. `turn` is
- * a pre-normalised Turn for agents whose logs are neither shape.
- *
- * Output: {"block":bool,"reason":string,"line":string,"answers":{…},"usage":{…}}
- * Exit code is 0 when the turn may end and 2 when it may not, so a shell can gate on it.
+ * CLI entry point: `echo '{"messages":[…]}' | orly judge` (Anthropic or OpenAI dialect,
+ * judged from the last user message) or `{"turn":{…}}` for a pre-normalised Turn.
+ * Prints the verdict as JSON; exit 0 = may end, 2 = may not, 1 = could not run.
+ * Other subcommands: `orly --help`.
  */
 import { DEFAULTS, judge, type Turn } from "../src/gate.ts";
 import { normalize, normalizeLastTurn, type Msg } from "../src/normalize.ts";
@@ -38,8 +30,7 @@ const num = (name: string, fallback: number) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
-// What `orly schema` prints and every input error points at: a caller should get the
-// shape right on the first try, not by reading this file.
+// What `orly schema` prints and every input error points at.
 const SCHEMA = {
   messages: {
     "stdin": '{"messages":[…]}',
@@ -118,15 +109,9 @@ if (command === "--help" || command === "-h" || command === "help") {
   process.exit(0);
 }
 if (command === "ask") {
-  // Ask right now instead of waiting for the end of a turn.
-  //
-  // The gate answers once, at the boundary, about everything. This answers immediately,
-  // about one thing: build a small state, fan out as many yes/no questions as you like,
-  // get calibrated numbers back in well under a second. Batching is close to free — the
-  // state dominates the cost — so asking ten things costs barely more than asking one.
-  //
+  // Ask yes/no questions now, about named files and/or stdin ("-"), outside a turn.
   //   orly ask "is the stub gone?" src/thing.ts
-  //   echo "$DIFF" | orly ask "does this change touch auth?" "is a test included?"
+  //   echo "$DIFF" | orly ask "does this change touch auth?" -
   const key3 = resolveKey();
   if (!key3) fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json");
 
@@ -134,8 +119,7 @@ if (command === "ask") {
   const asJson = process.argv.includes("--json");
   const questions: string[] = [];
   const paths: string[] = [];
-  // Reading stdin is opt-in via "-". Guessing from isTTY hangs forever wherever stdin is
-  // neither a terminal nor a closed pipe, which is most places a tool actually runs.
+  // stdin only via "-": guessing from isTTY hangs when stdin is neither a TTY nor a closed pipe.
   const wantsStdin = rest.includes("-");
   for (const a of rest) {
     if (a === "-") continue;
@@ -178,9 +162,7 @@ if (command === "ask") {
   }
   const ms = performance.now() - t0;
 
-  // The split is a reporting convenience, not a decision threshold: 0.5 is where an
-  // unfitted question looks most trustworthy and is least so. Anything you act on needs
-  // a cut fitted for that question's wording — which is what --cut is for.
+  // Reporting split only, not a fitted threshold; act only on a cut fitted to the wording.
   const cut = num("ORLY_ASK_CUT", 0.5);
   const asked = questions.map((q, i) => {
     const p = answers![`q${i}`]?.noul ?? NaN;
@@ -188,8 +170,6 @@ if (command === "ask") {
   });
   const tok = usage?.input_tokens ?? 0;
   if (asJson) {
-    // For a program on the other end: one object, every probability, the cut it was
-    // split at, and what it cost. Parsing the human lines is nobody's idea of an API.
     console.log(JSON.stringify({ answers: asked, cut, ms: Math.round(ms), usage, files: paths, questions_asked: asked.length }));
   } else {
     for (const a of asked) console.log(`${a.yes ? "yes" : "no "} ${a.p === null ? " n/a" : a.p.toFixed(2)}  ${a.question}`);
@@ -199,11 +179,8 @@ if (command === "ask") {
 }
 
 if (command === "specs") {
-  // Two-stage check on a generated spec list. Stage one is a word filter for judgements
-  // about taste; stage two asks Jev itself whether each spec is decidable from recorded
-  // evidence — because an LLM asked for specs will cheerfully emit "handles all edge
-  // cases correctly", and simulating execution is the one thing Jev is confidently wrong
-  // about.
+  // Two stages: a word filter for taste, then the judge asks whether each spec is
+  // decidable from recorded evidence (it is unreliable at simulating execution).
   const path = process.argv[3];
   let file: any;
   try {
@@ -213,8 +190,7 @@ if (command === "specs") {
   }
   if (!file?.specs?.length) fail("no specs found — pass a path, or create .orly/specs.json");
 
-  // A `require` spec is decided in code, so "could a transcript settle this?" is the wrong
-  // question to ask of it — and asking anyway reports a perfectly good check as broken.
+  // `require` specs are decided in code, so the decidability question does not apply.
   const problems = validateSpecs(file.specs);
   const judged = (file.specs as Spec[]).filter((s) => !s.require);
   const deterministic = (file.specs as Spec[]).length - judged.length;
@@ -252,9 +228,7 @@ if (command === "specs") {
   } catch (e: any) {
     fail(`judge unavailable (${e?.message ?? e})`);
   }
-  // Fitted on a mixed list: specs that are genuinely decidable from a transcript scored
-  // 0.57–0.74, ones requiring simulated execution or taste scored 0.06–0.08. 0.35 is the
-  // midpoint of that gap. Refit if this question's wording changes.
+  // Midpoint of the fitted gap (decidable 0.57–0.74, not 0.06–0.08). Refit if the wording changes.
   const cut = Number(process.env.ORLY_CHECKABLE ?? 0.35);
   for (const sp of file.specs as Spec[]) {
     if (rejected.has(sp.id)) continue;
@@ -268,13 +242,8 @@ if (command === "specs") {
 }
 
 if (command === "watch") {
-  // Run the project's checks continuously, so a turn does not pay for them.
-  //
-  // Measured on this repository: nine checks cost 325 ms even run in parallel, against a
-  // judge round trip of roughly 450 ms. Computed while the agent is still working, they
-  // cost the turn nothing. Every result is stamped with the tree it was computed against,
-  // and the gate recomputes that stamp itself and ignores anything that does not match —
-  // so a watcher falling behind costs time, never correctness.
+  // Run the checks on every tree change so a turn does not wait for them. Each result is
+  // stamped with its tree fingerprint; the gate ignores stale ones, so lag costs time, not correctness.
   const root = projectRoot(process.cwd()) ?? process.cwd();
   const checks = loadConfig(process.cwd()).checks ?? {};
   if (!Object.keys(checks).length) fail("no checks in .orly/config.json — nothing to watch");
@@ -296,8 +265,7 @@ if (command === "watch") {
           return [name, { fingerprint, at: new Date().toISOString(), result: (one as any).checks?.[name] }] as const;
         }),
       );
-      // Only write results still describing the tree we started from. An edit landing
-      // mid-sweep would otherwise be stamped with a fingerprint it never had.
+      // Write only if the tree did not change mid-sweep, else results carry a wrong fingerprint.
       if (treeFingerprint(root) === fingerprint) {
         await Bun.write(cachePath, JSON.stringify(Object.fromEntries(results), null, 2));
         console.error(`  ${new Date().toTimeString().slice(0, 8)} ${results.length} checks in ${(performance.now() - t0).toFixed(0)} ms`);
@@ -310,8 +278,7 @@ if (command === "watch") {
 }
 
 if (command === "fit") {
-  // Turn logged turns into cut proposals. It only ever prints; applying is a human's call,
-  // because the agent being judged is not a neutral party to its own threshold.
+  // Propose cuts from logged turns. Print only: the judged agent must not set its own threshold.
   const dir = findOrlyDir(process.cwd());
   if (!dir) fail("no .orly directory found from here");
   const records = label(read(dir!));
@@ -323,8 +290,7 @@ if (command === "fit") {
   console.log(`${records.length} judged turns · ${blocks.length} blocked · ${worked} bought work · ${explained} talked past`);
 
   const cuts: Record<string, number> = {};
-  // Loaded here, not from the module-level `specFile`: that is declared below, in the
-  // judge path, so reading it from this branch is a temporal-dead-zone crash.
+  // Not the module-level `specFile`: it is declared below, so reading it here is a TDZ crash.
   for (const sp of loadSpecFile(process.cwd())?.specs ?? []) {
     cuts[`spec:${sp.id}`] = sp.cut ?? DEFAULTS.specMet;
   }
@@ -407,9 +373,7 @@ async function replay(dir: string, only: string[] = []): Promise<boolean> {
 }
 
 if (command === "case") {
-  // Every mistake becomes a check, in one call: freeze the turn with the evidence the judge
-  // saw, write the spec that must catch it if it does not exist yet, and replay every case
-  // so the new spec is proven on this mistake without breaking an earlier one.
+  // Freeze the turn and its evidence as a case, write the spec (--ask) if new, replay all cases.
   const dir = findOrlyDir(process.cwd());
   if (!dir) fail("no .orly directory here or above");
   const args = process.argv.slice(3);
@@ -452,8 +416,7 @@ if (command === "case") {
 }
 
 if (command === "replay") {
-  // The long-term test: every recorded mistake, re-judged by the live judge against the
-  // specs as they are now. A spec change that fixes one case and breaks another shows here.
+  // Re-judge every case with the current specs; catches a spec change that breaks an old case.
   const dir = findOrlyDir(process.cwd());
   if (!dir) fail("no .orly directory here or above");
   process.exit((await replay(dir!, process.argv.slice(3))) ? 0 : 2);
@@ -461,8 +424,7 @@ if (command === "replay") {
 
 if (command !== "judge") fail(`unknown command "${command}" — try: orly --help`);
 
-// Shape first, key second: a caller fixing its input should not have to get a key to
-// find out the input was wrong, and a bad shape should never cost a request.
+// Validate shape before resolving the key, so a bad input never needs a key or costs a request.
 const raw = await new Response(Bun.stdin.stream()).text();
 let input: { messages?: Msg[]; turn?: Turn };
 try {
@@ -487,8 +449,7 @@ try {
   const { verdict, answers, usage } = await judge(turn!, {
     apiKey: key!,
     specs: specFile?.specs,
-    // The same evidence the hook gathers, from the same place, so the CLI and a host
-    // adapter can never disagree about the same repository.
+    // Same evidence as the hook, so CLI and adapters agree on a repository.
     enrich: async (t, s) => (seen = await projectEvidence()(t, s)),
     endpoint: process.env.TYPESAFE_BASE_URL,
     model: process.env.ORLY_MODEL,
@@ -514,7 +475,7 @@ try {
   console.log(JSON.stringify({ ...verdict, answers, usage }));
   process.exit(verdict.block ? 2 : 0);
 } catch (e: any) {
-  // The caller decides what an unavailable judge means. The CLI will not pretend.
+  // Exit 1: the caller decides whether an unavailable judge means open or closed.
   fail(`judge unavailable (${e?.message ?? e})`);
 }
 

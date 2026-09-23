@@ -37,7 +37,6 @@ test("countPattern turns diagnostics into a number to assert on", async () => {
 });
 
 test("a check that cannot run never reads as passing", async () => {
-  // An enricher that failed must not satisfy the gate by accident.
   const e = await checkEnricher({ nope: { command: "exit 127" } }, "/definitely/not/here")(turn, reads("nope"));
   const c = (e.checks as any).nope;
   expect(c.exit === null || c.exit !== 0).toBe(true);
@@ -49,9 +48,7 @@ test("no configured checks means no evidence key at all", async () => {
 });
 
 test("checks run where the command expects, not where the agent stands", async () => {
-  // Every check command is written relative to the project root. Run from a subdirectory,
-  // `cd sub && ...` fails and the shell's error text — which has a newline in it — is
-  // counted by countPattern as a violation. Four checks reported false failures this way.
+  // From a subdirectory, a root-relative command fails and its error text counts as a match.
   const root = j(tmpdir(), `orly-checks-${Date.now()}`);
   mkdirSync(j(root, ".orly"), { recursive: true });
   mkdirSync(j(root, "sub"), { recursive: true });
@@ -70,18 +67,13 @@ test("checks run where the command expects, not where the agent stands", async (
 });
 
 test("a check nothing reads is never run", async () => {
-  // Evidence nothing consumes is not free: it is text in every state competing with the
-  // questions that matter. Carrying all nine checks collapsed one spec's separation from
-  // 0.34 to 0.07 purely by being present.
+  // Unused evidence dilutes the state and lowers other specs' separation.
   const e = await checkEnricher({ unused: { command: "echo noise" } }, "/tmp")(turn, reads("other"));
   expect(e).toEqual({});
 });
 
 test("a check's output is trimmed so it cannot drown the evidence around it", async () => {
-  // A `require` spec reads `exit` and `matches`; the text is only there for a human
-  // reading a blocked turn. Dumping a whole test run into state pushed one state from
-  // 6 300 to 27 762 characters and the file-evidence specs stopped finding what they
-  // were pointed at.
+  // `require` reads only `exit` and `matches`; the text is for humans.
   const e: any = await checkEnricher({ loud: { command: "head -c 5000 /dev/zero | tr '\\0' 'x'" } }, "/tmp")(
     turn,
     reads("loud"),

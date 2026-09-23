@@ -1,20 +1,11 @@
 # orly
 
-> A turn-end gate for agent loops. Your goal becomes checkable specs; at the end of every
-> turn one judge request checks them against the real files and command output, and the
-> agent keeps working until they hold. `orly judge` exit 0 = may stop, 2 = not done.
+> A turn-end gate for agent loops. At the end of every turn, the work is checked against
+> the project's specs in one judge request, with facts decided in code; the agent keeps
+> working until they hold. `orly judge` exits 0 = may stop, 2 = not done, 1 = could not run.
 
-## Use
-
-- [Install](docs/install.txt): setup, the API key, where `.orly` lives, environment variables.
-- [Writing specs](docs/specs.txt): specs that can be judged, file and command evidence, turning each mistake into a replayable case (`orly case`, `orly replay`), `orly specs`.
-- [The guard](docs/guard.txt): what counts as weakening the gate and how it is refused.
-- [Porting](docs/porting.txt): the CLI contract, `orly schema`, the Turn shape, writing an adapter.
-
-## Notes (how it was built)
-
-- [Why the end of a turn](docs/notes/why.txt)
-- [Calibration](docs/notes/calibration.txt)
-- [Measured](docs/notes/measured.txt)
-- [The state is the hard part](docs/notes/state.txt)
-- [Getting better](docs/notes/learning.txt)
+- [Install](docs/install.txt): setup, the API key, the .orly layout, environment variables.
+- [Writing specs](docs/specs.txt): the spec tree, rules for judgeable specs, file, check and context evidence, mistakes as replayable cases, tuning.
+- [The guard](docs/guard.txt): what counts as weakening the gate and where it is refused.
+- [Porting](docs/porting.txt): module map, library calls, the CLI contract, the Turn shape, writing an adapter.
+- [Measured](docs/measured.txt): the fixture table from `bun test/calibrate.ts --write`.

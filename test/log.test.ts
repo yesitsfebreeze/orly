@@ -59,8 +59,7 @@ test("propose ignores a spec with too little evidence behind it", () => {
 });
 
 test("a dry run can be kept out of the dataset", () => {
-  // Fixture replays and smoke tests look exactly like real turns once they are a log line,
-  // and the gate later tunes its own thresholds on that log.
+  // Cuts are fitted on the log, so fixture replays must not land in it.
   const dir = j(tmpdir(), `orly-nolog-${Date.now()}`);
   mkdirSync(dir, { recursive: true });
   try {
@@ -77,8 +76,7 @@ test("a dry run can be kept out of the dataset", () => {
 });
 
 test("an unlabelled block is not evidence for loosening anything", () => {
-  // Six blocks, none followed by another turn in the same session: nothing is known yet,
-  // so propose must stay silent rather than read silence as "never caught anything".
+  // No later turn in the same session, so no block has an outcome yet.
   const log = Array.from({ length: 6 }, (_, i) =>
     rec({ session: `s${i}`, blocked: true, unmet: ["spec:a"], scores: { "spec:a": 0.1 } }),
   );

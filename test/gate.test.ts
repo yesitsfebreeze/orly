@@ -50,9 +50,6 @@ test("normalizes the OpenAI dialect to the same turn", () => {
 });
 
 test("assistant_said keeps a skip declared mid-turn, which the closing line drops", () => {
-  // An agent declares a blocker when it hits one — mid-turn — while the closing line is
-  // often just "done". Judging the declaration against the closing line alone scores it
-  // as never declared.
   const t = normalize([
     { role: "user", content: "add a --json flag, wire it into CI, update the README table" },
     { role: "assistant", content: [{ type: "text", text: "Skipping the README table: it is generated from a schema I cannot reach." }] },
@@ -135,7 +132,7 @@ test("the Choice supplies the block's lead instruction", () => {
 });
 
 test("a coin-flip Choice falls back to the generic instruction", () => {
-  // Gate on the winner's probability, not on confidence: a genuine tie is not an error.
+  // Gate on the winner's probability, not confidence: a tie is not an error.
   const answers = {
     ...quiet,
     unaddressed_part: { noul: 0.95 },
@@ -166,10 +163,7 @@ test("questions stay inside the API's stated limits", () => {
 // ---------------------------------------------------------------- the verdict carries its own results
 
 test("compose carries the spec results it was composed from", () => {
-  // The adapter logs which specs went unmet and counts how many were met. Re-scoring for
-  // that meant passing the evidence a second time, and the caller that did not got every
-  // `require` spec evaluated against nothing — recorded as failing on turns where it had
-  // passed, into the log that `orly fit` tunes on.
+  // Re-scoring without evidence would log every `require` spec as unmet.
   const specs = [
     { id: "tests", instructions: "n/a", require: { path: "checks.tests.exit", op: "equals", value: 0 } },
   ] as any;
@@ -202,17 +196,12 @@ const turnStub = {
 };
 
 test("a 200 that is not the judge is an outage, not evidence about the turn", async () => {
-  // A stray local service on the mock's port answered {"ok":true} with HTTP 200 and the
-  // hook crashed. A 200 in the wrong shape means we reached something that is not the
-  // judge; it must never be read as a verdict.
   await withTransport({ ok: true }, 200, async () => {
     await expect(judge(turnStub, { apiKey: "k" })).rejects.toThrow("no answers");
   });
 });
 
 test("enrichment that throws never takes the judgment down", async () => {
-  // Gathered evidence is a bonus. A judge that cannot run because a file read failed is
-  // a wall in front of the agent for a reason that has nothing to do with the turn.
   await withTransport({ answers: { ...quiet, coverage: { score: 2.9, confidence: 0.9 } } }, 200, async () => {
     const { verdict } = await judge(turnStub, {
       apiKey: "k",
@@ -225,10 +214,6 @@ test("enrichment that throws never takes the judgment down", async () => {
 });
 
 test("the transport is one place: a non-2xx and a wrong-shaped 200 fail the same way", async () => {
-  // There were three hand-rolled copies of this — the gate's, `orly ask`'s and
-  // `orly specs`'s — each with its own endpoint default and its own idea of a bad
-  // response. One outage looked like three different errors depending on which command
-  // hit it.
   await withTransport("upstream on fire", 503, async () => {
     await expect(client.ask({}, {}, { apiKey: "k" })).rejects.toThrow("503");
   });
@@ -249,8 +234,7 @@ const unmetSpec = (extra: object = {}) =>
 const answersFor = (p: number) => ({ ...quiet, coverage: { score: 2.9, confidence: 0.9 }, "spec:reviewed": { noul: p } });
 
 test("a spec judged on evidence that never arrived asks for it, in its own words", () => {
-  // Some evidence has no command behind it. Naming it anyway and saying what to do is the
-  // third way to fill the state: ask the model doing the work, then judge what it brings.
+  // Evidence with no command behind it is requested from the working agent.
   const v = compose(answersFor(0.1), DEFAULTS, unmetSpec({ gather: "Paste the reviewer's verdict." }), {});
   expect(v.block).toBe(true);
   expect(v.reason).toContain("evidence not available: design_review");
@@ -262,8 +246,7 @@ test("a spec with no gather line still says what was missing", () => {
 });
 
 test("a file recorded as absent is a reading, not a gathering failure", () => {
-  // "[file does not exist]" is often the very answer the spec was asking for. Telling the
-  // agent to go and produce it would send it to recreate a file it deliberately deleted.
+  // Asking for it would send the agent to recreate a file it deliberately deleted.
   const specs = [{ id: "gone", instructions: "is the stub gone?", evidence: ["stub.ts"] }] as any;
   const answers = { ...quiet, coverage: { score: 2.9, confidence: 0.9 }, "spec:gone": { noul: 0.1 } };
   const v = compose(answers, DEFAULTS, specs, { files: { "stub.ts": "[file does not exist]" } });

@@ -1,15 +1,7 @@
 /**
- * Loop control.
- *
- * A gate that can block is a gate that can trap. Generated specs are guesses, and a spec
- * that can never be satisfied — because it asks for something the environment cannot do,
- * or because it is worded in a way Jev reads differently than its author meant — would
- * otherwise loop the agent forever.
- *
- * Three exits, all of them in code rather than in the model's hands:
- *   - every spec met
- *   - the agent declares plainly what it could not do and why
- *   - the round cap, or two rounds with no improvement
+ * Loop control and spec/config loading. An unsatisfiable spec must not trap the agent, so the
+ * loop ends in code: every spec met, the agent declares what it could not do, or the round
+ * cap / stall limit is hit.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -32,15 +24,8 @@ export type RoundState = {
 };
 
 /**
- * Find the `.orly` directory by walking up from `start`, the way git finds `.git`.
- *
- * An agent's working directory moves around inside a project — into a subpackage, into
- * the plugin's own folder — while `.orly` sits at the root. Looking only in `cwd` means
- * the gate silently switches itself off the moment the agent cd's anywhere, which is
- * indistinguishable from it being uninstalled.
- *
- * ~/.orly is the user-level layer, never a project. Treating it as one gated every
- * directory under home that has no .orly of its own, the moment anything created it.
+ * Find `.orly` by walking up from `start`, as git finds `.git`, so the gate stays on when the
+ * agent cd's into a subdirectory. ~/.orly is the user layer, never a project.
  */
 export function findOrlyDir(start: string): string | null {
   let dir = start;
@@ -56,32 +41,15 @@ export function findOrlyDir(start: string): string | null {
   }
 }
 
-/**
- * The project root: the directory holding `.orly`.
- *
- * Every path in a spec's `evidence` is relative to this, never to the working directory.
- * An agent's cwd moves around inside a project, so resolving against it makes a spec pass
- * or fail depending on where the agent happened to be standing — the same spec scored 0.87
- * from the root and 0.11 from a subdirectory, because its files silently read as missing.
- */
+/** The directory holding `.orly`. Spec `evidence` paths resolve against it, never the cwd. */
 export function projectRoot(cwd: string): string | null {
   const dir = findOrlyDir(cwd);
   return dir ? dirname(dir) : null;
 }
 
 /**
- * The API key, for any host.
- *
- * The library itself reads `TYPESAFE_API_KEY` and nothing else on purpose: a component
- * that decides WHICH credential to authenticate as is a component that will silently pick
- * the wrong one. But a hook does not inherit an interactive shell's environment, so a
- * host needs some way to supply it without a plaintext key in a settings file.
- *
- * `.orly/config.json` may name one command that prints it. That command is configuration
- * the user wrote, not a search this code performs, and the secret stays wherever it
- * already lives. It belongs here rather than in any one host's adapter: every host needs
- * it, and a host that goes without reports "no key" in a session where the key was
- * perfectly readable.
+ * The API key: `TYPESAFE_API_KEY`, else the output of the user-configured `keyCommand`
+ * (hooks do not inherit the interactive shell's environment).
  */
 export function resolveKey(cwd: string = process.cwd()): string | undefined {
   if (process.env.TYPESAFE_API_KEY) return process.env.TYPESAFE_API_KEY;
@@ -109,14 +77,7 @@ export function loadConfig(cwd: string): Record<string, any> {
 /** The user-level layer, shared by every project on this machine. */
 export const userOrlyDir = () => join(process.env.HOME || homedir(), ".orly");
 
-/**
- * Cuts learned anywhere, applied everywhere.
- *
- * A spec wording that has been fitted once should not need fitting again in the next repo.
- * `~/.orly/cuts.json` maps a spec id to the cut measured for it, and any project spec that
- * does not state its own `cut` inherits it. This is the mechanism by which working on the
- * tool in one place improves it in all the others.
- */
+/** `~/.orly/cuts.json`: spec id to fitted cut, inherited by any project spec without its own `cut`. */
 export function loadUserCuts(): Record<string, number> {
   try {
     const raw = JSON.parse(readFileSync(join(userOrlyDir(), "cuts.json"), "utf8"));
@@ -183,7 +144,7 @@ export function writeRounds(dir: string, sessionId: string, state: RoundState): 
     mkdirSync(dirname(statePath(dir, sessionId)), { recursive: true });
     writeFileSync(statePath(dir, sessionId), JSON.stringify(state));
   } catch {
-    // Losing the counter costs us the cap, so the block-per-chain floor still applies.
+    // Losing the counter loses the cap; the block-per-chain floor still applies.
   }
 }
 
@@ -196,11 +157,8 @@ export type LoopDecision = {
 };
 
 /**
- * Decide whether blocking is still justified, and carry the counters forward.
- *
- * `met` is how many specs passed this round. Progress is measured against the best round
- * so far rather than the previous one, so an agent that thrashes between two partial
- * states is treated as stalled instead of as making progress.
+ * Decide whether blocking is still justified and carry the counters forward. `met` is specs
+ * passed this round; progress is measured against the best round so thrashing counts as stalled.
  */
 export function advance(
   prev: RoundState | null,

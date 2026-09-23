@@ -6,69 +6,39 @@ allowed-tools: Read, Write, Bash, Glob, Grep
 
 The user wrote: **$ARGUMENTS**
 
-**First decide which of two things this is.** A goal ("add retries to the client") → follow
-*Setting a goal*. A report that something went wrong ("it said tests pass but they
-didn't", "that block was wrong", "you forgot X again") → skip straight to *When something
-went wrong* and do all of it without asking.
+Decide which this is. A goal ("add retries to the client") → *Setting a goal*. A report
+that something went wrong ("it said tests pass but they didn't", "that block was wrong")
+→ *When something went wrong*, done in one go without asking.
+
+`orly` below means `bun "${CLAUDE_PLUGIN_ROOT}/bin/orly.ts"`.
 
 ## Setting a goal
 
-Write the spec tree in `.orly/` at the project root, then start working toward the goal. From
-that point on every turn you try to end is checked against these specs by Jev, and you
-will be blocked until they pass.
+1. Read enough of the project to name its real commands and paths.
+2. Write `.orly/goal` and one spec file per check under `.orly/specs/<group>/`.
+3. Run `orly specs`. Rewrite every spec it rejects and re-run until clean; an
+   undecidable spec yields a confident number that means nothing.
+4. Show the user the spec list in one short block, then start the work.
 
-## The contract a spec has to meet
+From then on every turn you try to end is judged against these specs. The loop ends when
+every spec is met, when you state plainly what you could not do and why, or when the
+round cap runs out.
 
-A spec becomes one yes/no question asked about **the recorded evidence of a turn** —
-which commands ran, what they printed, and what you told the user. Nothing else is
-visible to the judge. So:
+## Writing a spec
 
-- **Write what would be observable.** "Do `command_results` show a test run reporting
-  zero failures after the last edit?" — not "the tests are good".
-- **Never make the judge simulate execution.** It is confidently wrong at reasoning about
-  what code would do. Anchor to a command's *output*, not to the code's behaviour.
-- **No judgements of taste.** Clean, elegant, readable, idiomatic, robust, proper — a spec
-  containing any of these is rejected before it runs.
-- **One thing per spec.** Split anything with an "and" in it.
-- **5 to 12 specs.** Fewer misses the goal; more makes every turn a negotiation.
+A spec is one yes/no question about the recorded evidence of a turn: commands run, their
+output, what you said, and evidence orly gathers itself.
 
-**Name the files a spec depends on.** A spec about file state is otherwise only answerable
-from what you happened to print, which makes it unfalsifiable — you could edit nothing, say
-"done", and pass. A header line `evidence: duration.js` makes the checker read that file
-itself at judging time and put its real contents in front of the judge, under `project.files`.
-Point the spec's wording at that entry.
+- **Observable.** "Do `command_results` show a test run reporting zero failures after the
+  last edit?", not "the tests are good".
+- **Output, not behaviour.** The judge cannot predict what code does at runtime.
+- **No taste words** (clean, readable, idiomatic, robust, proper): rejected.
+- **One thing per spec**, 5 to 12 specs.
+- **Branch when it only sometimes applies:** "First check whether `actions_taken` edits X.
+  If NOT, answer yes. If it does, answer yes only when …".
 
-**Evidence does not have to be a file.** If something outside the repository decides
-whether the work is done — a ticket's acceptance criteria, a staging deploy, a migration
-status — declare one command for it under `context` in `.orly/config.json` and name it in
-`evidence:` exactly as you would a path. Its output is put in front of the judge under
-`project.context`, and you ask about it in words.
-
-```json
-"context": { "ticket": { "command": "jira issue view $TICKET --plain" } }
-```
-
-Use a `require` check when a command can decide the answer, and a context source when
-someone has to read it.
-
-**And when nothing can produce it** — a design review, a screenshot, an answer only a
-search will find — name it in `evidence:` anyway and add `gather: <what to do>`. The
-block will ask for it in those words, and the next turn is judged on what you bring back.
-
-Mark a spec `optional: yes` when it is desirable but you should be allowed to end the
-turn by explaining why it was skipped.
-
-## Shape
-
-One file per spec, folders to group them. The file name is the id.
-
-```
-.orly/goal                         rounds: 6  (blank line)  the goal in one sentence
-.orly/specs/build/tests_green.spec
-.orly/specs/impl/no_stub.spec
-```
-
-A spec file is optional `key: value` header lines, a blank line, then the question:
+A file is optional `key: value` headers, a blank line, then the question. The file name
+is the id.
 
 ```
 evidence: duration.js
@@ -77,51 +47,37 @@ Look at the `duration.js` entry under `project.files`, which is the file's real 
 content. Is the `throw new Error("not implemented")` stub gone?
 ```
 
-Headers: `cut`, `require: <path> <op> <value>`, `evidence: a, b`, `optional: yes`,
-`gather`, `true`, `false`. A file that does not parse blocks every turn until fixed.
-`bun ${CLAUDE_PLUGIN_ROOT}/bin/orly.ts tree` prints the index.
+Headers:
 
-## Do this in order
+- `evidence: a, b`: files read at judging time into `project.files`. Use it for any spec
+  about file state, so the answer never depends on what you printed.
+- `require: <path> <op> <value>`: decided in code from a check in `.orly/config.json`,
+  e.g. `require: checks.tests.exit equals 0` with
+  `"checks": {"tests": {"command": "bun test"}}`. Use it whenever a command can decide.
+- `context` sources in `.orly/config.json` (`"ticket": {"command": "…"}`), named in
+  `evidence:`: output the judge reads under `project.context`, for a ticket or a deploy.
+- `gather: <what to bring>`: for evidence nothing produces. The block asks for it.
+- `optional: yes`: may stay unmet if you say why. `cut`, `true`, `false` also exist.
 
-1. Read enough of the project to write specs that refer to its real commands and paths.
-2. Write `.orly/goal` and one file per spec under `.orly/specs/`.
-3. Run `bun "${CLAUDE_PLUGIN_ROOT}/bin/orly.ts" specs` — it word-filters for taste
-   judgements and asks Jev whether each spec is decidable from recorded evidence. Rewrite
-   every spec it rejects and re-run until it is clean. Do not start work on a spec list
-   that has not passed this check; an unfalsifiable spec produces a confident number that
-   means nothing, and you will be looping against noise.
-4. Tell the user the spec list in one short block, then begin the work.
-
-The loop ends when every spec is met, when you state plainly what you could not do and
-why, or when the round cap runs out — whichever comes first.
+A file that does not parse blocks every turn until fixed. `orly tree` prints the index.
 
 ## When something went wrong
 
-Every mistake becomes a spec and a regression case, so it is caught next time. Do all of
-this in one go, without stopping to ask:
-
-1. **Find the turn.** `bun ${CLAUDE_PLUGIN_ROOT}/bin/orly.ts turns` — `last` is the newest
-   judged turn; pick the one the user means.
-2. **Decide the direction.** `block` if the gate let a mistake through, `pass` if it
-   blocked a turn that was fine.
-3. **Freeze it, spec it, replay it — one command.** For a missed mistake, write the
-   question that would have caught it (observable, no taste words, see above) and file it
-   in the group it belongs to:
+1. **Find the turn.** `orly turns`; `last` is the newest.
+2. **Direction.** `block` if a mistake got through, `pass` if a fine turn was blocked.
+3. **Freeze, spec and replay in one command.** For a missed mistake, write the question
+   that would have caught it and file it in its group:
 
    ```
-   bun ${CLAUDE_PLUGIN_ROOT}/bin/orly.ts case last block "<what went wrong, in the user's words>" \
-     --spec <group>/<id> --ask "<the question>"
+   orly case last block "<what went wrong, in the user's words>" --spec <group>/<id> --ask "<question>"
    ```
 
-   Use `--spec <group>/<id>` without `--ask` when an existing spec should have caught it.
-   For a wrong block: `case <turn> pass "<why it was fine>"`, then reword the spec that
-   fired — never lower its cut or delete it.
-4. **Iterate until replay is all right.** The command replays every case against the
-   live judge. If any case is wrong, edit the spec's wording (or add `evidence:` so it
-   reads the real file) and run `orly replay` again. A fix that breaks an earlier case is
-   not a fix.
-5. **Fix the actual mistake** in the work itself, so the new spec passes on this turn.
-6. **Report in three lines:** the spec file added, the case file, and the replay score.
+   Drop `--ask` when an existing spec should have caught it. For a wrong block:
+   `orly case <turn> pass "<why it was fine>"`, then reword the spec that fired. Never
+   lower its cut or delete it.
+4. **Replay until every case is right.** If one is wrong, reword the spec or add
+   `evidence:`, then `orly replay`. A fix that breaks an earlier case is not a fix.
+5. **Fix the mistake itself** in the work, so the new spec passes this turn.
+6. **Report in three lines:** spec file, case file, replay score.
 
-Cases live in `.orly/cases/` and are committed. Each holds the turn verbatim: read it for
-secrets before committing.
+Cases in `.orly/cases/` are committed and hold the turn verbatim: check for secrets first.

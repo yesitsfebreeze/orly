@@ -80,11 +80,10 @@ test("`orly case last` promotes through the CLI and says which spec to write", (
   const bare = cli("--spec", "build/tests_ran");
   expect(bare.exitCode).toBe(0);
   expect(bare.stdout.toString()).toContain("next: write .orly/specs/build/tests_ran.spec");
-  // One go: the spec is written into the tree with the case. Replay needs a key, so skip it here.
+  // --no-replay: replay needs a key.
   const full = cli("--spec", "build/tests_ran", "--ask", "Do `command_results` show a passing test run after the edit?", "--no-replay");
   expect(full.exitCode).toBe(0);
   expect(readFileSync(join(root, ".orly", "specs", "build", "tests_ran.spec"), "utf8")).toContain("passing test run");
   expect(readCases(join(root, ".orly")).every((c) => c.expect.unmet?.[0] === "tests_ran")).toBe(true);
-  // A taste word is refused before anything is written.
   expect(cli("--spec", "build/nice", "--ask", "Is the code clean and readable overall?").stderr.toString()).toContain("taste");
 });

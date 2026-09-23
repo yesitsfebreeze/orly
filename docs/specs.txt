@@ -1,13 +1,17 @@
-WRITING SPECS THAT WORK
-=======================
+WRITING SPECS
+=============
 
-A spec becomes one yes/no question about the RECORDED EVIDENCE of a turn: which commands
-ran, what they printed, what the agent said. Nothing else is visible to the judge.
+A spec is one yes/no question about the recorded evidence of a turn: the commands that
+ran, what they printed, what the agent said, and any evidence orly gathered itself.
+Nothing else is visible to the judge.
 
-One file per spec, folders to group them. The file name is the id; add one by adding a
-file, however many there are.
 
-  .orly/goal                          rounds: 6, a blank line, the goal
+THE TREE
+--------
+
+One file per spec; the file name is the id, folders are only for grouping.
+
+  .orly/goal                            `rounds: 6`, a blank line, the goal
   .orly/specs/build/tests_green.spec
 
     cut: 0.52
@@ -15,58 +19,40 @@ file, however many there are.
     Do `command_results` show a test run that reported zero failures, executed after
     the last edit in `actions_taken`?
 
-Header lines up to the first blank line, then the question. Headers:
+Optional `key: value` header lines, a blank line, then the question:
 
-  cut        fitted threshold
-  require    <path> <op> <value>, decided in code: equals lte gte present absent contains
-  evidence   files or context sources to read at judging time, comma separated
-  optional   yes: may be left unmet if the agent says why
-  gather     what to do when nothing produces the evidence
-  true/false what met and unmet look like
+  cut         the probability at which it counts as met (default 0.70)
+  require     <path> <op> <value>, decided in code instead of by the judge;
+              op is equals, lte, gte, present, absent or contains
+  evidence    files or context sources to read at judging time, comma separated
+  optional    yes: may stay unmet if the agent says why
+  gather      what the agent should bring when nothing produces the evidence
+  true/false  what met and unmet look like
 
-A file that does not parse becomes a spec that can never be met, so a typo blocks the
-turn instead of quietly dropping a check. `orly tree` prints the index. A single
-.orly/specs.json is still read when there is no tree.
+A file that does not parse becomes a spec that can never be met, so a typo blocks instead
+of silently dropping a check. `orly tree` prints the index. Without a tree, a single
+.orly/specs.json ({goal, maxRounds, specs: [...]}) is read.
 
 
 FOUR RULES
 ----------
 
-1. WRITE WHAT WOULD BE OBSERVABLE.
-   "Do command_results show a test run reporting zero failures?" — not "are the tests
-   good". A spec that cannot be decided from the record returns a confident number that
-   means nothing, and you loop against noise.
-
-2. NEVER MAKE THE JUDGE SIMULATE EXECUTION.
-   Measured: handed the exact source of a function and asked what it does at runtime, Jev
-   answered confidently and wrongly (0.75). Lookup in supplied text comes back correct
-   and near 1.00. Anchor to a command's OUTPUT, never to what the code would do.
-
-3. NO JUDGEMENTS OF TASTE.
-   clean, elegant, readable, idiomatic, robust, proper — these are rejected by a word
-   filter before they ever run.
-
-4. SAY SO WHEN A SPEC ONLY SOMETIMES APPLIES.
-   Use an explicit branch, not an either/or. Measured, same spec, same fixtures:
-
-     either/or   "Either no edit under orly/, or tests passed after it."
-                 margin 0.33
-     branching   "First check whether actions_taken contains an edit under orly/.
-                  If there is NO such edit, answer yes — regardless of any other
-                  command or failure visible in the turn. If there IS, answer yes
-                  only when command_results show 0 failures after it."
-                 margin 0.75
-
-   The either/or was being overridden by a failing command elsewhere in the turn. The
-   explicit branch moved one fixture from 0.39 to 0.89.
+1. Ask about what is observable. "Do `command_results` show zero failures?", not "are
+   the tests good".
+2. Never make the judge simulate execution. It reads text well and predicts runtime
+   badly. Ask about a command's output, not about what code would do.
+3. No taste words (clean, readable, idiomatic, robust, proper...). They are rejected.
+4. If a spec only sometimes applies, branch explicitly: "First check whether
+   `actions_taken` contains an edit to X. If there is NO such edit, answer yes. If there
+   IS, answer yes only when `command_results` show 0 failures after it." An either/or
+   phrasing gets overridden by unrelated failures elsewhere in the turn.
 
 
-EVIDENCE: DON'T LET THE JUDGED SUPPLY THE PROOF
------------------------------------------------
+EVIDENCE
+--------
 
-A spec about file state is otherwise only answerable from what the agent chose to print.
-An agent that edits nothing, prints nothing and says "done" is unfalsifiable — not
-because the judge is wrong, but because the evidence is the agent's own narration.
+A spec about file state must not depend on what the agent chose to print. Name the file,
+and orly reads it at judging time into `project.files`:
 
   impl/no_stub.spec
 
@@ -75,28 +61,36 @@ because the judge is wrong, but because the evidence is the agent's own narratio
     Look at the `duration.js` entry under `project.files`, which is the file's real
     current content. Is the stub gone?
 
-Those files are read at judging time and attached under `project`, labelled as not
-agent-produced. One transcript, held constant, changing only what is on disk:
-
-  stub still present     spec 0.04   placeholder_left 0.93   coverage 0.92   BLOCK
-  actually implemented   spec met    placeholder_left 0.03   coverage 2.19   PASS
-
-Identical messages, opposite verdict, decided entirely by state the agent did not author.
-
-Every enricher is wrapped so that one being absent or down costs nothing: gathering
-evidence must never be the reason a turn cannot be judged.
+A missing file is recorded as "[file does not exist]".
 
 
-ANYTHING ELSE THAT DECIDES WHETHER IT IS DONE
----------------------------------------------
+CHECKS: FACTS DECIDED IN CODE
+-----------------------------
 
-Not everything that settles "is this finished" is in the repository. A ticket, a staging
-deploy, a migration status, a review queue. Declare one command per source in
-.orly/config.json and its OUTPUT goes in front of the judge:
+A command in .orly/config.json runs at judging time; a `require` spec asserts on it and
+never reaches the model:
 
-  "context": {
-    "ticket": { "command": "jira issue view $TICKET --plain" }
-  }
+  "checks": { "tests": { "command": "bun test", "countPattern": "\\bfail\\b" } }
+
+  build/tests_green.spec
+
+    require: checks.tests.exit equals 0
+
+    The test suite exits 0.
+
+Each check records `exit`, `out` (the tail) and, with a countPattern, `matches`. Only
+checks some spec reads are run, in parallel. `orly watch` runs them on every change so a
+turn never waits.
+
+
+CONTEXT: TEXT SOMEONE HAS TO READ
+---------------------------------
+
+For what a command prints but no exit code decides — a ticket, a deploy status — declare
+a context source and name it in `evidence`. Its output goes to the judge under
+`project.context`:
+
+  "context": { "ticket": { "command": "jira issue view $TICKET --plain" } }
 
   ticket/ticket_covered.spec
 
@@ -105,34 +99,14 @@ deploy, a migration status, a review queue. Declare one command per source in
     Look at `ticket` under `project.context`, which is the issue tracker's own text.
     Does the work recorded in `actions_taken` satisfy every acceptance criterion it lists?
 
-Measured on exactly that spec, with a ticket demanding retries capped at 3 AND each
-failure logged with its attempt number:
-
-  work does both            0.73   pass
-  work caps but never logs  0.21   block
-
-Same transcript shape, opposite verdict, decided by text the agent did not write and
-could not have summarised away.
-
-This is not the same thing as a `check`. A check answers a fact in code — an exit code, a
-count — and never reaches the model. A context source is for a READING: no exit code
-expresses "the acceptance criteria are covered". Use a check when a command can decide it,
-a context source when someone has to read it.
-
-A source that cannot run says so in words: "[context source ... could not be read ...
-Treat it as unknown, not as absent.]" Empty text would read as "the ticket says nothing",
-which is an answer, and the wrong one.
-
-The integration is a command you wrote. Anything with a CLI, a curl or a script is
-already supported, and orly ships no connector for any of them.
+A source that fails is reported as unknown, never as empty.
 
 
 WHEN NOTHING CAN PRODUCE IT
 ---------------------------
 
-Some evidence has no command behind it: a design review that lives in someone's head, a
-screenshot, an answer only a search will find. Name it in `evidence` anyway and say what
-to do about it:
+Name the evidence anyway and say how to get it. The block asks the agent in those words,
+and the next turn is judged on what it brought:
 
   review/reviewed.spec
 
@@ -142,52 +116,37 @@ to do about it:
     Look at `design_review` under `project`. Did the reviewer approve the approach
     taken in `actions_taken`?
 
-Nothing produces design_review, so the block says so and asks in those words. The agent
-brings it back, and the next turn is judged on what it brought — like any other evidence,
-against the same spec, by the same judge.
-
-That is the third way to fill the state: read a file, run a command, or ask the model
-doing the work. A file recorded as "[file does not exist]" is NOT one of these — that is
-a reading, and usually the very thing a spec was asking about.
-
 
 EVERY MISTAKE BECOMES A CASE
 ----------------------------
 
-Every judged turn is kept in .orly/turns/ (local, last 200) with the evidence the judge
-saw. When one went wrong, freeze it:
+Every judged turn is kept in .orly/turns/ with the evidence the judge saw. When one went
+wrong, freeze it:
 
-  orly turns                                   find it; `last` is the newest
+  orly turns                      find it; `last` is the newest
   orly case last block "said tests pass while one failed" \
-    --spec build/tests_ran_green --ask "Do `command_results` show zero failures after the last edit?"
-  orly case last pass  "blocked a finished README edit"
+    --spec build/tests_ran --ask "Do `command_results` show zero failures after the last edit?"
+  orly case last pass "blocked a finished README edit"
 
-`block` = it should have been stopped; --spec names the spec that must catch it, and
---ask writes that spec into the tree if it is new. `pass` = it was blocked wrongly. The
-case goes to .orly/cases/ (committed), and every case is replayed in the same call.
-`/orly:orly <what went wrong>` does all of this, then fixes the mistake itself.
+`block`: it should have been stopped; --spec names the spec that must catch it, --ask
+writes that spec if it is new. `pass`: it was blocked wrongly. The case goes to
+.orly/cases/ and every case is replayed in the same call.
 
-  orly replay          every case, live judge, current specs; exit 2 if any is wrong
+  orly replay                     every case, live judge, current specs
 
-A case is right only if the verdict matches AND the named spec is the one that fired, so
-a block for some unrelated reason does not count. Each run is appended to
-.orly/replay.jsonl, so a wording change or a new cut is measured against every mistake
-recorded so far, not only the one it was written for.
+A case is right only if the verdict matches and the named spec is the one that fired.
+Each run is appended to .orly/replay.jsonl, so every change is measured against every
+mistake recorded so far.
 
 
-CHECK BEFORE YOU RELY ON IT
----------------------------
+CHECK AND TUNE
+--------------
 
-  orly specs [path]
+  orly specs [path]     rejects taste words, then asks the judge whether each spec is
+                        decidable from recorded evidence
+  orly fit              proposes cuts from the log: blocks followed by real work versus
+                        blocks the agent only talked past
 
-Two stages: a word filter for taste, then Jev itself asking whether each spec is
-decidable from recorded evidence. On a deliberately mixed list:
-
-  x word   code_is_clean: "clean" is a judgement about taste
-  v 0.74   test_file_exists: Do actions_taken show a test file being created...
-  v 0.69   readme_usage: Do actions_taken show README.md being edited...
-  v 0.57   tests_green: Do command_results show a test run reporting zero failures...
-  x 0.06   handles_all_edges: Does parseDuration handle all edge cases correctly...
-
-handles_all_edges is the one that matters. An LLM asked for specs emits it happily, and
-it forces the judge to simulate execution — the one thing it is confidently wrong at.
+When a spec misfires, check in this order: the state the judge received, the wording,
+then the cut. Wording moves the probability more than the cut does; after rewording, fit
+the cut again with `bun test/spec-fit.ts`.

@@ -44,8 +44,6 @@ test("no evidence means no project key at all", async () => {
 });
 
 test("truncation announces itself instead of silently hiding the tail", () => {
-  // A spec asking about a section that fell off the end otherwise gets a confident answer
-  // about a file the judge never fully saw.
   const long = "x".repeat(20_000);
   return fileEnricher("/x", async () => long)(turn, specs).then((e) => {
     const body = (e.files as any)["duration.js"] as string;
@@ -60,9 +58,7 @@ test("a file under the limit is passed through whole", async () => {
 });
 
 test("projectEvidence gathers files and checks from the project root, called from anywhere", async () => {
-  // The hook and the CLI wired these enrichers separately and drifted: the CLI gathered
-  // files but never ran the checks, so every `require` spec read as unmet through
-  // `orly judge` while passing through the hook, on the same repository.
+  // Hook and CLI share this, so they cannot disagree about one repository.
   const root = mkdtempSync(join(tmpdir(), "orly-ev-"));
   try {
     mkdirSync(join(root, ".orly"));
@@ -86,8 +82,6 @@ test("projectEvidence gathers files and checks from the project root, called fro
 // ---------------------------------------------------------------- declared context
 
 test("a declared context source reaches the judge as text, unlike a check", async () => {
-  // A check answers a fact in code and never reaches the model. A ticket is a reading,
-  // not a comparison: no exit code expresses "the acceptance criteria are covered".
   const specs: any = [{ id: "ticket", instructions: "n/a", evidence: ["ticket"] }];
   const e: any = await contextEnricher({ ticket: { command: "echo 'PROJ-12: status Done'" } }, "/tmp")(
     {} as any,
@@ -97,7 +91,7 @@ test("a declared context source reaches the judge as text, unlike a check", asyn
 });
 
 test("a context source that cannot run says unknown, never nothing", async () => {
-  // Empty text reads as "the ticket says nothing", which is an answer, and the wrong one.
+  // Empty text would read as "the ticket says nothing", a wrong answer.
   const specs: any = [{ id: "t", instructions: "n/a", evidence: ["ticket"] }];
   const e: any = await contextEnricher({ ticket: { command: "exit 4" } }, "/tmp")({} as any, specs);
   expect(e.context.ticket).toContain("could not be read");
@@ -110,8 +104,7 @@ test("a source nothing names is never run", async () => {
 });
 
 test("a context name is not read as a missing file", async () => {
-  // "[file does not exist]" is a legitimate answer for a spec asking whether something
-  // exists, so a name mistaken for a path arrives looking exactly like a verdict.
+  // "[file does not exist]" is a valid answer to an existence spec, so it must not be faked.
   const specs: any = [{ id: "t", instructions: "n/a", evidence: ["ticket", "real.ts"] }];
   expect(evidencePaths(specs, ["ticket"])).toEqual(["real.ts"]);
   const e: any = await fileEnricher("/tmp", async () => "x", { skip: ["ticket"] })({} as any, specs);

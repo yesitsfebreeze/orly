@@ -1,21 +1,8 @@
 #!/usr/bin/env bun
 /**
- * OpenCode adapter — the only file in orly that knows what OpenCode is.
- *
- * OpenCode's session export uses its own block shapes (`{type:"tool"}` with a
- * `state`, reasoning blocks, `type:"user"|"assistant"` messages), which
- * `normalize()` does not speak. Everything an OpenCode loop needs is one
- * translation: read the export, map it onto the Anthropic dialect the judge
- * already understands, print `{"messages":[…]}`, done.
- *
- *   opencode api get /api/experimental/session/$ID/export \
- *     | bun adapters/opencode.ts \
- *     | orly judge          # from the project root that owns .orly/
- *
- * The export endpoint wraps its answer in `data`; a bare `{"messages":[…]}` is
- * accepted too, so any OpenCode client can skip the API call. Spec discovery
- * and the key belong to the judge, which runs in the project's cwd — the
- * translator needs neither.
+ * Translates an OpenCode session export (or bare `{"messages":[…]}`) into the Anthropic
+ * dialect `orly judge` reads. Run from the project root that owns .orly/:
+ *   opencode api get /api/experimental/session/$ID/export | bun adapters/opencode.ts | orly judge
  */
 import { textOf, type Msg } from "../src/normalize.ts";
 
@@ -67,7 +54,7 @@ const toAnthropic = (msgs: any[]): Msg[] => {
           results.push([b.id, text, b.state?.status !== undefined && b.state.status !== "completed"]);
         }
       }
-      // reasoning blocks carry no evidence the judge may use; dropped.
+      // reasoning blocks are dropped: not evidence.
     }
     if (blocks.length) out.push({ role: "assistant", content: blocks });
     for (const [id, text, isError] of results) {

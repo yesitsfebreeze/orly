@@ -1,10 +1,7 @@
 #!/usr/bin/env bun
 /**
- * PreToolUse adapter — refuses edits that would weaken the gate.
- *
- * Works out what the spec file would look like after the tool call, compares it with what
- * is there now, and denies the call if the difference makes the gate easier to pass.
- * Everything else passes straight through.
+ * Claude Code PreToolUse hook: projects the spec file after an Edit/Write and denies the
+ * call if it would make the gate easier to pass. Everything else passes through.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -14,7 +11,7 @@ import { findOrlyDir } from "../src/session.ts";
 import { EXT, GOAL, loadTree, TREE } from "../src/spectree.ts";
 import { existsSync } from "node:fs";
 
-/** Anything the hook cannot work out for certain is allowed: this must not block real work. */
+/** Fails open: anything uncertain is allowed. */
 function allow(): never {
   process.exit(0);
 }
@@ -82,7 +79,7 @@ let after: unknown;
 try {
   after = inTree ? loadTree(orlyDir!, { path: specPath, text: next! }) : JSON.parse(next!);
 } catch {
-  allow(); // not valid JSON: the edit is broken in a way this hook should not adjudicate
+  allow(); // unparseable result: not this hook's call
 }
 
 const violations = weakenings(before as any, after as any, DEFAULTS.specMet);

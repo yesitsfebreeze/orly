@@ -1,13 +1,7 @@
 /**
- * Turning an agent's message log into a `Turn`.
- *
- * Host-agnostic: accepts the two shapes almost every agent already speaks — Anthropic
- * content blocks (`tool_use` / `tool_result`) and OpenAI chat messages (`tool_calls` /
- * `role: "tool"`) — and reduces the last turn to what the judge needs.
- *
- * Everything hard about this file is selection, not parsing. The judge sees only what
- * we put in the state, so a bad selection rule produces a confident, wrong answer that
- * looks exactly like a model error.
+ * Reduces an agent's message log (Anthropic content blocks or OpenAI chat messages) to the
+ * last `Turn`. The hard part is selection: the judge sees only what is kept here, and a bad
+ * rule yields a confident wrong answer that looks like a model error.
  */
 import type { Turn } from "./gate.ts";
 
@@ -67,12 +61,8 @@ export const describeCall = (name: string, input: any): string => {
 };
 
 /**
- * Keep the results that carry the most signal, not simply the most recent ones.
- *
- * A blind tail is the wrong rule here: long turns are exactly where a failure gets
- * forgotten, so a window that drops the oldest output drops failures precisely when
- * `silent_failure` is most likely to be the right answer. Failures are kept first, then
- * the remaining budget is filled from the tail, and the original order is restored.
+ * Keep failures first (up to half the budget), fill the rest from the tail, restore order.
+ * A blind tail would drop early failures exactly when `silent_failure` is likely.
  */
 export function selectResults(results: string[], max = MAX_RESULTS): string[] {
   if (results.length <= max) return results;

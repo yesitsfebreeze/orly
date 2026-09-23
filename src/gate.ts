@@ -1,16 +1,7 @@
 /**
- * orly core — host-agnostic.
- *
- * Knows nothing about Claude Code, or about any agent harness. It takes one normalised
- * turn and returns a verdict. Everything host-specific lives in an adapter that produces
- * a `Turn` and consumes a `Verdict`.
- *
- * The idea it implements: an agent decides for itself when a task is finished, and that
- * decision is made by the same model that did the work, so it inherits the work's blind
- * spots. A second, independent judgment at that moment is worth having — but only if it
- * is cheap and fast enough to run on every turn, which rules out another LLM call. A
- * System One model returns typed probabilities instead of prose, and code owns the
- * policy that turns those numbers into a decision.
+ * orly core, host-agnostic: one normalised `Turn` in, one `Verdict` out. A System One model
+ * answers typed questions about the turn; code owns the policy that turns the probabilities
+ * into block or pass. Host adapters produce the `Turn` and consume the `Verdict`.
  */
 
 import { ask, ENDPOINT_DEFAULT } from "./client.ts";
@@ -25,22 +16,15 @@ export type Turn = {
   user_request: string;
   /** How the agent ended the turn — its closing message to the human. */
   assistant_final_message: string;
-  /**
-   * Everything the agent said to the human this turn, in order, not just the closing
-   * line. An agent declares a blocker when it hits one, which is usually mid-turn, while
-   * the closing line is often just "done". Judging a declared skip against the closing
-   * line alone scores it as never declared.
-   */
+  /** Everything the agent said this turn, in order; blockers are usually declared mid-turn. */
   assistant_said: string;
   /** One line per tool call: the tool's name and whatever named its target. */
   actions_taken: string[];
   /** Tool output, most recent last. */
   command_results: string[];
   /**
-   * Whether the closing message was written after the last action. A turn whose
-   * conclusion has not been recorded yet cannot be judged: every "…and was it reported?"
-   * question answers no, because the report does not exist yet. Adapters that read from
-   * a log another process is still writing must set this honestly.
+   * Whether the closing message was written after the last action. Without it every
+   * "was it reported?" question answers no, so the turn cannot be judged.
    */
   conclusive: boolean;
 };
@@ -59,13 +43,9 @@ export type Thresholds = {
 };
 
 export const DEFAULTS: Thresholds = {
-  // Generated specs are uncalibrated: nothing has fitted a cut for a question written
-  // thirty seconds ago, and wording moves the number far more than the threshold does.
-  // Default high so a badly worded spec fails loudly rather than passing everything.
+  // Unfitted specs default high so a badly worded one fails loudly rather than passing.
   specMet: 0.7,
-  // Fitted, not chosen. Across every should-pass fixture the highest any hazard reaches
-  // is 0.53; the lowest true positive is 0.88. 0.70 is the midpoint. Jev drifts by about
-  // ±0.05 between runs on identical input, so a cut needs more room than a thin gap.
+  // Fitted: midpoint of max should-pass hazard (0.53) and min true positive (0.88).
   hazard: 0.7,
   minCoverage: 1.5,
   minCoverageConfidence: 0.35,
@@ -75,9 +55,8 @@ export const DEFAULTS: Thresholds = {
 // ---------------------------------------------------------------- questions
 
 /**
- * Four Nouls for the known ways an agent stops early, one Choice for what to do about
- * it, one Score for overall coverage. They are independent judgments over the same
- * state, so they go in one request and are evaluated in parallel.
+ * Four Nouls for the known ways an agent stops early, one Choice for the next step, one Score
+ * for coverage. Independent judgments over the same state, sent in one request.
  */
 export const QUESTIONS = {
   unverified_claim: {
@@ -168,12 +147,8 @@ const ACTION_LEAD: Record<string, string> = {
 // ---------------------------------------------------------------- policy
 
 /**
- * Evidence a spec named that nothing produced.
- *
- * A file recorded as absent is NOT in here: "[file does not exist]" is a real reading and
- * often the answer a spec was asking for. This is the other case — a name no file, no
- * declared source and no command ever answered, so the judge was asked about something
- * that was never in front of it.
+ * Evidence a spec named that nothing produced. A file recorded as absent is not included:
+ * "[file does not exist]" is a real reading.
  */
 function ungathered(spec: Spec, evidence: any): string[] {
   const out: string[] = [];
@@ -198,21 +173,13 @@ export type Verdict = {
   /** One line for a human watching. Always present. */
   line: string;
   /**
-   * The spec results this verdict was actually composed from.
-   *
-   * Carried out rather than left to be re-derived: scoring a spec again elsewhere means
-   * passing the evidence again, and the caller that forgets gets a `require` spec
-   * evaluated against nothing — which reads as unmet, silently. That went into the log
-   * and into the loop's progress counter, so every deterministic check was recorded as
-   * failing on turns where it had passed, and the dataset `orly fit` tunes on was wrong.
+   * The spec results this verdict was composed from. Use these rather than rescoring: a
+   * `require` rescored without evidence reads as unmet.
    */
   results: SpecResult[];
 };
 
-/**
- * Policy, in code. Thresholds move without touching the model, and a reworded question
- * invalidates the thresholds rather than the other way round.
- */
+/** Policy, in code: answers plus thresholds to a verdict. A reworded question invalidates its thresholds. */
 export function compose(
   answers: Record<string, any>,
   t: Thresholds = DEFAULTS,
@@ -222,14 +189,12 @@ export function compose(
   const fired: string[] = [];
   const parts: string[] = [];
 
-  // Goal specs first: they say what this particular job requires. The built-in hazards
-  // below say whether the agent is telling the truth about it. A spec list alone is
-  // gameable by an agent that simply asserts satisfaction, so both layers stay.
+  // Goal specs say what the job requires; the hazards below catch an agent merely asserting it.
   const specResults = scoreSpecs(specs, answers, t.specMet, evidence);
   const failing = unmet(specResults);
   if (specResults.length) parts.push(`specs ${specResults.length - failing.length}/${specResults.length}`);
   for (const r of failing) {
-    // A deterministic check reports what it actually found; a probability would be a lie.
+    // A deterministic check reports what it found, not a probability.
     if (r.spec.require) {
       fired.push(
         `- check "${r.spec.id}" failed: ${r.spec.require.path} ${r.spec.require.op} ${String(r.spec.require.value ?? "")} — found ${JSON.stringify(r.actual)}`,
@@ -237,9 +202,7 @@ export function compose(
       continue;
     }
     fired.push(`- spec "${r.spec.id}" is not met (p=${r.p.toFixed(2)}): ${r.spec.instructions}`);
-    // A spec judged against evidence that never arrived scores low for the wrong reason,
-    // and "not met" on its own sends the agent to redo work that may be finished. Say
-    // what was missing and ask for it instead.
+    // Missing evidence scores low for the wrong reason; ask for it rather than for redone work.
     const missing = ungathered(r.spec, evidence);
     if (missing.length) {
       fired.push(`  evidence not available: ${missing.join(", ")}. ${r.spec.gather ?? GATHER_DEFAULT}`);
@@ -258,21 +221,14 @@ export function compose(
   const confidence = typeof cov?.confidence === "number" ? cov.confidence : 0;
   if (score !== null) parts.push(`coverage ${score.toFixed(2)}/3 (conf ${confidence.toFixed(2)})`);
 
-  // Coverage is not a discriminator and its margin against the Nouls is negative. It is a
-  // FLOOR, and it is the only thing that catches an empty turn: every hazard above asks
-  // "did you do something wrong", and none asks "did you do anything at all". Measured — a
-  // turn where the agent asked a question instead of working trips no hazard (all ≤0.53)
-  // and passes 3/3 without this rule.
-  //
-  // An unconfident Score means the distribution is spread, not that the work is bad.
+  // Coverage is a floor, the only rule that catches an empty turn (no hazard asks "did you do
+  // anything?"). An unconfident Score is spread, not bad, so it may not block.
   if (score !== null && score < t.minCoverage && confidence >= t.minCoverageConfidence) {
     fired.push(`- the work does not yet cover the request (coverage ${score.toFixed(2)} of 3)`);
   }
 
   const action = answers?.next_action;
-  // Gate on the winning option's probability, never on `confidence`: confidence measures
-  // how concentrated the distribution is, so a real 0.52/0.48 tie reports near-zero
-  // confidence and reads as "wrong" when it means "these two are equally good".
+  // Gate on the winning probability, not `confidence`: a genuine tie has near-zero confidence.
   const actionP = action?.probabilities?.[action?.choice] ?? 0;
   if (action?.choice) parts.push(`next=${action.choice} ${actionP.toFixed(2)}`);
 
@@ -323,9 +279,7 @@ export type Judgment = {
 export async function judge(turn: Turn, opts: JudgeOptions): Promise<Judgment> {
   const specs = opts.specs ?? [];
 
-  // Evidence gathered here is state the agent did not author. If gathering it fails, the
-  // judgment still happens on the transcript alone — enrichment must never be the reason
-  // a turn cannot be judged.
+  // Enrichment failure falls back to the transcript alone; it must never prevent a judgment.
   let evidence: any = undefined;
   if (opts.enrich) {
     try {
@@ -335,16 +289,10 @@ export async function judge(turn: Turn, opts: JudgeOptions): Promise<Judgment> {
     }
   }
 
-  // `checks` is for `require` specs, which code evaluates. It must NOT go to the model.
-  //
-  // Putting it in the state lets gathered evidence answer a question the transcript was
-  // supposed to answer: with checks.tests showing a passing run, the Noul "did tests run
-  // after the edit?" scores 0.93 on a fixture that never ran them. The judgment then
-  // reflects the repo's current state rather than the turn's, and the same fixture scores
-  // differently depending on what the working tree happens to look like.
+  // `checks` must NOT go to the model: it would judge the repo's current state instead of
+  // what the turn did (a passing checks.tests answers "did tests run?" for a turn that never ran them).
   const { checks, ...visible } = evidence ?? {};
   const { conclusive, ...state } = withEvidence(turn, visible);
-  // The built-in questions and every goal spec, in one request.
   const { answers, usage } = await ask(state, { ...QUESTIONS, ...specQuestions(specs) }, opts);
   return {
     // `require` specs still see everything, including checks — they are decided in code.

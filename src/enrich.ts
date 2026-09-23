@@ -1,17 +1,7 @@
 /**
- * Enrichment — giving the judge evidence the transcript does not contain.
- *
- * Without this, every spec is judged against what the agent *chose to show*. A spec like
- * "the stub is gone" is then only answerable if the agent happened to print the file, and
- * an agent that never looks can never be caught. That makes the gate narratable: the thing
- * being judged controls the evidence.
- *
- * Enrichment closes that by fetching state independently. Two sources, both optional:
- *   - files a spec names as its evidence, read at judging time
- *   - whatever the project's own knowledge service knows about the goal
- *
- * The interface is deliberately plain, so a host with a different backend — a vector
- * store, an issue tracker, a build server — implements the same shape.
+ * Enrichment — evidence the transcript does not contain, fetched independently so the
+ * agent being judged does not control what the judge sees. Built in: files a spec names.
+ * Any other backend implements the same `Enricher` shape.
  */
 import type { Turn } from "./gate.ts";
 import type { Spec } from "./specs.ts";
@@ -21,33 +11,24 @@ export type Evidence = Record<string, unknown>;
 
 export type Enricher = (turn: Turn, specs: Spec[]) => Promise<Evidence>;
 
-// Generous, because truncating evidence is worse than not gathering it: a spec asking
-// about a section that fell off the end gets a confident answer about a file it never
-// fully saw. Measured — a README cut at 2 000 chars lost the link section a spec asked
-// about, and the spec scored 0.10 on a file that plainly satisfied it.
+// Generous: a cut file gets confident wrong answers about what fell off the end
+// (at 2 000 chars a README lost the section a spec asked about).
 const MAX_FILE_CHARS = Number(process.env.ORLY_MAX_FILE_CHARS ?? 12_000);
 const MAX_FILES = 8;
 
 export type FileOptions = {
-  /** Names that are something else entirely — a declared context source. Never read. */
+  /** Names that are not files (declared context sources). Never read. */
   skip?: Iterable<string>;
   /**
-   * Names that MAY be a file. A miss is recorded as nothing rather than as absence.
-   *
-   * This is for a spec with a `gather` instruction: the name may turn out to be a path,
-   * and if it is, reading it is the cheapest answer. If it is not, saying "[file does not
-   * exist]" would be a lie about something that was never a file — and it reads as a
-   * finding, so the gate would never think to ask for it.
+   * Names that MAY be files (from `gather` specs). A miss records nothing: "[file does
+   * not exist]" about a non-file would read as a finding.
    */
   soft?: Iterable<string>;
 };
 
 /**
- * Every distinct path the specs name as evidence.
- *
- * A name that is not a path must not be read as one: the miss is recorded as "[file does
- * not exist]", which is a legitimate answer for a spec asking whether something exists,
- * so the mistake arrives looking exactly like a verdict.
+ * Every distinct path the specs name as evidence, minus `skip`. A non-path read as a path
+ * records "[file does not exist]", which looks exactly like a verdict.
  */
 export function evidencePaths(specs: Spec[], skip: Iterable<string> = []): string[] {
   const not = new Set(skip);
@@ -56,12 +37,7 @@ export function evidencePaths(specs: Spec[], skip: Iterable<string> = []): strin
   return [...seen].slice(0, MAX_FILES);
 }
 
-/**
- * Read the files the specs point at, from disk, now.
- *
- * This is the enricher that matters most and the one with no dependencies: it turns
- * "did the agent tell me the stub is gone" into "is the stub gone".
- */
+/** Read the files the specs point at, from disk, now: "is the stub gone", not "did the agent say so". */
 export function fileEnricher(
   cwd: string,
   read: (path: string) => Promise<string>,
@@ -75,15 +51,13 @@ export function fileEnricher(
     for (const path of paths) {
       try {
         const body = await read(`${cwd}/${path}`.replace(/\/+/g, "/"));
-        // Say so loudly when it does happen, so a low score is not mistaken for a verdict
-        // about the whole file.
+        // Mark truncation loudly so a low score is not read as a verdict on the whole file.
         files[path] =
           body.length > MAX_FILE_CHARS
             ? `${body.slice(0, MAX_FILE_CHARS)}\n…[TRUNCATED: ${body.length - MAX_FILE_CHARS} more chars not shown — do not treat anything below as absent]`
             : body;
       } catch {
-        // A path that does not exist is itself evidence, and often the answer — unless it
-        // was never claimed to be a path, in which case saying so would invent a finding.
+        // Absence is evidence, unless the name was never claimed to be a path.
         if (!soft.has(path)) files[path] = "[file does not exist]";
       }
     }

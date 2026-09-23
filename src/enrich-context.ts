@@ -1,29 +1,16 @@
 /**
- * Whatever else decides whether the work is done.
- *
- * `checks` answer facts in code — exit codes, counts — and never reach the model. That is
- * right for a test run and useless for a ticket: "the Jira issue is in review and the
- * acceptance criteria name a rollback" is a reading, not a comparison, and no exit code
- * expresses it.
- *
- * So a project may declare named context sources: one command each, output put in front
- * of the judge under `project.context`. A spec names the source in its `evidence` and asks
- * about it in words. The integration is a command the user wrote, not a plugin this
- * project has to ship — anything with a CLI or a curl is already supported.
+ * Named context sources for what no exit code expresses (e.g. a ticket's acceptance
+ * criteria): one command each, output put before the judge under `project.context`.
+ * A spec names the source in `evidence` and asks about it in words.
  *
  *   "context": { "ticket": { "command": "jira issue view $TICKET --plain" } }
- *
- *   { "id": "ticket_accepted", "evidence": ["ticket"],
- *     "instructions": "Look at `ticket` under `project.context`. Do its acceptance
- *                      criteria all appear in the work recorded in `actions_taken`?" }
  */
 import type { Enricher, Evidence } from "./enrich.ts";
 
 export type ContextSpec = {
   /** Shell command. Its output is the evidence. */
   command: string;
-  /** Default 6 000. Generous, because a source clipped where the answer was is worse
-   *  than no source at all — measured, twice, on files. */
+  /** Default 6 000. Generous: a source clipped where the answer was is worse than none. */
   maxChars?: number;
   timeoutMs?: number;
 };
@@ -36,19 +23,12 @@ export function wantedSources(sources: Record<string, ContextSpec>, specs: { evi
   return Object.keys(sources ?? {}).filter((n) => named.has(n));
 }
 
-/**
- * Run the declared sources a spec actually names.
- *
- * Only those: evidence nothing consumes is not free. Carrying all nine check results
- * collapsed one spec's separation from 0.34 to 0.07 purely by being in the state, and a
- * ticket body is far longer than a check result.
- */
+/** Run only the declared sources some spec names; unused evidence dilutes judgments. */
 export function contextEnricher(sources: Record<string, ContextSpec>, cwd: string): Enricher {
   return async (_turn, specs): Promise<Evidence> => {
     const names = wantedSources(sources, specs ?? []);
     if (!names.length) return {};
-    // In parallel, for the same reason as checks: a ticket fetch and a deploy status have
-    // no business queueing behind each other.
+    // In parallel, like checks.
     const entries = await Promise.all(
       names.map(async (name) => {
       const spec = sources[name];
@@ -62,8 +42,7 @@ export function contextEnricher(sources: Record<string, ContextSpec>, cwd: strin
         ]);
         const exit = await proc.exited;
         clearTimeout(timer);
-        // A source that could not run must say so in words. Empty text reads as "the
-        // ticket says nothing", which is an answer — and the wrong one.
+        // Failure must be said in words: empty text would read as "the source says nothing".
         const text =
           exit === 0
             ? stdout.length > max

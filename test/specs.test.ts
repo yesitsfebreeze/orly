@@ -139,8 +139,7 @@ import { join, join as j } from "node:path";
 import { findOrlyDir, loadSpecFile, projectRoot } from "../src/session.ts";
 
 test("finds .orly from a nested working directory", () => {
-  // An agent's cwd moves into subpackages while .orly stays at the project root.
-  // Looking only in cwd silently disables the gate, which looks like uninstalled.
+  // Looking only in cwd would silently disable the gate in subpackages.
   const root = j(tmpdir(), `orly-find-${Date.now()}`);
   const deep = j(root, "pkg", "src", "nested");
   mkdirSync(j(root, ".orly"), { recursive: true });
@@ -166,8 +165,7 @@ test("returns null rather than climbing past the filesystem root", () => {
 });
 
 test("a spec's own cut overrides the global threshold", () => {
-  // A spec's natural scale follows its wording, not its truth: one measured spec tops out
-  // at 0.77 on turns that plainly satisfy it, so a global 0.70 would fail most of them.
+  // A spec's score scale follows its wording, so one global cut does not fit all.
   const scaled: Spec[] = [{ id: "low_scale", instructions: "Does the turn satisfy this?", cut: 0.28 }];
   const answers = { [`${SPEC_PREFIX}low_scale`]: { noul: 0.55 } };
   expect(scoreSpecs(scaled, answers, 0.7)[0].met).toBe(true);
@@ -179,8 +177,6 @@ test("a spec's own cut overrides the global threshold", () => {
 import { evaluate } from "../src/specs.ts";
 
 test("a decidable fact is decided in code, not sent to the judge", () => {
-  // Asking a probabilistic judge "are there zero errors?" when a number already says so
-  // adds cost, noise and a threshold to something certain.
   const checks: Spec[] = [
     { id: "typechecks", instructions: "n/a", require: { path: "checks.typecheck.errors", op: "equals", value: 0 } },
   ];
@@ -202,7 +198,6 @@ test("a failed check reports what it found, not a probability", () => {
 });
 
 test("missing evidence makes a check unmet, never met", () => {
-  // Undecidable must not read as satisfied, or a broken enricher silently passes the gate.
   expect(evaluate({ path: "checks.nope.errors", op: "equals", value: 0 }, {}).met).toBe(false);
   expect(evaluate({ path: "a.b", op: "lte", value: 5 }, { a: {} }).met).toBe(false);
   expect(evaluate({ path: "a.b", op: "present" }, { a: { b: 1 } }).met).toBe(true);
@@ -210,8 +205,7 @@ test("missing evidence makes a check unmet, never met", () => {
 });
 
 test("a malformed require is unmet and rejected, never a crash that fails open", () => {
-  // A string `require` once threw inside the Stop hook, which reported "judge
-  // unavailable" and let every turn through.
+  // A throw in the Stop hook reads as "judge unavailable" and lets every turn through.
   expect(evaluate("verdict includes threshold" as any, {}).met).toBe(false);
   const bad = validateSpecs([
     { id: "a", instructions: "all adapter modules are present", require: "a string" as any },
@@ -222,8 +216,7 @@ test("a malformed require is unmet and rejected, never a crash that fails open",
 });
 
 test("evidence resolves from the project root, not the working directory", () => {
-  // The same spec scored 0.87 from the root and 0.11 from a subdirectory, because its
-  // files silently read as missing. An agent's cwd moves; the project root does not.
+  // From a subdirectory, evidence files would silently read as missing.
   const root = j(tmpdir(), `orly-root-${Date.now()}`);
   mkdirSync(j(root, ".orly"), { recursive: true });
   mkdirSync(j(root, "pkg", "deep"), { recursive: true });
@@ -237,9 +230,7 @@ test("evidence resolves from the project root, not the working directory", () =>
 });
 
 test("check results never reach the model, only the require specs", async () => {
-  // Gathered evidence must not answer a question the transcript was meant to answer:
-  // checks.tests showing a passing run made a Noul about "did tests run this turn?"
-  // score 0.93 on a fixture that never ran them.
+  // A passing check in state would answer "did tests run this turn?" for the transcript.
   let sentState: any;
   const fakeFetch = (async (_url: string, init: any) => {
     sentState = JSON.parse(init.body).state;
@@ -261,9 +252,6 @@ test("check results never reach the model, only the require specs", async () => 
 });
 
 test("the key resolves for any host, not just the one with a hook", () => {
-  // Key resolution lived in the Claude Code adapter, so every other host had to
-  // reimplement it — or go without and report "no key" in a session where the key was
-  // perfectly readable.
   const root = mkdtempSync(join(tmpdir(), "orly-key-"));
   const saved = process.env.TYPESAFE_API_KEY;
   try {
@@ -274,8 +262,7 @@ test("the key resolves for any host, not just the one with a hook", () => {
     writeFileSync(join(root, ".orly", "config.json"), JSON.stringify({ keyCommand: "echo from-the-keychain" }));
     expect(resolveKey(root)).toBe("from-the-keychain");
 
-    // The environment always wins: a host that has already been given a key must not
-    // have a config file quietly authenticate it as somebody else.
+    // The environment wins, so a config file cannot swap a host's identity.
     process.env.TYPESAFE_API_KEY = "from-the-env";
     expect(resolveKey(root)).toBe("from-the-env");
   } finally {
@@ -286,16 +273,14 @@ test("the key resolves for any host, not just the one with a hook", () => {
 });
 
 test("a spec may name the command it forbids, without that reading as taste", () => {
-  // `git clean -fd` is a command, not an opinion. The filter matched the substring and
-  // rejected a spec whose whole point was to forbid a destructive command — found by
-  // someone writing specs for their own project.
+  // Taste words inside a code span (`clean`) are command text, not taste.
   expect(validateSpecs([
     { id: "no_destructive_git", instructions: "Do `command_results` show no `git clean -fd` and no `git reset --hard`?" },
   ])).toEqual([]);
-  // Quoting is not a way out: taste outside a code span still fails.
+  // Taste outside a code span still fails.
   expect(validateSpecs([{ id: "taste", instructions: "Is the code clean and well structured after `git commit`?" }]))
     .toHaveLength(1);
-  // And a spec that is only a code span is still too short to judge.
+  // A spec that is only a code span is too short to judge.
   expect(validateSpecs([{ id: "thin", instructions: "`bun test`" }])).toHaveLength(1);
 });
 
