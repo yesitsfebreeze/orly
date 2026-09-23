@@ -38,12 +38,17 @@ export type RoundState = {
  * the plugin's own folder — while `.orly` sits at the root. Looking only in `cwd` means
  * the gate silently switches itself off the moment the agent cd's anywhere, which is
  * indistinguishable from it being uninstalled.
+ *
+ * ~/.orly is the user-level layer, never a project. Treating it as one gated every
+ * directory under home that has no .orly of its own, the moment anything created it.
  */
 export function findOrlyDir(start: string): string | null {
   let dir = start;
   const { root } = parse(dir);
+  const user = userOrlyDir();
   for (;;) {
-    if (existsSync(join(dir, ".orly"))) return join(dir, ".orly");
+    const here = join(dir, ".orly");
+    if (here !== user && existsSync(here)) return here;
     if (dir === root) return null;
     const up = dirname(dir);
     if (up === dir) return null;
@@ -102,7 +107,7 @@ export function loadConfig(cwd: string): Record<string, any> {
 }
 
 /** The user-level layer, shared by every project on this machine. */
-export const userOrlyDir = () => join(homedir(), ".orly");
+export const userOrlyDir = () => join(process.env.HOME || homedir(), ".orly");
 
 /**
  * Cuts learned anywhere, applied everywhere.

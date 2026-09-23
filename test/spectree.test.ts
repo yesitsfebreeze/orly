@@ -1,11 +1,19 @@
-import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { afterAll, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evaluate, validateSpecs } from "../src/specs.ts";
 import { formatSpec, loadTree, parseSpec, renderTree } from "../src/spectree.ts";
 import { loadSpecFile } from "../src/session.ts";
 import { weakenings } from "../src/guard.ts";
+
+const made: string[] = [];
+const scratch = (prefix: string) => {
+  const d = mkdtempSync(prefix);
+  made.push(d);
+  return d;
+};
+afterAll(() => made.forEach((d) => rmSync(d, { recursive: true, force: true })));
 
 test("every spec field survives a format → parse round trip", () => {
   const specs = [
@@ -31,7 +39,7 @@ test("a malformed spec file fails closed: it becomes a spec that can never be me
 });
 
 test("the tree loads from nested folders, wins over specs.json, and renders as an index", () => {
-  const root = mkdtempSync(join(tmpdir(), "orly-tree-"));
+  const root = scratch(join(tmpdir(), "orly-tree-"));
   const orly = join(root, ".orly");
   mkdirSync(join(orly, "specs", "readme"), { recursive: true });
   mkdirSync(join(orly, "specs", "build"), { recursive: true });
@@ -49,7 +57,7 @@ test("the tree loads from nested folders, wins over specs.json, and renders as a
 });
 
 test("the edit guard sees what one file edit does to the whole tree", () => {
-  const orly = join(mkdtempSync(join(tmpdir(), "orly-tree-")), ".orly");
+  const orly = join(scratch(join(tmpdir(), "orly-tree-")), ".orly");
   mkdirSync(join(orly, "specs", "build"), { recursive: true });
   const path = join(orly, "specs", "build", "tests_ran.spec");
   writeFileSync(path, "cut: 0.6\n\nDo `command_results` show a passing test run?\n");

@@ -1,8 +1,16 @@
-import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { afterAll, expect, test } from "bun:test";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { check, listTurns, promote, readCases, readTurn, recordRun, saveTurn } from "../src/cases.ts";
+
+const made: string[] = [];
+const scratch = (prefix: string) => {
+  const d = mkdtempSync(prefix);
+  made.push(d);
+  return d;
+};
+afterAll(() => made.forEach((d) => rmSync(d, { recursive: true, force: true })));
 
 const turn = {
   user_request: "add a retry and run the tests",
@@ -17,7 +25,7 @@ const verdict = (block: boolean, unmet: string[] = []) =>
   ({ block, reason: "", line: "", results: ["tests_ran", "other"].map((id) => ({ spec: { id }, met: !unmet.includes(id) })) }) as any;
 
 test("a judged turn is kept, found by `last` or an id prefix, and capped", () => {
-  const dir = mkdtempSync(join(tmpdir(), "orly-cases-"));
+  const dir = scratch(join(tmpdir(), "orly-cases-"));
   for (let i = 0; i < 203; i++) saveTurn(dir, saved(new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString()));
   const ids = listTurns(dir);
   expect(ids).toHaveLength(200);
@@ -28,7 +36,7 @@ test("a judged turn is kept, found by `last` or an id prefix, and capped", () =>
 });
 
 test("a mistake becomes a case holding the frozen turn and what must catch it", () => {
-  const dir = mkdtempSync(join(tmpdir(), "orly-cases-"));
+  const dir = scratch(join(tmpdir(), "orly-cases-"));
   const a = promote(dir, { ...saved("t"), id: "t1" }, { block: true, unmet: ["tests_ran"] }, "Claimed tests pass, never ran them");
   const b = promote(dir, { ...saved("t"), id: "t2" }, { block: true }, "Claimed tests pass, never ran them");
   expect(a).toEndWith("claimed_tests_pass_never_ran_them.json");
@@ -52,7 +60,7 @@ test("a replayed case is right only when the verdict AND its named spec come out
 });
 
 test("replay history accumulates, oldest first", () => {
-  const dir = mkdtempSync(join(tmpdir(), "orly-cases-"));
+  const dir = scratch(join(tmpdir(), "orly-cases-"));
   recordRun(dir, { at: "1", total: 2, right: 1, wrong: ["a"] });
   const h = recordRun(dir, { at: "2", total: 2, right: 2, wrong: [] });
   expect(h.map((r) => r.right)).toEqual([1, 2]);
@@ -60,7 +68,7 @@ test("replay history accumulates, oldest first", () => {
 });
 
 test("`orly case last` promotes through the CLI and says which spec to write", () => {
-  const root = mkdtempSync(join(tmpdir(), "orly-cli-case-"));
+  const root = scratch(join(tmpdir(), "orly-cli-case-"));
   mkdirSync(join(root, ".orly"));
   writeFileSync(join(root, ".orly", "goal"), "g\n");
   mkdirSync(join(root, ".orly", "specs"));

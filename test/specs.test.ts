@@ -298,3 +298,19 @@ test("a spec may name the command it forbids, without that reading as taste", ()
   // And a spec that is only a code span is still too short to judge.
   expect(validateSpecs([{ id: "thin", instructions: "`bun test`" }])).toHaveLength(1);
 });
+
+test("~/.orly is the user layer, never a project gate", () => {
+  const home = mkdtempSync(join(tmpdir(), "orly-home-"));
+  const prev = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    mkdirSync(join(home, ".orly", "servers"), { recursive: true });
+    mkdirSync(join(home, "code", "app"), { recursive: true });
+    expect(findOrlyDir(join(home, "code", "app"))).toBeNull();
+    mkdirSync(join(home, "code", ".orly"));
+    expect(findOrlyDir(join(home, "code", "app"))).toBe(join(home, "code", ".orly"));
+  } finally {
+    process.env.HOME = prev;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
