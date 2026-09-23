@@ -103,6 +103,17 @@ test("the edit guard reconstructs the file and refuses a weakening", () => {
   }
 });
 
+test("the edit guard takes `$` patterns in the new text literally", () => {
+  // String.replace would expand `$&` into the old text, project invalid JSON, and allow the edit.
+  const { dir, path } = specSandbox(0.7);
+  try {
+    const r = hook("claude-code.ts", edit(dir, path, '"cut": 0.7', '"cut": 0.3, "note": "$&"'), dir);
+    expect(r.stdout.toString()).toContain("its cut was lowered");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the edit guard stays out of the way of tightening and of other files", () => {
   const { dir, path } = specSandbox(0.7);
   try {

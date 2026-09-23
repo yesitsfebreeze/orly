@@ -42,7 +42,7 @@ function projected(current: string, edit: PlannedEdit): string | null {
   for (const e of edit.edits) {
     if (typeof e?.old_string !== "string" || typeof e?.new_string !== "string") return null;
     if (!text.includes(e.old_string)) return null; // the edit would fail anyway
-    text = e.replace_all ? text.split(e.old_string).join(e.new_string) : text.replace(e.old_string, e.new_string);
+    text = e.replace_all ? text.split(e.old_string).join(e.new_string) : text.replace(e.old_string, () => e.new_string); // a function: `$&` in the text is literal
   }
   return text;
 }
