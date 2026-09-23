@@ -80,3 +80,10 @@ test("a check's output is trimmed so it cannot drown the evidence around it", as
   );
   expect(e.checks.loud.out.length).toBeLessThanOrEqual(400);
 });
+
+test("a check killed by its timeout is unmet, not a partial count", async () => {
+  // Counting the output it got so far would pass `matches equals 0` on a check that never finished.
+  const ev: any = await checkEnricher({ slow: { command: "sleep 5", countPattern: "TODO", timeoutMs: 100 } }, tmpdir())(turn, reads("slow"));
+  expect(ev.checks.slow.exit).toBeNull();
+  expect(evaluate({ path: "checks.slow.matches", op: "equals", value: 0 }, ev).met).toBe(false);
+});

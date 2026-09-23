@@ -75,6 +75,8 @@ export function checkEnricher(checks: Record<string, CheckSpec>, cwd: string): E
         const exit = await proc.exited;
         clearTimeout(timer);
         const text = `${stdout}${stderr}`;
+        // A killed check counted only part of its output: zero matches there proves nothing.
+        if (proc.signalCode) return [name, { exit: null, matches: null, out: `[check killed: ${proc.signalCode}]` }] as const;
         const record: Record<string, unknown> = { exit, out: text.slice(-MAX_OUT) };
         if (spec.countPattern) {
           try {
