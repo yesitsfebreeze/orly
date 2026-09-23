@@ -17,7 +17,9 @@ this host, it is `bin/orly.ts` in the orly checkout, or plain `orly` after
 ## Setting a goal
 
 1. Read enough of the project to name its real commands and paths.
-2. Write `.orly/goal` and one spec file per check under `.orly/specs/<group>/`.
+2. Append the goal with `orly goal <group> "<text>"` — never overwrite `.orly/goal`, it is
+   a list and earlier goals still stand — then write one spec file per check under
+   `.orly/specs/<group>/`. `orly tasks` lists what is unmet, most important goal first.
 3. Run `orly specs`. Rewrite every spec it rejects and re-run until clean; an
    undecidable spec yields a confident number that means nothing.
 4. Show the user the spec list in one short block, then start the work.

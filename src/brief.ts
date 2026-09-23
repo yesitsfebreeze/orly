@@ -5,6 +5,7 @@
  */
 import { label, propose, read } from "./log.ts";
 import { findOrlyDir, loadConfig, loadSpecFile } from "./session.ts";
+import { byRank } from "./specs.ts";
 
 export type BriefOptions = {
   /** How to run orly on this host, e.g. `bun /path/to/orly/bin/orly.ts`. Shown as `orly`. */
@@ -29,11 +30,15 @@ export function sessionBrief(cwd: string, opts: BriefOptions = {}): string | nul
   lines.push("# orly? — the completion gate is active, and you may tune it");
   lines.push("");
 
-  if (specFile?.goal) lines.push(`Goal under check: ${specFile.goal}`);
+  const goals = specFile?.goals ?? [];
+  if (goals.length) {
+    lines.push("Goals under check, most important first (`orly goal [group] \"<text>\"` appends one; `orly tasks` lists what is unmet):");
+    goals.forEach((g, i) => lines.push(`${i + 1}. ${g.group ? `${g.group}: ` : ""}${g.text}`));
+  }
   if (specs.length) {
     lines.push("");
-    lines.push("Specs enforced at the end of every turn:");
-    for (const s of specs) {
+    lines.push("Specs enforced at the end of every turn, in goal order:");
+    for (const s of [...specs].sort(byRank)) {
       // `require` specs are decided in code and have no cut; show the check instead.
       const how = s.require
         ? `check: ${s.require.path} ${s.require.op} ${String(s.require.value ?? "")}`

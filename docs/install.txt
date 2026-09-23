@@ -39,7 +39,7 @@ WHERE .orly LIVES
 
 Found by walking up from the working directory, the way git finds .git.
 
-  .orly/goal           the goal, optionally headed by `rounds: N`
+  .orly/goal           the goals, one per line, optionally headed by `rounds: N`
   .orly/specs/         one .spec file per spec, in folders          (committed)
   .orly/cases/         mistakes frozen as regression cases          (committed)
   .orly/config.json    keyCommand, checks, context sources          (committed)

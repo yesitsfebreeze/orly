@@ -7,7 +7,7 @@
  */
 import { DEFAULTS, judge, type Turn } from "../src/gate.ts";
 import { normalize, normalizeLastTurn, type Msg } from "../src/normalize.ts";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ask as askJudge } from "../src/client.ts";
 import { projectEvidence } from "../src/evidence.ts";
 import { CACHE_NAME, checkEnricher } from "../src/enrich-checks.ts";
@@ -15,8 +15,8 @@ import { treeFingerprint } from "../src/fingerprint.ts";
 import { label, propose, read } from "../src/log.ts";
 import { basename, dirname, join } from "node:path";
 import { findOrlyDir, loadConfig, loadSpecFile, projectRoot, resolveKey } from "../src/session.ts";
-import { validateSpecs, type Spec } from "../src/specs.ts";
-import { EXT, formatSpec, loadTree, renderTree, TREE } from "../src/spectree.ts";
+import { byRank, validateSpecs, type Spec } from "../src/specs.ts";
+import { EXT, formatSpec, loadTree, parseGoals, renderTree, sections, TREE } from "../src/spectree.ts";
 import { check, listTurns, promote, readCases, readTurn, recordRun, saveTurn, type Outcome } from "../src/cases.ts";
 import { gateTurn } from "../src/turnend.ts";
 import { apply } from "../src/install.ts";
@@ -100,7 +100,9 @@ if (command === "--help" || command === "-h" || command === "help") {
       "orly turns         list recently judged turns (kept locally, newest last)",
       "orly case <turn|last> block|pass \"what went wrong\" [--spec group/id [--ask \"question\"]]",
       "                   freeze the turn as a case, write the spec that must catch it, replay all",
-      "orly tree          index the spec tree in .orly/specs/",
+      "orly goal [group] \"<text>\"   append a goal to .orly/goal; specs under <group>/ serve it",
+      "orly tasks         unmet specs after the last judged turn, most important goal first",
+      "orly tree          index the spec tree in .orly/specs/, in goal order",
       "orly replay [name…]  run every case through the live judge with the current specs",
       "                   exit 2 if any case comes out wrong; history in .orly/replay.jsonl",
       "orly ask Q… [file…] [-] [--json]   ask now, between turns",
@@ -360,11 +362,53 @@ if (command === "turns") {
   process.exit(0);
 }
 
+if (command === "goal") {
+  // `orly goal [group] "<text>"`: append one goal line; never overwrite what is there.
+  const [group, text] = process.argv.length > 4 ? [process.argv[3], process.argv.slice(4).join(" ")] : [undefined, process.argv[3]];
+  if (!text?.trim()) fail('usage: orly goal [group] "<text>"');
+  if (group && !/^[a-z0-9_-]+$/.test(group)) fail(`group "${group}" must be a spec folder name: lowercase, digits, _ or -`);
+  const dir = findOrlyDir(process.cwd()) ?? join(process.cwd(), ".orly");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "goal");
+  const { head, body } = sections(existsSync(path) ? readFileSync(path, "utf8") : "");
+  // A single-paragraph goal becomes the first list item; the new goal goes after it.
+  const items = [...parseGoals(body), { group, text: text.trim() }].map((g) => `- ${g.group ? `${g.group}: ` : ""}${g.text}`);
+  const headers = Object.entries(head).map(([k, v]) => `${k}: ${v}`);
+  writeFileSync(path, `${(headers.length ? headers : ["rounds: 6"]).join("\n")}\n\n${items.join("\n")}\n`);
+  items.forEach((g, i) => console.log(`${i + 1}. ${g.slice(2)}`));
+  process.exit(0);
+}
+
+if (command === "tasks") {
+  // Unmet specs from the last judged turn, most important goal first: the shared task list.
+  const dir = findOrlyDir(process.cwd());
+  const tree = dir ? loadTree(dir) : null;
+  if (!tree) fail("no .orly/specs/ tree here or above");
+  let unmetIds: string[] | null = null;
+  try {
+    unmetIds = readTurn(dir!, "last").unmet.map((u) => u.replace(/^spec:/, ""));
+  } catch {
+    /* nothing judged yet: every spec is open */
+  }
+  const open = [...tree!.specs].filter((s) => !unmetIds || unmetIds.includes(s.id)).sort(byRank);
+  if (!open.length) {
+    console.log(unmetIds ? "every spec was met on the last judged turn" : "no specs");
+    process.exit(0);
+  }
+  console.log(unmetIds ? "unmet after the last judged turn, most important first:" : "not judged yet, every spec is open:");
+  for (const s of open) {
+    const g = typeof s.rank === "number" ? tree!.goals?.[s.rank] : undefined;
+    console.log(`${(typeof s.rank === "number" ? String(s.rank + 1) : "-").padStart(2)}  ${tree!.paths[s.id].padEnd(40)} ${g?.group ?? ""}`);
+  }
+  process.exit(0);
+}
+
 if (command === "tree") {
   const dir = findOrlyDir(process.cwd());
   const tree = dir ? loadTree(dir) : null;
   if (!tree) fail("no .orly/specs/ tree here or above");
-  if (tree!.goal) console.log(`goal: ${tree!.goal}\n`);
+  tree!.goals?.forEach((g, i) => console.log(`${i + 1}. ${g.group ? `${g.group}: ` : ""}${g.text}`));
+  if (tree!.goals?.length) console.log("");
   console.log(renderTree(tree!));
   console.log(`\n${tree!.specs.length} specs`);
   process.exit(0);

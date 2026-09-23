@@ -60,6 +60,7 @@ echo '{"messages":[…]}' | orly judge   # 0 = may stop, 2 = not done, 1 = could
 /orly it said tests pass but one failed     freezes the turn as a case, adds the spec, replays
 orly ask "is the stub gone?" src/thing.ts   a yes/no now, between turns
 orly hosts                                  every agent and how it is gated
+orly goal <group> "<text>" / orly tasks     append a goal; list unmet specs, top goal first
 ```
 
 ## What it checks

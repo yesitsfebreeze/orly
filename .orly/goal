@@ -1,3 +1,4 @@
 rounds: 6
 
-orly is cut down to what it does well — a turn-end gate that fails closed on bad specs — with non-orly state removed from the repo and a README that says each thing once
+- readme: orly is cut down to what it does well — a turn-end gate that fails closed on bad specs — with non-orly state removed from the repo and a README that says each thing once
+- goals: goals are a list that `orly goal` appends to and specs are written against; the block, the tree and `orly tasks` list unmet specs in goal order, so every agent works the most important task first

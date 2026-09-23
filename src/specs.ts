@@ -31,11 +31,18 @@ export type Spec = {
    * The gate asks in these words and judges the next turn on what came back.
    */
   gather?: string;
+  /** Position of the goal this spec serves in `.orly/goal`; 0 is most important. Unlinked specs have none. */
+  rank?: number;
 };
+
+/** One line of `.orly/goal`: `- <group>: <text>`, where `group` names the spec folder that serves it. */
+export type Goal = { group?: string; text: string };
 
 export type SpecFile = {
   /** The goal these specs were derived from, so a changed goal invalidates them. */
   goal: string;
+  /** The goal body as a list, most important first. */
+  goals?: Goal[];
   specs: Spec[];
   /** How many blocked rounds this goal may spend before the gate gives up. */
   maxRounds?: number;
@@ -168,5 +175,8 @@ export function scoreSpecs(
 }
 
 export function unmet(results: SpecResult[]): SpecResult[] {
-  return results.filter((r) => !r.met && !r.spec.optional);
+  return results.filter((r) => !r.met && !r.spec.optional).sort((a, b) => byRank(a.spec, b.spec));
 }
+
+/** Most important goal first; specs serving no goal last. Stable for equal ranks. */
+export const byRank = (a: Spec, b: Spec): number => (a.rank ?? Infinity) - (b.rank ?? Infinity);

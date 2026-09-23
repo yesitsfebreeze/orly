@@ -50,6 +50,21 @@
     "spec_crashes": {
       "command": "bun -e 'import {loadSpecFile} from \"./src/session.ts\"; import {evaluate,validateSpecs} from \"./src/specs.ts\"; const s=loadSpecFile(\".\").specs; for (const p of validateSpecs(s)) console.log(\"CRASH\", p.id, p.problem); for (const x of s) if (x.require) try { evaluate(x.require, {}) } catch (e) { console.log(\"CRASH\", x.id, e.message) }'",
       "countPattern": "CRASH"
+    },
+    "goal_lines": {
+      "command": "cat .orly/goal",
+      "countPattern": "\\n- "
+    },
+    "goal_append": {
+      "command": "d=$(mktemp -d); r=$PWD; cd \"$d\" && mkdir .orly && bun \"$r/bin/orly.ts\" goal a \"first\" >/dev/null && bun \"$r/bin/orly.ts\" goal \"second\" >/dev/null && [ \"$(grep -c '^- ' .orly/goal)\" -eq 2 ]; s=$?; rm -rf \"$d\"; exit $s"
+    },
+    "goal_tests": {
+      "command": "bun test test/goals.test.ts 2>&1",
+      "countPattern": "\\(pass\\)"
+    },
+    "goal_docs": {
+      "command": "grep -oh 'orly goal' docs/specs.txt README.md commands/orly.md",
+      "countPattern": "orly goal"
     }
   }
 }

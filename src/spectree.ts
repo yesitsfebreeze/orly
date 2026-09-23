@@ -3,7 +3,8 @@
  * `key: value` header lines, a blank line, then the question. A file that does not parse
  * becomes a spec that can never be met, so a typo blocks instead of dropping a check.
  *
- *   .orly/goal                      the goal, optionally headed by `rounds: 6`
+ *   .orly/goal                      `rounds: 6`, a blank line, then one `- <group>: <text>` goal per
+ *                                   line, most important first; specs under `<group>/` serve that goal
  *   .orly/specs/readme/one_owl.spec
  *
  *     require: checks.readme_owls.matches equals 1
@@ -12,7 +13,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
-import type { Spec, SpecFile } from "./specs.ts";
+import { byRank, type Goal, type Spec, type SpecFile } from "./specs.ts";
 
 export const TREE = "specs";
 export const GOAL = "goal";
@@ -21,7 +22,7 @@ export const EXT = ".spec";
 const KEYS = ["cut", "require", "evidence", "optional", "gather", "true", "false", "fitted", "rounds"];
 
 /** Split `key: value` header lines from the body. No header block → all body. */
-function sections(text: string): { head: Record<string, string>; body: string; bad?: string } {
+export function sections(text: string): { head: Record<string, string>; body: string; bad?: string } {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   const blank = lines.findIndex((l) => !l.trim());
   const top = lines.slice(0, blank < 0 ? lines.length : blank);
@@ -33,6 +34,18 @@ function sections(text: string): { head: Record<string, string>; body: string; b
     head[k] = v.trim();
   }
   return { head, body: lines.slice(top.length).join("\n").trim() };
+}
+
+/** The goal body as a list. A line is `- group: text` or `- text`; a body without dashes is one goal. */
+export function parseGoals(body: string): Goal[] {
+  const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!lines.some((l) => l.startsWith("- "))) return body.trim() ? [{ text: body.trim() }] : [];
+  return lines
+    .filter((l) => l.startsWith("- "))
+    .map((l) => {
+      const m = l.slice(2).match(/^([a-z0-9_-]+):\s+(.*)$/);
+      return m ? { group: m[1], text: m[2] } : { text: l.slice(2).trim() };
+    });
 }
 
 /** A spec that cannot be met, named after what is wrong with its file. Fails closed. */
@@ -117,14 +130,20 @@ export function loadTree(orlyDir: string, override?: { path: string; text: strin
   const goalPath = join(orlyDir, GOAL);
   const goal = existsSync(goalPath) || override?.path === goalPath ? sections(read(goalPath)) : { head: {}, body: "" };
   const rounds = Number(goal.head.rounds);
-  return { goal: goal.body, specs, paths, ...(Number.isInteger(rounds) && rounds > 0 ? { maxRounds: rounds } : {}) };
+  const goals = parseGoals(goal.body);
+  for (const s of specs) {
+    const rank = goals.findIndex((g) => g.group && g.group === paths[s.id].split("/")[0]);
+    if (rank >= 0) s.rank = rank;
+  }
+  return { goal: goal.body, goals, specs, paths, ...(Number.isInteger(rounds) && rounds > 0 ? { maxRounds: rounds } : {}) };
 }
 
-/** The tree as an indented index: folders, then each spec with how it is decided. */
+/** The tree as an indented index in goal order: folders, then each spec with how it is decided. */
 export function renderTree(file: SpecFile & { paths: Record<string, string> }): string {
   const lines: string[] = [];
   let open: string[] = [];
-  for (const s of [...file.specs].sort((a, b) => file.paths[a.id].localeCompare(file.paths[b.id]))) {
+  const sorted = [...file.specs].sort((a, b) => byRank(a, b) || file.paths[a.id].localeCompare(file.paths[b.id]));
+  for (const s of sorted) {
     const dirs = file.paths[s.id].split("/").slice(0, -1);
     let same = 0;
     while (same < dirs.length && dirs[same] === open[same]) same++;

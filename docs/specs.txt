@@ -11,7 +11,7 @@ THE TREE
 
 One file per spec; the file name is the id, folders are only for grouping.
 
-  .orly/goal                            `rounds: 6`, a blank line, the goal
+  .orly/goal                            `rounds: 6`, a blank line, one goal per line
   .orly/specs/build/tests_green.spec
 
     cut: 0.52
@@ -32,6 +32,27 @@ Optional `key: value` header lines, a blank line, then the question:
 A file that does not parse becomes a spec that can never be met, so a typo blocks instead
 of silently dropping a check. `orly tree` prints the index. Without a tree, a single
 .orly/specs.json ({goal, maxRounds, specs: [...]}) is read.
+
+
+GOALS
+-----
+
+The goal file is a list, most important first. Each line is `- <group>: <text>`, and
+the specs under .orly/specs/<group>/ are the ones written against that goal:
+
+  rounds: 6
+
+  - api: retries on every client call
+  - readme: the README says each thing once
+
+  orly goal api "retries on every client call"     appends; the file is never overwritten
+  orly tasks                                       unmet specs after the last judged turn,
+                                                   in goal order
+
+The block names unmet specs in the same order, so several agents working the same tree
+all start from the most important open task. A line without a group is a goal no spec
+serves yet. Appending a goal keeps the guard's baseline; removing or rewording one
+starts a new spec set.
 
 
 FOUR RULES

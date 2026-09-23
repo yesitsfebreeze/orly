@@ -106,8 +106,12 @@ export function checkBaseline(
   defaultCut = 0.7,
 ): { violations: Violation[]; nextBaseline: SpecSet } {
   if (!baseline?.specs?.length) return { violations: [], nextBaseline: current };
-  // A new goal replaces the spec set; dropping the old goal's specs is not a weakening.
-  if ((baseline as any).goal !== (current as any).goal) return { violations: [], nextBaseline: current };
+  // A dropped or reworded goal replaces the spec set; dropping its specs is not a weakening.
+  // An appended goal keeps every old line, so the old specs still stand.
+  const lines = (g: unknown) => String(g ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+  const was = lines((baseline as any).goal);
+  const now = lines((current as any).goal);
+  if (!was.every((l) => now.includes(l))) return { violations: [], nextBaseline: current };
   const violations = [...weakenings(baseline, current, defaultCut), ...checkWeakenings(baseline, current)];
   // Keep the old baseline on any weakening, so a later edit cannot launder it in.
   return { violations, nextBaseline: violations.length ? baseline : current };
