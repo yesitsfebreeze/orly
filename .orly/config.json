@@ -65,6 +65,10 @@
     "goal_docs": {
       "command": "grep -oh 'orly goal' docs/specs.txt README.md commands/orly.md",
       "countPattern": "orly goal"
+    },
+    "code_lines": {
+      "command": "cat $(git ls-files 'src/*.ts' 'adapters/*.ts' 'bin/*.ts')",
+      "countPattern": "\\n"
     }
   }
 }

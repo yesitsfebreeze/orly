@@ -164,6 +164,21 @@ test("returns null rather than climbing past the filesystem root", () => {
   }
 });
 
+test("a specs.json that does not parse blocks instead of dropping every check", () => {
+  const root = mkdtempSync(j(tmpdir(), "orly-badjson-"));
+  mkdirSync(j(root, ".orly"));
+  try {
+    for (const text of ["{not json", '{"goal":"g"}']) {
+      write(j(root, ".orly", "specs.json"), text);
+      const [spec] = loadSpecFile(root)!.specs;
+      expect(scoreSpecs([spec], {}, 0.5)[0].met).toBe(false);
+      expect(validateSpecs([spec])[0].problem).toContain("specs.json");
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a spec's own cut overrides the global threshold", () => {
   // A spec's score scale follows its wording, so one global cut does not fit all.
   const scaled: Spec[] = [{ id: "low_scale", instructions: "Does the turn satisfy this?", cut: 0.28 }];

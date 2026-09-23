@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, parse } from "node:path";
 import type { Spec, SpecFile } from "./specs.ts";
-import { loadTree } from "./spectree.ts";
+import { broken, loadTree } from "./spectree.ts";
 
 export const SPEC_PATH = ".orly/specs.json";
 export const DEFAULT_MAX_ROUNDS = 6;
@@ -121,11 +121,11 @@ export function loadSpecFile(cwd: string): SpecFile | null {
   if (!existsSync(path)) return null;
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8"));
-    if (!Array.isArray(parsed?.specs)) return null;
+    if (!Array.isArray(parsed?.specs)) throw new Error("no specs array");
     return { ...parsed, specs: resolveSpecs(parsed.specs) } as SpecFile;
-  } catch {
-    // A malformed spec file must not take the gate down with it.
-    return null;
+  } catch (e: any) {
+    // Fail closed, as a malformed tree file does: a typo blocks instead of dropping every check.
+    return { goal: "", specs: [broken("specs_json", `specs.json: ${e?.message ?? e}`)] };
   }
 }
 

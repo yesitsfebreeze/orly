@@ -31,7 +31,7 @@ Optional `key: value` header lines, a blank line, then the question:
 
 A file that does not parse becomes a spec that can never be met, so a typo blocks instead
 of silently dropping a check. `orly tree` prints the index. Without a tree, a single
-.orly/specs.json ({goal, maxRounds, specs: [...]}) is read.
+.orly/specs.json ({goal, maxRounds, specs: [...]}) is read; one that does not parse blocks the same way.
 
 
 GOALS

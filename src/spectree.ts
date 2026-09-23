@@ -49,7 +49,7 @@ export function parseGoals(body: string): Goal[] {
 }
 
 /** A spec that cannot be met, named after what is wrong with its file. Fails closed. */
-const broken = (id: string, problem: string): Spec =>
+export const broken = (id: string, problem: string): Spec =>
   ({ id, instructions: `malformed spec file: ${problem}`, require: { path: "", op: "malformed" } }) as unknown as Spec;
 
 export function parseSpec(id: string, text: string): Spec {
