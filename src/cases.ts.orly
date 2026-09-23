@@ -1,5 +1,0 @@
-KEEP_TURNS: is 200
-saveTurn: returns without writing when ORLY_NO_LOG is set
-saveTurn: deletes the oldest saved turns beyond KEEP_TURNS
-check: fails a case whose expected spec id is not among the current specs
-check: fails a case whose expected spec came back met

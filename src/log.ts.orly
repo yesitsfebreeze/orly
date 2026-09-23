@@ -1,6 +1,0 @@
-LOG_NAME: is "log.jsonl"
-append: returns without writing when ORLY_NO_LOG is set
-read: skips lines that do not parse as JSON
-label: labels a blocked record "worked" when the next record of the same session has actions or results
-propose: skips records that were not blocked or have no outcome
-Judged: has an optional outcome of "worked", "explained" or "unknown"

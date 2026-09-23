@@ -1,5 +1,0 @@
-weakenings: reports a deleted spec
-weakenings: reports a lowered cut
-weakenings: reports a spec newly marked optional
-checkBaseline: keeps the old baseline when a weakening was found
-CANNOT_FAIL: matches the commands true, exit 0 and a bare echo

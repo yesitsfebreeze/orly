@@ -1,6 +1,0 @@
-# The only HTTP in the library.
-@file: contains exactly one fetch call
-ask: sends the Authorization header as a Bearer token
-ask: throws when the response has no answers object
-ask: aborts the request after timeoutMs, defaulting to 12000
-MODEL_DEFAULT: is "jev-latest"

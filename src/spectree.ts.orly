@@ -1,5 +1,0 @@
-EXT: is ".spec"
-parseSpec: returns broken(...) instead of a spec when the cut is not between 0 and 1
-sections: rejects a header key that is not in KEYS
-loadTree: returns null when the specs directory does not exist
-loadTree: uses the file name without extension as the spec id

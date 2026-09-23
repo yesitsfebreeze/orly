@@ -1,4 +1,0 @@
-DEFAULT_MAX: defaults to 6000 unless ORLY_MAX_CONTEXT_CHARS is set
-wantedSources: returns only the source names that some spec lists in evidence
-contextEnricher: returns an empty object when no spec names a source
-contextEnricher: says a failed source should be treated as unknown, not as absent

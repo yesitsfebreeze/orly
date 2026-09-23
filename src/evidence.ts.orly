@@ -1,4 +1,0 @@
-projectEvidence: combines the file, check and context enrichers
-projectEvidence: declares `const root = projectRoot(cwd) ?? cwd`
-projectEvidence: calls checkEnricher and contextEnricher with root as their last argument
-EvidenceOptions: has optional cwd, checks and context fields

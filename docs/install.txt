@@ -37,9 +37,6 @@ Found by walking up from the working directory, the way git finds .git.
   .orly/goal           the goal
   .orly/specs/         one .spec file per spec, in folders
   .orly/cases/         mistakes frozen as regression cases (committed)
-  ~/.orly/servers/     language servers orly installed for `orly claims`, the joined
-                       language index (index.json) and the server that worked per
-                       extension (chosen.json)
   .orly/config.json    keyCommand, optional
   .orly/baseline.json  strictest spec set seen, for the anti-weakening backstop
   .orly/log.jsonl      one line per judgment

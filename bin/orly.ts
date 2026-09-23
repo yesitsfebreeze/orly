@@ -15,19 +15,15 @@
  */
 import { DEFAULTS, judge, type Turn } from "../src/gate.ts";
 import { normalize, normalizeLastTurn, type Msg } from "../src/normalize.ts";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { ask as askJudge } from "../src/client.ts";
 import { projectEvidence } from "../src/evidence.ts";
 import { CACHE_NAME, checkEnricher } from "../src/enrich-checks.ts";
 import { treeFingerprint } from "../src/fingerprint.ts";
 import { label, propose, read } from "../src/log.ts";
-import { basename, dirname, extname, join } from "node:path";
-import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { findOrlyDir, loadConfig, loadSpecFile, projectRoot, resolveKey } from "../src/session.ts";
 import { validateSpecs, type Spec } from "../src/specs.ts";
-import { judgeSidecar, parseSidecar, pool, type ClaimResult } from "../src/claims.ts";
-import { indexFiles, SERVERS } from "../src/lsp.ts";
-import { candidatesFor, loadIndex } from "../src/registry.ts";
 import { EXT, formatSpec, loadTree, renderTree, TREE } from "../src/spectree.ts";
 import { check, listTurns, promote, readCases, readTurn, recordRun, saveTurn, type Outcome } from "../src/cases.ts";
 
@@ -106,11 +102,6 @@ if (command === "--help" || command === "-h" || command === "help") {
       "orly case <turn|last> block|pass \"what went wrong\" [--spec group/id [--ask \"question\"]]",
       "                   freeze the turn as a case, write the spec that must catch it, replay all",
       "orly tree          index the spec tree in .orly/specs/",
-      "orly symbols <file> [--draft]  the definitions a claim can anchor to;",
-      "                   --draft appends a commented line to <file>.orly for each unclaimed one",
-      "orly servers [--refresh]  the languages in this repository and the server each one gets",
-      "orly claims [path…]  judge every <file>.orly sidecar against its code, in parallel;",
-      "                   exit 2 if any claim fails (ORLY_CLAIM_CUT, ORLY_CLAIMS_PARALLEL)",
       "orly replay [name…]  run every case through the live judge with the current specs",
       "                   exit 2 if any case comes out wrong; history in .orly/replay.jsonl",
       "orly ask Q… [file…] [-] [--json]   ask now, between turns",
@@ -364,126 +355,6 @@ if (command === "turns") {
     console.log(`${id}  ${t.blocked ? "BLOCK" : "pass "}  ${ask}`);
   }
   process.exit(0);
-}
-
-if (command === "servers") {
-  // Automatic language discovery: every extension git knows about here, and where its
-  // server comes from — the config, the built-in table, or the Linguist/Mason/lspconfig
-  // index (rebuilt weekly, or now with --refresh). Nothing is installed until a claim needs it.
-  const root = projectRoot(process.cwd()) ?? process.cwd();
-  const files = Bun.spawnSync(["git", "ls-files", "-co", "--exclude-standard"], { cwd: root, stdout: "pipe" }).stdout.toString().split("\n").filter(Boolean);
-  const counts = new Map<string, number>();
-  for (const f of files) {
-    const e = extname(f);
-    if (e && e !== ".orly") counts.set(e, (counts.get(e) ?? 0) + 1);
-  }
-  const index = await loadIndex(process.argv.includes("--refresh")).catch((e: Error) => e);
-  if (index instanceof Error) console.log(`(language index unavailable: ${index.message})\n`);
-  const config = loadConfig(process.cwd()).lsp ?? {};
-  const chosen = (() => {
-    try {
-      return JSON.parse(readFileSync(join(homedir(), ".orly", "servers", "chosen.json"), "utf8"));
-    } catch {
-      return {};
-    }
-  })();
-  for (const [ext, n] of [...counts].sort((a, b) => b[1] - a[1])) {
-    const from = config[ext]
-      ? `config: ${config[ext].command.join(" ")}`
-      : SERVERS[ext]
-        ? `built-in: ${SERVERS[ext].command.filter((w: string) => !w.startsWith("-")).at(-1)}`
-        : index instanceof Error
-          ? "?"
-          : chosen[ext]
-            ? `discovered: ${chosen[ext]} (worked here before)`
-            : candidatesFor(index, `x${ext}`).length
-              ? `discovered: ${candidatesFor(index, `x${ext}`).slice(0, 3).map((c) => c.package).join(" → ")}`
-              : "no language server known";
-    console.log(`${ext.padEnd(10)} ${String(n).padStart(5)} files  ${from}`);
-  }
-  process.exit(0);
-}
-
-if (command === "symbols") {
-  const path = process.argv[3];
-  if (!path) fail("usage: orly symbols <file>");
-  const text = await Bun.file(path!).text().catch(() => fail(`could not read ${path}`));
-  const root = projectRoot(process.cwd()) ?? process.cwd();
-  const defs = (await indexFiles(root, [{ path: path!, text: text as string }], loadConfig(process.cwd()).lsp)).get(path!)!;
-  if (defs instanceof Error) fail(defs.message);
-  if (process.argv.includes("--draft")) {
-    // One commented line per definition nothing claims yet: uncomment, finish the sentence.
-    const car = `${path}.orly`;
-    const existing = await Bun.file(car).text().catch(() => "");
-    const claimed = new Set(parseSidecar(existing).claims.map((c) => c.anchor));
-    const drafted = new Set(existing.split("\n").map((l) => l.match(/^#\s*(.+?):\s*$/)?.[1]).filter(Boolean));
-    const todo = (defs as any[]).filter((d) => !claimed.has(d.anchor) && !drafted.has(d.anchor) && !["property", "field", "member"].includes(d.kind));
-    if (!todo.length) {
-      console.log(`${car}: every definition already has a claim or a draft line`);
-      process.exit(0);
-    }
-    const lines = todo.map((d) => `# ${d.anchor}: `);
-    writeFileSync(car, `${existing}${existing && !existing.endsWith("\n") ? "\n" : ""}${lines.join("\n")}\n`);
-    console.log(`${car}: ${todo.length} draft line(s) — uncomment each and state what that definition says`);
-    process.exit(0);
-  }
-  for (const d of defs as any[]) console.log(`${d.anchor.padEnd(40)} ${d.kind.padEnd(12)} ${d.from}-${d.to}`);
-  process.exit(0);
-}
-
-if (command === "claims") {
-  // Every sidecar in the repository: each language's server indexes its files, then one
-  // judge request per source file, many files at once.
-  const root = projectRoot(process.cwd()) ?? process.cwd();
-  const listed = Bun.spawnSync(["git", "ls-files", "-co", "--exclude-standard", "*.orly"], { cwd: root, stdout: "pipe" });
-  const only = process.argv.slice(3);
-  const sidecars = listed.stdout
-    .toString()
-    .split("\n")
-    .filter(Boolean)
-    .filter((f) => !only.length || only.some((o) => f === o || f === `${o}.orly` || f.startsWith(o.replace(/\/?$/, "/"))));
-  if (!sidecars.length) fail("no *.orly sidecars found — write one next to a source file, e.g. src/http.ts.orly");
-  const key5 = resolveKey();
-  if (!key5) fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json");
-  const cut = num("ORLY_CLAIM_CUT", DEFAULTS.specMet);
-  const transport = { apiKey: key5!, endpoint: process.env.TYPESAFE_BASE_URL, model: process.env.ORLY_MODEL, timeoutMs: num("ORLY_TIMEOUT_MS", 12_000) };
-  const t0 = performance.now();
-  const files = await Promise.all(
-    sidecars.map(async (car) => {
-      const path = car.slice(0, -".orly".length);
-      return { car, path, text: await Bun.file(join(root, path)).text().catch(() => null), sidecar: await Bun.file(join(root, car)).text() };
-    }),
-  );
-  const index = await indexFiles(root, files.filter((f) => f.text !== null) as any, loadConfig(process.cwd()).lsp);
-  const tIndex = performance.now();
-  const perFile = await pool(files, num("ORLY_CLAIMS_PARALLEL", 8), async (f): Promise<[string, ClaimResult[]]> => {
-    try {
-      const defs = index.get(f.path) ?? new Error(`${f.path} does not exist`);
-      // One retry: a timeout or a 5xx is the network, and failing the claim for it would
-      // block a turn over something the code did not do.
-      const once = (st: unknown, q: Record<string, unknown>) =>
-        askJudge(st, q, transport).catch(async (e: Error) => {
-          if (!/timed out|^5\d\d/.test(e.message)) throw e;
-          await Bun.sleep(500);
-          return askJudge(st, q, transport);
-        });
-      return [f.path, await judgeSidecar(f.path, f.text, defs, f.sidecar, once, cut)];
-    } catch (e: any) {
-      return [f.path, [{ anchor: "@file", claim: "", line: 0, ok: false, problem: e?.message ?? String(e) }]];
-    }
-  });
-  let total = 0;
-  let bad = 0;
-  for (const [src, results] of perFile)
-    for (const r of results) {
-      total++;
-      if (!r.ok) bad++;
-      const p = typeof r.p === "number" ? r.p.toFixed(2) : "  - ";
-      console.log(`${r.ok ? "ok  " : "FAIL"} ${p}  ${src}:${r.line} ${r.anchor}: ${r.claim}${r.problem ? `  — ${r.problem}` : ""}`);
-    }
-  const ms = (t: number) => Math.round(t);
-  console.log(`\n${total - bad}/${total} claims hold across ${sidecars.length} file(s) — index ${ms(tIndex - t0)} ms, judge ${ms(performance.now() - tIndex)} ms (cut ${cut})`);
-  process.exit(bad ? 2 : 0);
 }
 
 if (command === "tree") {

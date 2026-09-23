@@ -1,5 +1,0 @@
-SCHEMA: describes both the messages and the turn input shapes with an example each
-inputProblem: requires turn.conclusive to be a boolean
-inputProblem: rejects messages with no entry whose role is user
-replay: returns true only when every case came out right
-fail: prints the message prefixed with "orly: " to stderr and exits

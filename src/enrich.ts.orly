@@ -1,9 +1,0 @@
-MAX_FILES: is 8
-MAX_FILE_CHARS: defaults to 12000 unless ORLY_MAX_FILE_CHARS is set
-evidencePaths: returns at most MAX_FILES paths, leaving out the skipped names
-fileEnricher: records "[file does not exist]" for a missing path unless that path is soft
-fileEnricher: marks a file longer than MAX_FILE_CHARS as TRUNCATED
-combine: uses Promise.allSettled so one failing enricher does not fail the others
-withEvidence: returns the turn unchanged when the evidence is empty
-Enricher: takes a turn and specs and returns a Promise of Evidence
-FileOptions: has a skip list and a soft list
