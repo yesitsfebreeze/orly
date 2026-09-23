@@ -10,7 +10,7 @@ import { join } from "node:path";
  * Files orly writes itself, excluded so writing the cache does not invalidate it. Inputs
  * such as `specs.json` and `config.json` stay in: a check may read them.
  */
-const OWN_STATE = /^\.orly\/(checks\.json|log\.jsonl|baseline\.json|orly-rounds-.*\.json|replay\.jsonl|turns\/.*)$/;
+const OWN_STATE = /^\.orly\/(checks\.json|log\.jsonl|baseline\.json|replay\.jsonl|turns\/.*)$/;
 
 /** A short string that changes whenever anything a command could read has changed. */
 export function treeFingerprint(root: string): string | null {

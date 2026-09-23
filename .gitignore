@@ -7,7 +7,6 @@ node_modules/
 .orly/log.jsonl
 .orly/baseline.json
 .orly/checks.json
-.orly/orly-rounds-*.json
 .orly/turns/
 .orly/replay.jsonl
 
