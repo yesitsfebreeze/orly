@@ -224,6 +224,11 @@ test("a cached check is used only while the tree it was measured on is unchanged
     writeFileSync(join(root, ".orly", "replay.jsonl"), "{}\n");
     expect(treeFingerprint(root)).toBe(fingerprint);
 
+    // An edit that is staged is not "modified" against the index, but it is a change.
+    writeFileSync(join(root, "staged.txt"), "staged\n");
+    Bun.spawnSync(["git", "add", "staged.txt"], { cwd: root });
+    expect(treeFingerprint(root)).not.toBe(fingerprint);
+
     // Touch the tree: the stamp no longer matches, so the command runs and wins.
     writeFileSync(join(root, "new.txt"), "changed\n");
     const miss: any = await checkEnricher({ slow: { command: "exit 0" } }, root)({} as any, spec);

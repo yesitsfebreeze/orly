@@ -20,11 +20,12 @@ export function treeFingerprint(root: string): string | null {
       return p.exitCode === 0 ? p.stdout.toString() : null;
     };
     const dirty = run(["ls-files", "-m", "-o", "--exclude-standard"]);
+    const staged = run(["diff", "--cached", "--name-only"]);
     // Not a repository: no fingerprint, so no caching. No HEAD (nothing committed yet)
-    // is still cacheable: every file is then untracked and listed below.
-    if (dirty === null) return null;
+    // is still cacheable. Staged files count too: an edit then `git add`ed is not "modified".
+    if (dirty === null || staged === null) return null;
     const parts = [run(["rev-parse", "HEAD"])?.trim() ?? "no-commit-yet"];
-    for (const rel of dirty.split("\n").filter(Boolean).filter((f) => !OWN_STATE.test(f)).sort()) {
+    for (const rel of [...new Set(`${dirty}\n${staged}`.split("\n"))].filter(Boolean).filter((f) => !OWN_STATE.test(f)).sort()) {
       try {
         const st = statSync(join(root, rel));
         parts.push(`${rel}:${st.size}:${st.mtimeMs}`);
