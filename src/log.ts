@@ -59,7 +59,7 @@ export function read(orlyDir: string): Judged[] {
 }
 
 /**
- * Label a block by the same session's next turn: `worked` if it ran commands or made edits,
+ * Label a block by the same session's next turn (sessions interleave in one log): `worked` if it ran commands or made edits,
  * `explained` if it only talked (a sign the cut is too tight). Weak evidence; nothing may
  * loosen a cut from it automatically.
  */
@@ -67,8 +67,8 @@ export function label(records: Judged[]): Judged[] {
   const out = records.map((r) => ({ ...r }));
   for (let i = 0; i < out.length - 1; i++) {
     if (!out[i].blocked) continue;
-    const next = out[i + 1];
-    if (next.session !== out[i].session) continue;
+    const next = out.slice(i + 1).find((r) => r.session === out[i].session);
+    if (!next) continue;
     out[i].outcome = next.actions > 0 || next.results > 0 ? "worked" : "explained";
   }
   return out;

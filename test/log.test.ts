@@ -27,6 +27,11 @@ test("labels never cross a session boundary", () => {
   expect(out[0].outcome).toBeUndefined();
 });
 
+test("a block is labelled by its own session's next turn, past other sessions in between", () => {
+  const out = label([rec({ blocked: true, session: "a" }), rec({ session: "b", actions: 9 }), rec({ session: "a" })]);
+  expect(out[0].outcome).toBe("explained");
+});
+
 test("propose finds the cut between blocks that worked and blocks that did not", () => {
   // 0.20/0.25/0.30 caught real work; 0.60/0.65/0.70 fired on turns that were fine.
   const log: Judged[] = [];
