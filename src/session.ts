@@ -9,7 +9,6 @@ import { dirname, join, parse } from "node:path";
 import type { Spec, SpecFile } from "./specs.ts";
 import { broken, loadTree } from "./spectree.ts";
 
-export const SPEC_PATH = ".orly/specs.json";
 export const DEFAULT_MAX_ROUNDS = 6;
 /** Rounds without a single newly-met spec before we conclude the loop is stuck. */
 export const STALL_ROUNDS = 2;

@@ -28,7 +28,7 @@ test("every spec field survives a format → parse round trip", () => {
 });
 
 test("a malformed spec file fails closed: it becomes a spec that can never be met", () => {
-  for (const text of ["cut: 5\n\nA question here.", "colour: red\n\nA question here.", "cut: abc\n\nA question here."]) {
+  for (const text of ["cut: 5\n\nA question here.", "colour: red\n\nA question here.", "cut: abc\n\nA question here.", "cut: 0.5\n\n", ""]) {
     const s = parseSpec("bad", text);
     expect(s.instructions).toStartWith("malformed spec file:");
     expect(evaluate(s.require!, {}).met).toBe(false);

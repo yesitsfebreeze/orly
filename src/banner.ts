@@ -8,9 +8,6 @@ const OWL = [` , .`, `{@,@}`, `/) )`, ` '"`];
 const OWL_PAD = 7; // indent where the text starts
 const OWL_MARGIN = 3; // left margin for the complete status bar
 
-export const BLOCKED = "[X]";
-export const PASSED = "[O]";
-
 /** Split the CLI's " · "-joined verdict `line` into four rows: verdict and specs, coverage, next, the rest. */
 export function statusBar(verdict: { block: boolean; line: string }): string[] {
   const label = verdict.block ? "BLOCK" : "PASS";

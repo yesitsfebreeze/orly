@@ -55,6 +55,7 @@ export const broken = (id: string, problem: string): Spec =>
 export function parseSpec(id: string, text: string): Spec {
   const { head, body, bad } = sections(text);
   if (bad) return broken(id, bad);
+  if (!body) return broken(id, "no question after the headers");
   const spec: Spec & { fitted?: string } = { id, instructions: body };
   if (head.cut !== undefined) {
     const cut = Number(head.cut);
