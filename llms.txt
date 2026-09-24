@@ -5,6 +5,7 @@
 > working until they hold. `orly judge` exits 0 = may stop, 2 = not done, 1 = could not run.
 
 - [Install](docs/install.txt): setup, the API key, the .orly layout, environment variables.
+- [Hosts](docs/hosts.txt): every coding agent it runs in, how each is gated, `orly install <host>`, the adapters.
 - [Writing specs](docs/specs.txt): the spec tree, rules for judgeable specs, file, check and context evidence, mistakes as replayable cases, tuning.
 - [The guard](docs/guard.txt): what counts as weakening the gate and where it is refused.
 - [Porting](docs/porting.txt): module map, library calls, the CLI contract, the Turn shape, writing an adapter.

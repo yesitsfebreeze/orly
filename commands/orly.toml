@@ -1,16 +1,12 @@
----
-description: Turn a goal into checkable specs and work until they pass — or report a mistake and have it fixed, specced and replayed in one go
-argument-hint: <a goal> | <what went wrong>
-allowed-tools: Read, Write, Bash, Glob, Grep
----
-
-The user wrote: **$ARGUMENTS**
+description = "Turn a goal into checkable specs and work until they pass — or report a mistake and have it fixed, specced and replayed in one go"
+prompt = """
+The user wrote: **{{args}}**
 
 Decide which this is. A goal ("add retries to the client") → *Setting a goal*. A report
 that something went wrong ("it said tests pass but they didn't", "that block was wrong")
 → *When something went wrong*, done in one go without asking.
 
-`orly` below means `bun "${CLAUDE_PLUGIN_ROOT}/bin/orly.ts"`. If that path is not set on
+`orly` below means `bun "${extensionPath}/bin/orly.ts"`. If that path is not set on
 this host, it is `bin/orly.ts` in the orly checkout, or plain `orly` after
 `bun install -g github:yesitsfebreeze/orly`.
 
@@ -83,3 +79,5 @@ A file that does not parse blocks every turn until fixed. `orly tree` prints the
 6. **Report in three lines:** spec file, case file, replay score.
 
 Cases in `.orly/cases/` are committed and hold the turn verbatim: check for secrets first.
+
+"""

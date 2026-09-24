@@ -14,7 +14,17 @@
     "specs",
     "verification"
   ],
-  "commands": "./commands/",
   "skills": "./skills/",
-  "hooks": "./hooks/hooks.json"
+  "interface": {
+    "displayName": "orly?",
+    "shortDescription": "A turn-end gate: the agent stops only when your specs hold.",
+    "developerName": "clev",
+    "category": "Productivity",
+    "capabilities": [
+      "skills"
+    ],
+    "defaultPrompt": [
+      "$orly add retries to the client"
+    ]
+  }
 }

@@ -17,19 +17,29 @@ harness it runs under.
   src/log.ts             the verdict log and cut proposals
   src/cases.ts           saved turns, regression cases, replay history
   src/banner.ts          the owl status bar
+  src/turnend.ts         the turn-end gate every adapter runs: baseline, key, flush, judge, log, round cap
+  src/brief.ts           the session brief every adapter injects
+  src/editguard.ts       any host's edit tool reduced to one planned edit, refused if it weakens the gate
+  src/install.ts         idempotent settings merges and the command renderer, host-agnostic
   bin/orly.ts            the CLI
-  adapters/              one file per host
+  adapters/              one file per host, plus transcripts.ts (every on-disk format) and hosts.ts (the table)
 
 
 WHAT A HOST CALLS
 -----------------
+
+  gateTurn({cwd, sessionId, read})       the whole gate -> {block, reason, banner, message, note}
+  sessionBrief(cwd, {goalCommand})       the text to inject when a session starts, or null
+  guardEdit(cwd, target, plannedEdit)    the refusal for an edit that weakens the gate, or null
+
+or, one level down,
 
   resolveKey(cwd)                        TYPESAFE_API_KEY, or the keyCommand in .orly
   normalizeLastTurn(messages)            the host's log -> a Turn
   projectEvidence({cwd})                 files, checks and context, from the project root
   judge(turn, {apiKey, specs, enrich})   -> {verdict, answers, usage}
 
-Or skip the library and use the CLI.
+Or skip the library and use the CLI: `orly gate` runs gateTurn over stdin.
 
 
 THE CLI
@@ -41,6 +51,11 @@ THE CLI
   exit 0  the turn may end
   exit 2  it may not
   exit 1  the gate could not run
+
+  echo '{"messages":[...]}' | orly gate --session <id>
+  -> {"block":true,"reason":"...","banner":"..."}   the same, through the full gate:
+     fails open (never exit 1 after the input is read), counts rounds under --session,
+     logs the judgment, warns once per session when there is no key
 
 `messages` takes content blocks (tool_use / tool_result) or chat messages with
 tool_calls and role:"tool"; the last human message onward is judged. `{"turn":{...}}`
@@ -88,6 +103,18 @@ Set `conclusive` honestly: a turn whose closing message is not written yet reads
 WRITING AN ADAPTER
 ------------------
 
-Turn the host's turn-end event into a Turn, call judge(), turn the Verdict back. Every
-error path — no key, unreadable log, timeout, bad response, inconclusive turn — lets the
-agent stop. A judge that is down must not become a wall.
+Turn the host's turn-end event into a Turn, call gateTurn(), turn the outcome back into
+the host's answer. Every error path — no key, unreadable log, timeout, bad response,
+inconclusive turn — lets the agent stop. A judge that is down must not become a wall.
+
+  1. Read the host's payload from stdin (adapters/shared.ts: readPayload).
+  2. Find the transcript: the payload's path, else findTranscript(sessionId, [dirs]).
+     adapters/transcripts.ts reads every known on-disk format; add the host's if new.
+  3. gateTurn({cwd, sessionId, read: () => turnFromFile(path), answeringBlock}).
+  4. Render: block -> the host's refuse-and-continue shape; banner or message -> whatever
+     the host shows the human; note -> stderr.
+  5. Add the host to adapters/hosts.ts: where its hooks live, which events, the command
+     file in its format. `orly install <host>` and the README's table come from there.
+  6. Add its payloads to test/adapters.test.ts: the fail-open cases and its transcript.
+
+The hosts that already exist, and which shape each one expects, are in docs/hosts.txt.

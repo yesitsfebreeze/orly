@@ -1,7 +1,8 @@
 {
   "name": "orly",
-  "version": "0.3.0",
+  "displayName": "orly?",
   "description": "orly? — at the end of every turn, checks the agent's work against your specs and refuses the stop until they hold.",
+  "version": "0.3.0",
   "author": {
     "name": "clev"
   },
@@ -14,7 +15,5 @@
     "specs",
     "verification"
   ],
-  "commands": "./commands/",
-  "skills": "./skills/",
-  "hooks": "./hooks/hooks.json"
+  "skills": "./skills/"
 }

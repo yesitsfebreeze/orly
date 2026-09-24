@@ -19,6 +19,8 @@ import { validateSpecs, type Spec } from "../src/specs.ts";
 import { EXT, formatSpec, loadTree, renderTree, TREE } from "../src/spectree.ts";
 import { check, listTurns, promote, readCases, readTurn, recordRun, saveTurn, type Outcome } from "../src/cases.ts";
 import { gateTurn } from "../src/turnend.ts";
+import { apply } from "../src/install.ts";
+import { findHost, HOSTS, plan } from "../adapters/hosts.ts";
 
 const fail = (msg: string, code = 1): never => {
   console.error(`orly: ${msg}`);
@@ -92,6 +94,8 @@ if (command === "--help" || command === "-h" || command === "help") {
       "orly gate          same input; the full fail-open gate a hook runs (baseline, round cap, log)",
       "                       prints {block, reason, banner}; exit 0 = may end, 2 = may not, never 1",
       "                       --session <id> names the host session the round cap counts under",
+      "orly install <host> [--global] [--dry-run]   wire the gate into a host's hooks and add its /orly command",
+      "orly hosts         every host, how it is gated, and what `orly install` writes for it",
       "orly schema        print both input shapes with a working example, and the output shape",
       "orly turns         list recently judged turns (kept locally, newest last)",
       "orly case <turn|last> block|pass \"what went wrong\" [--spec group/id [--ask \"question\"]]",
@@ -110,6 +114,35 @@ if (command === "--help" || command === "-h" || command === "help") {
       "     ORLY_MIN_ACTION_P, ORLY_TIMEOUT_MS",
     ].join("\n"),
   );
+  process.exit(0);
+}
+if (command === "hosts") {
+  for (const h of HOSTS) {
+    const how = h.tier === "native" ? "blocks the stop" : h.tier === "emulated" ? "re-prompts" : "orly judge only";
+    console.log(`${h.id.padEnd(10)} ${h.name.padEnd(22)} ${how.padEnd(16)} ${h.adapter ? `adapters/${h.adapter}` : "—"}${h.note ? `\n${" ".repeat(11)}${h.note}` : ""}`);
+  }
+  process.exit(0);
+}
+if (command === "install") {
+  const id = process.argv[3];
+  if (!id || id.startsWith("--")) fail(`which host? one of: ${HOSTS.filter((h) => h.plan).map((h) => h.id).join(", ")}`);
+  const host = findHost(id);
+  if (!host) fail(`unknown host "${id}" — run \`orly hosts\``);
+  if (!host.plan) fail(`${host.name} has no hook that can keep the agent working (${host.events}); pipe its log into \`orly judge\` instead`);
+  const global = process.argv.includes("--global");
+  const dry = process.argv.includes("--dry-run");
+  let plans;
+  try {
+    plans = plan(host, { global });
+  } catch (e: any) {
+    fail(`could not plan: ${e?.message ?? e}`);
+  }
+  for (const p of plans!) {
+    console.log(`${p.action.padEnd(9)} ${p.path}`);
+    if (dry && p.action !== "unchanged") console.log(p.preview.replace(/^/gm, "    "));
+  }
+  if (!dry) apply(plans!);
+  console.log(`${dry ? "would install" : "installed"} orly for ${host.name} (${global ? "user" : "project"} scope)${host.note ? ` — ${host.note}` : ""}`);
   process.exit(0);
 }
 if (command === "ask") {

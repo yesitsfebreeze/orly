@@ -1,20 +1,12 @@
 {
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "orly",
   "version": "0.3.0",
   "description": "orly? — at the end of every turn, checks the agent's work against your specs and refuses the stop until they hold.",
   "author": {
     "name": "clev"
   },
-  "homepage": "https://github.com/yesitsfebreeze/orly",
   "repository": "https://github.com/yesitsfebreeze/orly",
   "license": "MIT",
-  "keywords": [
-    "hooks",
-    "gate",
-    "specs",
-    "verification"
-  ],
-  "commands": "./commands/",
-  "skills": "./skills/",
-  "hooks": "./hooks/hooks.json"
+  "skills": "./skills/"
 }
