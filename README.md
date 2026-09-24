@@ -90,7 +90,7 @@ it is JSONL of messages, and otherwise judges nothing but the weakening guard.
 Other hosts can call the gate from their own turn-end hook; see
 [docs/api.txt](docs/api.txt).
 
-Without a key, `orly gate` allows every turn and says so once per session; `orly judge`
+Without a key, `orly gate` still blocks on a failing `require:` check, allows every other turn, and says so once per session; `orly judge`
 exits 1.
 
 ## Quick start

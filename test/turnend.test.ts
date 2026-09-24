@@ -80,6 +80,29 @@ test("a weakened spec set blocks before any key is needed", async () => {
   }
 });
 
+test("a failing require check blocks before any key or judge, in well under a second", async () => {
+  const dir = sandbox();
+  try {
+    mkdirSync(join(dir, ".orly", "specs", "g"), { recursive: true });
+    writeFileSync(join(dir, ".orly", "goal"), "- g: tests\n");
+    writeFileSync(join(dir, ".orly", "config.json"), JSON.stringify({ checks: { tests: { command: "test -e ok" } } }));
+    writeFileSync(join(dir, ".orly", "specs", "g", "tests.spec"), "require: checks.tests.exit equals 0\n\nDo the tests pass?\n");
+    const turn = { user_request: "fix it", assistant_final_message: "done", assistant_said: "done", actions_taken: ["Edit: a.ts"], command_results: [], conclusive: true };
+    const gate = () => withoutKey(() => gateTurn({ cwd: dir, sessionId: `c-${Math.random()}`, read: async () => turn, flush: false }));
+    const t0 = performance.now();
+    const failing = await gate();
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(failing.block).toBe(true);
+    expect(failing.reason).toContain('check "tests" failed');
+    writeFileSync(join(dir, "ok"), "");
+    const passing = await gate(); // checks met: only now is the judge's key needed
+    expect(passing.block).toBe(false);
+    expect(passing.message).toBe(NO_KEY_MESSAGE);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the brief is null outside a project and names the host's goal command inside one", () => {
   const dir = sandbox();
   try {

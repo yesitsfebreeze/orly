@@ -30,7 +30,7 @@ found in this order:
      The command runs with `sh -c`. It is killed after ORLY_KEY_TIMEOUT_MS (10000), and a
      command that times out or exits non-zero yields no key.
 
-With no key, `orly gate` allows every turn and says so once per session. `orly judge`
+With no key, `orly gate` still blocks on a failing `require:` check, allows every other turn, and says so once per session. `orly judge`
 exits 1.
 
 

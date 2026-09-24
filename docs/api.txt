@@ -52,7 +52,8 @@ THE GATE
       message  show to the user (the no-key notice)
       note     why the gate allowed without a full judgment, for logs
 
-gateTurn never throws. It fails open when the transcript is unreadable, the key is
+gateTurn never throws. `require:` checks run first: a failing one blocks with no key
+and no judge call. Otherwise it fails open when the transcript is unreadable, the key is
 missing or the judge is unreachable, and fails closed on a malformed spec or a weakened
 gate.
 

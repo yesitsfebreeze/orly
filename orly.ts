@@ -661,7 +661,7 @@ export function guardEdit(cwd: string, target: string, edit: PlannedEdit): strin
 export const DEFAULT_MAX_ROUNDS = 6;
 export const STALL_ROUNDS = 2;
 export const NO_KEY_MESSAGE =
-  'orly? is disabled: no TypeSafe key. Set TYPESAFE_API_KEY, or put {"keyCommand": "…"} in .orly/config.json or ~/.orly/config.json.';
+  'orly? runs only `require:` checks: no TypeSafe key for the judge. Set TYPESAFE_API_KEY, or put {"keyCommand": "…"} in .orly/config.json or ~/.orly/config.json.';
 
 const num = (name: string, fallback: number) => {
   const n = Number(process.env[name] ?? NaN);
@@ -676,9 +676,9 @@ export const thresholdsFromEnv = (): Thresholds => ({
 });
 
 /** `judge` with this project's evidence and the environment's endpoint, model, timeout and thresholds. */
-export const judgeHere = (turn: Turn, apiKey: string, cwd: string, specs: Spec[]) =>
+export const judgeHere = (turn: Turn, apiKey: string, cwd: string, specs: Spec[], evidence?: Record<string, any>) =>
   judge(turn, {
-    apiKey, specs, enrich: projectEvidence({ cwd }), endpoint: process.env.TYPESAFE_BASE_URL, model: process.env.ORLY_MODEL,
+    apiKey, specs, enrich: evidence ? async () => evidence : projectEvidence({ cwd }), endpoint: process.env.TYPESAFE_BASE_URL, model: process.env.ORLY_MODEL,
     timeoutMs: num("ORLY_TIMEOUT_MS", 12_000), thresholds: thresholdsFromEnv(),
   });
 
@@ -726,13 +726,11 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
 
   if (input.answeringBlock && !specs.length) return allow();
 
-  const key = await resolveKey(cwd);
-  if (!key) {
-    const marker = join(tmpdir(), `orly-nokey-${sessionId}`);
-    if (existsSync(marker)) return allow();
-    write(marker, "");
-    return { block: false, message: NO_KEY_MESSAGE };
-  }
+  const marker = join(tmpdir(), `orly-nokey-${sessionId}`);
+  const noKey = (): GateOutcome => (existsSync(marker) ? allow() : (write(marker, ""), { block: false, message: NO_KEY_MESSAGE }));
+  const checked = specs.filter((s) => s.require);
+  let key = checked.length ? undefined : await resolveKey(cwd); // a keyCommand can take 0.3s: not before the checks
+  if (!key && !checked.length) return noKey();
 
   let turn = await input.read();
   if (!turn) return allow("transcript unreadable");
@@ -743,11 +741,13 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
   if (!turn.user_request || (!turn.actions_taken.length && !turn.assistant_said)) return allow();
   if (!turn.conclusive) return allow("closing message never reached the transcript");
 
-  let result;
-  try {
-    result = await judgeHere(turn, key, cwd, specs);
-  } catch (e: any) {
-    return allow(`judge unavailable (${e?.message ?? e})`);
+  // Deterministic checks decide first: a failing one blocks without a key or a judge call.
+  let evidence: Record<string, any> = {};
+  try { evidence = await projectEvidence({ cwd })(turn, specs); } catch { /* judge on the transcript alone */ }
+  let result: Judgment = { verdict: compose({}, DEFAULTS, checked, evidence), answers: {} };
+  if (!result.verdict.block) {
+    if (!(key ??= await resolveKey(cwd))) return noKey();
+    try { result = await judgeHere(turn, key, cwd, specs, evidence); } catch (e: any) { return allow(`judge unavailable (${e?.message ?? e})`); }
   }
   const { verdict } = result;
   const open = unmet(verdict.results);
