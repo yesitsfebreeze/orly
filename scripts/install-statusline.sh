@@ -45,7 +45,8 @@ if [ "$uninstall" = 1 ]; then
   exit 0
 fi
 
-cmd="\"$root/scripts/orly-status\""
+# Claude Code indents its status line; -4 leaves those cells so the right border shows.
+cmd="\"$root/scripts/orly-status\" --width ${ORLY_MARGIN:--4}"
 [ -n "$prev" ] && cmd="$cmd --then $(printf '%s' "$prev" | jq -Rr @sh)"
 jq --arg c "$cmd" '.statusLine = {type: "command", command: $c, padding: 0, refreshInterval: 1}' "$settings" >"$tmp"
 mv "$tmp" "$settings"
