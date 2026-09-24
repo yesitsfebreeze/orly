@@ -1,7 +1,7 @@
 {
   "name": "orly",
   "owner": { "name": "Stefan Hoevelmanns" },
-  "metadata": { "description": "A turn-end gate for coding agents", "version": "0.5.0" },
+  "metadata": { "description": "A turn-end gate for coding agents", "version": "0.5.1" },
   "plugins": [
     {
       "name": "orly",
