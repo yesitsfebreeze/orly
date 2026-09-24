@@ -1,0 +1,13 @@
+#!/bin/sh
+# Render orly's status for any status bar: the owl, the last verdict, unmet specs, the top goal.
+# Reads a JSON payload ({session_id, cwd}) on stdin when the bar sends one; otherwise shows the
+# newest judgment for the current directory's project.
+#
+#   orly-status                      four rows, owl on the left
+#   orly-status --oneline            one row, for tmux / polybar / starship / sketchybar
+#   orly-status --session <id>       a specific session
+#   NO_COLOR=1 orly-status           no ANSI colour
+#
+# tmux:      set -g status-right '#(cd #{pane_current_path} && ~/orly/scripts/orly-status --oneline)'
+# starship:  [custom.orly] command = "~/orly/scripts/orly-status --oneline" when = "test -d .orly"
+exec bun "$(cd "$(dirname "$0")/.." && pwd)/bin/orly.ts" statusline "$@"

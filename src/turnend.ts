@@ -9,7 +9,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { owlBlock, statusBar } from "./banner.ts";
+import { owlBlock, saveStatus, statusBar, statusFile } from "./banner.ts";
 import { saveTurn } from "./cases.ts";
 import { projectEvidence } from "./evidence.ts";
 import { DEFAULTS, judge, type Thresholds, type Turn } from "./gate.ts";
@@ -89,7 +89,7 @@ const ALLOW = (note?: string): GateOutcome => (note ? { block: false, note } : {
  * so they would pile up one pair per session.
  */
 export function endSession(sessionId: string): void {
-  for (const f of [statePath(tmpdir(), sessionId), join(tmpdir(), `orly-nokey-${sessionId}`)]) rmSync(f, { force: true });
+  for (const f of [statePath(tmpdir(), sessionId), statusFile(tmpdir(), sessionId), join(tmpdir(), `orly-nokey-${sessionId}`)]) rmSync(f, { force: true });
 }
 
 /** Run the gate on one turn. Never throws. */
@@ -115,6 +115,8 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
       DEFAULTS.specMet,
     );
     if (violations.length) {
+      const ids = violations.map((v) => v.id);
+      saveStatus(tmpdir(), sessionId, { at: new Date().toISOString(), cwd, block: true, line: "orly ⛔ block · spec file weakened", unmet: ids.map((id) => ({ id, found: "weakened" })) });
       return {
         block: true,
         reason: refusal(violations),
@@ -221,6 +223,19 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
   // Leading newline so the owl starts on its own row.
   const banner = (l: string) => "\n" + owlBlock(statusBar({ block: verdict.block, line: l }));
 
+  const status = (line: string, note?: string) =>
+    saveStatus(tmpdir(), sessionId, {
+      at: new Date().toISOString(),
+      cwd,
+      block: verdict.block && !note,
+      line,
+      note,
+      unmet: unmet(verdict.results).map((r) => ({
+        id: r.spec.id,
+        found: r.spec.require ? `${JSON.stringify(r.actual)}, needs ${r.spec.require.op} ${String(r.spec.require.value ?? "")}` : `p=${r.p.toFixed(2)}`,
+      })),
+    });
+
   // Loop control: only ever loosens the verdict, never tightens it.
   let loopNote: string | undefined;
   if (verdict.block && specs.length) {
@@ -233,6 +248,7 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
     );
     writeRounds(tmpdir(), sessionId, decision.next);
     if (!decision.mayBlock) {
+      status(verdict.line, decision.note);
       return {
         block: false,
         banner: banner(`${verdict.line} · ${decision.note} · ${unmet(verdict.results).length} spec(s) still unmet`),
@@ -247,6 +263,7 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
     (waited ? ` · waited ${waited}ms for flush` : "") +
     (loopNote ?? "");
 
+  status(line);
   return verdict.block
     ? { block: true, reason: verdict.reason, banner: banner(line) }
     : { block: false, banner: banner(line) };

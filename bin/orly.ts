@@ -14,7 +14,9 @@ import { CACHE_NAME, checkEnricher } from "../src/enrich-checks.ts";
 import { treeFingerprint } from "../src/fingerprint.ts";
 import { label, propose, read } from "../src/log.ts";
 import { basename, dirname, join } from "node:path";
-import { findOrlyDir, loadConfig, loadSpecFile, projectRoot, resolveKey } from "../src/session.ts";
+import { DEFAULT_MAX_ROUNDS, findOrlyDir, loadConfig, loadSpecFile, projectRoot, readRounds, resolveKey } from "../src/session.ts";
+import { latestStatus, readStatus, statusLines } from "../src/banner.ts";
+import { tmpdir } from "node:os";
 import { byRank, validateSpecs, type Spec } from "../src/specs.ts";
 import { EXT, formatSpec, loadTree, parseGoals, renderTree, sections, TREE } from "../src/spectree.ts";
 import { check, listTurns, promote, readCases, readTurn, recordRun, saveTurn, type Outcome } from "../src/cases.ts";
@@ -102,6 +104,8 @@ if (command === "--help" || command === "-h" || command === "help") {
       "                   freeze the turn as a case, write the spec that must catch it, replay all",
       "orly goal [group] \"<text>\"   append a goal to .orly/goal; specs under <group>/ serve it",
       "orly tasks         unmet specs after the last judged turn, most important goal first",
+      "orly statusline [--session id] [--cwd dir] [--oneline] [--then <cmd>]",
+      "                   the owl and the last judgment, for any status bar (scripts/orly-status)",
       "orly tree          index the spec tree in .orly/specs/, in goal order",
       "orly replay [name…]  run every case through the live judge with the current specs",
       "                   exit 2 if any case comes out wrong; history in .orly/replay.jsonl",
@@ -376,6 +380,43 @@ if (command === "goal") {
   const headers = Object.entries(head).map(([k, v]) => `${k}: ${v}`);
   writeFileSync(path, `${(headers.length ? headers : ["rounds: 6"]).join("\n")}\n\n${items.join("\n")}\n`);
   items.forEach((g, i) => console.log(`${i + 1}. ${g.slice(2)}`));
+  process.exit(0);
+}
+
+if (command === "statusline") {
+  // Any status bar: JSON on stdin (session_id, cwd) when the host sends it, else flags, else
+  // the newest judgment in this project. `--oneline` for one-row bars, NO_COLOR for plain.
+  const flag = (n: string) => (process.argv.includes(n) ? process.argv[process.argv.indexOf(n) + 1] : undefined);
+  // A bar that sends nothing may still leave stdin open; never wait on it past 200ms.
+  const input = process.stdin.isTTY
+    ? ""
+    : await Promise.race([new Response(Bun.stdin.stream()).text(), Bun.sleep(200).then(() => "")]);
+  let ctx: any = {};
+  try {
+    ctx = JSON.parse(input);
+  } catch {
+    /* no payload: flags and the current directory */
+  }
+  const cwd = flag("--cwd") ?? ctx.workspace?.current_dir ?? ctx.cwd ?? process.cwd();
+  const sid = flag("--session") ?? ctx.session_id;
+  const specFile = findOrlyDir(cwd) ? loadSpecFile(cwd) : null;
+  if (specFile) {
+    const status = sid ? readStatus(tmpdir(), String(sid)) : latestStatus(tmpdir(), projectRoot(cwd) ?? cwd);
+    let lines = statusLines(status, {
+      specs: specFile.specs.length,
+      goals: (specFile.goals ?? []).map((g) => (g.group ? `${g.group}: ${g.text}` : g.text)),
+      round: sid ? readRounds(tmpdir(), String(sid))?.rounds : undefined,
+      maxRounds: specFile.maxRounds ?? DEFAULT_MAX_ROUNDS,
+    });
+    if (process.env.NO_COLOR) lines = lines.map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""));
+    if (process.argv.includes("--oneline")) lines = [lines.slice(0, 2).map((l) => l.slice(10).trim()).filter(Boolean).join(" · ")];
+    console.log(lines.join("\n"));
+  }
+  const then = flag("--then");
+  if (then) {
+    const r = Bun.spawnSync(["sh", "-c", then], { stdin: new TextEncoder().encode(input), stderr: "ignore" });
+    process.stdout.write(r.stdout);
+  }
   process.exit(0);
 }
 

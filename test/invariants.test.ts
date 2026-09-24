@@ -187,11 +187,39 @@ test("the session banner reports counts, and a check as a check", () => {
 test("SessionEnd deletes the Stop hook's per-session temp files", () => {
   // macOS does not reliably clean $TMPDIR, so without this they pile up one pair per session.
   const id = `inv-end-${process.pid}`;
-  const files = [join(tmpdir(), `orly-rounds-${id}.json`), join(tmpdir(), `orly-nokey-${id}`)];
+  const files = [join(tmpdir(), `orly-rounds-${id}.json`), join(tmpdir(), `orly-status-${id}.json`), join(tmpdir(), `orly-nokey-${id}`)];
   for (const f of files) writeFileSync(f, "{}");
   const r = hook("claude-code.ts", { hook_event_name: "SessionEnd", session_id: id }, tmpdir());
   expect(r.exitCode).toBe(0);
   expect(files.filter((f) => existsSync(f))).toEqual([]);
+});
+
+test("the status line renders this session's last judgment beside the owl", () => {
+  const id = `inv-status-${process.pid}`;
+  const at = new Date(Date.now() - 120_000).toISOString();
+  const line = "orly ⛔ block · specs 1/2 · unverified_claim 0.10 · coverage 2.50/3 (conf 0.90) · next=finish 0.80 · 900+40 tok";
+  writeFileSync(join(tmpdir(), `orly-status-${id}.json`), JSON.stringify({ at, block: true, line, unmet: [{ id: "code_small", found: "4252, needs lte 2862" }] }));
+  writeFileSync(join(tmpdir(), `orly-rounds-${id}.json`), JSON.stringify({ goal: "", rounds: 2, bestMet: 1, stalled: 0 }));
+  try {
+    const r = Bun.spawnSync(["bun", join(import.meta.dir, "..", "bin", "orly.ts"), "statusline", "--then", "echo after"], {
+      stdin: new TextEncoder().encode(JSON.stringify({ session_id: id, workspace: { current_dir: join(import.meta.dir, "..") } })),
+    });
+    const out = r.stdout.toString().replace(/\x1b\[[0-9;]*m/g, "");
+    expect(out).toContain("{@,@}");
+    expect(out).toContain("BLOCK · specs 1/2 · round 2/");
+    expect(out).toContain("2m ago");
+    expect(out).toContain("unmet 1: code_small (4252, needs lte 2862)");
+    expect(out).toContain("coverage 2.50/3 (conf 0.90) · next=finish 0.80 · 900+40 tok");
+    expect(out).not.toContain("unverified_claim");
+    expect(out.trimEnd().endsWith("after")).toBe(true);
+    // Any other bar: no payload, one row, newest judgment for this project, no colour.
+    const root = join(import.meta.dir, "..");
+    writeFileSync(join(tmpdir(), `orly-status-${id}.json`), JSON.stringify({ at, cwd: root, block: false, line: "orly ✓ pass · specs 2/2", unmet: [] }));
+    const one = Bun.spawnSync([join(root, "scripts", "orly-status"), "--oneline"], { cwd: root, env: { ...process.env, NO_COLOR: "1" } });
+    expect(one.stdout.toString()).toBe("orly ✓ PASS · specs 2/2 · 2m ago · every spec met\n");
+  } finally {
+    for (const f of ["status", "rounds"]) rmSync(join(tmpdir(), `orly-${f}-${id}.json`), { force: true });
+  }
 });
 
 test("the core names no vendor, no host and no harness", () => {

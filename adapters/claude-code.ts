@@ -2,7 +2,8 @@
 /**
  * The Claude Code hook dialect, dispatched on `hook_event_name`:
  *
- *   Stop          transcript_path -> Turn -> gate -> {decision: "block", reason} or a banner
+ *   Stop          transcript_path -> Turn -> gate -> {decision: "block", reason}; the owl and
+ *                 status go to `orly statusline`, not the transcript
  *   SessionStart  the brief, as additionalContext
  *   PreToolUse    an Edit/Write to a spec file, refused if it weakens the gate
  *   SessionEnd    deletes the session's temp files
@@ -70,6 +71,6 @@ const outcome = await gateTurn({
 });
 
 if (outcome.note) console.error(`orly: ${outcome.note}`);
-if (outcome.block) emit({ decision: "block", reason: outcome.reason, systemMessage: outcome.banner });
-if (outcome.banner || outcome.message) emit({ systemMessage: outcome.banner ?? outcome.message });
+if (outcome.block) emit({ decision: "block", reason: outcome.reason });
+if (outcome.message) emit({ systemMessage: outcome.message });
 silent();

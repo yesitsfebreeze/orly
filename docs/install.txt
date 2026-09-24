@@ -21,6 +21,27 @@ per-host detail, including the plugin-ecosystem installs (codex plugin, gemini e
 copilot plugin, droid plugin, pi install), is in docs/hosts.txt.
 
 
+THE STATUS LINE
+---------------
+
+`scripts/orly-status` renders the owl, the last verdict, the unmet specs and the top goal
+for any status bar: it reads {session_id, cwd} on stdin when the bar sends it, else shows
+the newest judgment for the current project. `--oneline` fits one-row bars; NO_COLOR=1
+drops colour.
+
+  tmux:      set -g status-right '#(cd #{pane_current_path} && ~/orly/scripts/orly-status --oneline)'
+  starship:  [custom.orly] command = "~/orly/scripts/orly-status --oneline"  when = "test -d .orly"
+
+In Claude Code the owl moves out of the transcript and into the status line:
+
+  sh orly/scripts/install-statusline.sh              # user settings; --project for this repo
+  sh orly/scripts/install-statusline.sh --uninstall  # restore what was there
+
+It shows the last verdict of this session with the specs met, the round against its cap
+and how long ago it ran; up to three unmet specs with what was found; coverage, the next
+step and tokens; and the top goal. A status line you already had keeps running below it.
+
+
 THE KEY
 -------
 
