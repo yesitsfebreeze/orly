@@ -1,28 +1,27 @@
 ---
-description: Turn a goal into checkable specs and work until they pass — or report a mistake and have it fixed, specced and replayed in one go
+description: Turn a goal into checkable specs and work until they pass, or turn a reported mistake into the spec that catches it
 argument-hint: <a goal> | <what went wrong>
 allowed-tools: Read, Write, Bash, Glob, Grep
 ---
 
-The user wrote: **$ARGUMENTS**
+The user wrote: **$ARGUMENTS** (when nothing follows, use their last message).
 
 Decide which this is. A goal ("add retries to the client") → *Setting a goal*. A report
-that something went wrong ("it said tests pass but they didn't", "that block was wrong")
-→ *When something went wrong*, done in one go without asking.
+that something went wrong ("it said tests pass but they didn't") → *When something went wrong*.
 
-`orly` below means `bun "${CLAUDE_PLUGIN_ROOT}/bin/orly.ts"`. If that path is not set on
-this host, it is `bin/orly.ts` in the orly checkout, or plain `orly` after
-`bun install -g github:yesitsfebreeze/orly`.
+`orly` below means `bun "${CLAUDE_PLUGIN_ROOT}/bin/orly.ts"`; without that variable it is
+`bin/orly.ts` in the orly checkout.
 
 ## Setting a goal
 
 1. Read enough of the project to name its real commands and paths.
-2. Append the goal with `orly goal <group> "<text>"` — never overwrite `.orly/goal`, it is
-   a list and earlier goals still stand — then write one spec file per check under
-   `.orly/specs/<group>/`. `orly tasks` lists what is unmet, most important goal first.
-3. Run `orly specs`. Rewrite every spec it rejects and re-run until clean; an
-   undecidable spec yields a confident number that means nothing.
-4. Show the user the spec list in one short block, then start the work.
+2. Write `.orly/goal` (`rounds: 6`, a blank line, then `- <group>: <text>` per goal) and one
+   spec file per check under `.orly/specs/<group>/`. Put every check a command can decide
+   into `checks` in `.orly/config.json` and assert it with `require:`.
+3. Run `orly specs`. Rewrite every spec it rejects and re-run until clean; an undecidable
+   spec yields a confident number that means nothing. If the judge cannot be reached, say
+   so plainly: the word filter ran, decidability did not.
+4. Show the user the spec list in one short block (`orly tree`), then start the work.
 
 From then on every turn you try to end is judged against these specs. The loop ends when
 every spec is met, when you state plainly what you could not do and why, or when the
@@ -31,7 +30,7 @@ round cap runs out.
 ## Writing a spec
 
 A spec is one yes/no question about the recorded evidence of a turn: commands run, their
-output, what you said, and evidence orly gathers itself.
+output, what you said, and files orly reads from disk itself.
 
 - **Observable.** "Do `command_results` show a test run reporting zero failures after the
   last edit?", not "the tests are good".
@@ -51,37 +50,19 @@ Look at the `duration.js` entry under `project.files`, which is the file's real 
 content. Is the `throw new Error("not implemented")` stub gone?
 ```
 
-Headers:
-
-- `evidence: a, b`: files read at judging time into `project.files`. Use it for any spec
-  about file state, so the answer never depends on what you printed.
-- `require: <path> <op> <value>`: decided in code from a check in `.orly/config.json`,
-  e.g. `require: checks.tests.exit equals 0` with
-  `"checks": {"tests": {"command": "bun test"}}`. Use it whenever a command can decide.
-- `context` sources in `.orly/config.json` (`"ticket": {"command": "…"}`), named in
-  `evidence:`: output the judge reads under `project.context`, for a ticket or a deploy.
-- `gather: <what to bring>`: for evidence nothing produces. The block asks for it.
-- `optional: yes`: may stay unmet if you say why. `cut`, `true`, `false` also exist.
-
-A file that does not parse blocks every turn until fixed. `orly tree` prints the index.
+Headers: `require: <path> <op> <value>` (decided in code from a check, e.g.
+`require: checks.tests.exit equals 0` with `"checks": {"tests": {"command": "bun test"}}`),
+`evidence: a, b` (files read at judging time), `cut: 0.6`, `optional: yes`, `true:` and
+`false:` (what met and unmet look like). A file that does not parse blocks every turn
+until fixed.
 
 ## When something went wrong
 
-1. **Find the turn.** `orly turns`; `last` is the newest.
-2. **Direction.** `block` if a mistake got through, `pass` if a fine turn was blocked.
-3. **Freeze, spec and replay in one command.** For a missed mistake, write the question
-   that would have caught it and file it in its group:
+1. Write the question that would have caught it as a new spec in its group, with
+   `evidence:` when it is about file state.
+2. Run `orly specs`; reword until it is accepted.
+3. Fix the mistake itself in the work, so the new spec is met this turn.
+4. Report in two lines: the spec file, and what was fixed.
 
-   ```
-   orly case last block "<what went wrong, in the user's words>" --spec <group>/<id> --ask "<question>"
-   ```
-
-   Drop `--ask` when an existing spec should have caught it. For a wrong block:
-   `orly case <turn> pass "<why it was fine>"`, then reword the spec that fired. Never
-   lower its cut or delete it.
-4. **Replay until every case is right.** If one is wrong, reword the spec or add
-   `evidence:`, then `orly replay`. A fix that breaks an earlier case is not a fix.
-5. **Fix the mistake itself** in the work, so the new spec passes this turn.
-6. **Report in three lines:** spec file, case file, replay score.
-
-Cases in `.orly/cases/` are committed and hold the turn verbatim: check for secrets first.
+If a fine turn was blocked, reword the spec that fired so it branches on when it applies.
+Never lower its cut or delete it: the next stop is refused when the spec set got weaker.

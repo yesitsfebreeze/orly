@@ -1,32 +1,21 @@
 {
   "name": "orly",
-  "version": "0.3.0",
-  "description": "orly? — at the end of every turn, checks the agent's work against your specs and refuses the stop until they hold.",
+  "version": "0.4.0",
+  "description": "orly? — turns your goal into yes/no questions a judge answers at the end of every turn, and refuses the stop until they hold.",
   "type": "module",
   "license": "MIT",
   "repository": "github:yesitsfebreeze/orly",
   "bin": {
     "orly": "bin/orly.ts"
   },
-  "main": "adapters/opencode.ts",
   "exports": {
-    ".": "./adapters/opencode.ts",
-    "./pi": "./adapters/pi.ts",
-    "./gate": "./src/turnend.ts"
-  },
-  "pi": {
-    "extensions": [
-      "./adapters/pi.ts"
-    ],
-    "skills": [
-      "./skills"
-    ]
+    ".": "./src/orly.ts"
   },
   "engines": {
     "bun": ">=1.1"
   },
   "scripts": {
     "test": "bun test",
-    "calibrate": "bun test/calibrate.ts --write"
+    "calibrate": "bun test/calibrate.ts"
   }
 }
