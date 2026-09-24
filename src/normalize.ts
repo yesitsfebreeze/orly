@@ -144,6 +144,14 @@ export function normalize(messages: Msg[]): Turn {
   };
 }
 
+/**
+ * A block reason a host echoed back as a user message. Most hosts deliver the reason as
+ * the next prompt; left in, it would be taken as the human's request and the work before
+ * it dropped. Both leads are fixed strings in gate.ts and guard.ts.
+ */
+export const isInjectedReason = (text: string) =>
+  text.startsWith("orly (an independent") || text.startsWith("orly? refuses") || text.startsWith("orly? —");
+
 /** Split a full message log at the last genuine human message and normalise that turn. */
 export function normalizeLastTurn(messages: Msg[]): Turn {
   let start = 0;
@@ -151,9 +159,12 @@ export function normalizeLastTurn(messages: Msg[]): Turn {
     const m = messages[i];
     if (m.role !== "user") continue;
     if (hasToolResult(m.content)) continue;
-    if (!textOf(m.content).trim()) continue;
+    const text = textOf(m.content).trim();
+    if (!text) continue;
+    if (isInjectedReason(text)) continue;
     start = i;
     break;
   }
-  return normalize(messages.slice(start));
+  // The echoed reasons themselves are not part of the turn either.
+  return normalize(messages.slice(start).filter((m) => m.role !== "user" || hasToolResult(m.content) || !isInjectedReason(textOf(m.content).trim())));
 }

@@ -95,7 +95,7 @@ test("the edit guard reconstructs the file and refuses a weakening", () => {
   // The hook has only the tool call and must project the resulting file itself.
   const { dir, path } = specSandbox(0.7);
   try {
-    const r = hook("claude-code-guard.ts", edit(dir, path, '"cut": 0.7', '"cut": 0.3'), dir);
+    const r = hook("claude-code.ts", edit(dir, path, '"cut": 0.7', '"cut": 0.3'), dir);
     expect(r.stdout.toString()).toContain("deny");
     expect(r.stdout.toString()).toContain("its cut was lowered");
   } finally {
@@ -106,9 +106,9 @@ test("the edit guard reconstructs the file and refuses a weakening", () => {
 test("the edit guard stays out of the way of tightening and of other files", () => {
   const { dir, path } = specSandbox(0.7);
   try {
-    expect(hook("claude-code-guard.ts", edit(dir, path, '"cut": 0.7', '"cut": 0.9'), dir).stdout.toString()).toBe("");
+    expect(hook("claude-code.ts", edit(dir, path, '"cut": 0.7', '"cut": 0.9'), dir).stdout.toString()).toBe("");
     const elsewhere = edit(dir, join(dir, "src.ts"), "a", "b");
-    expect(hook("claude-code-guard.ts", elsewhere, dir).stdout.toString()).toBe("");
+    expect(hook("claude-code.ts", elsewhere, dir).stdout.toString()).toBe("");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -162,7 +162,7 @@ test("the session banner reports counts, and a check as a check", () => {
       JSON.stringify({ at: "2026-01-01T00:00:00Z", session: "s", blocked, scores: {}, unmet: [], hazards: [], actions: 1, results: 1 });
     writeFileSync(join(dir, ".orly", "log.jsonl"), `${rec(true)}\n${rec(false)}\n`);
 
-    const r = hook("claude-code-session.ts", { cwd: dir }, dir);
+    const r = hook("claude-code.ts", { hook_event_name: "SessionStart", cwd: dir }, dir);
     const context = JSON.parse(r.stdout.toString()).hookSpecificOutput.additionalContext;
     expect(context).toContain("2 judged turns, 1 blocked");
     expect(context).toContain("`builds` (check: checks.build.exit equals 0)");
@@ -266,7 +266,7 @@ test("a project running spec-only is told so, rather than reading as compliant",
       join(dir, ".orly", "specs.json"),
       JSON.stringify({ goal: "g", specs: [{ id: "a", instructions: "is it done?", cut: 0.7 }] }),
     );
-    const out = hook("claude-code-session.ts", { cwd: dir }, dir);
+    const out = hook("claude-code.ts", { hook_event_name: "SessionStart", cwd: dir }, dir);
     expect(JSON.parse(out.stdout.toString()).hookSpecificOutput.additionalContext)
       .toContain("No deterministic checks are configured");
   } finally {

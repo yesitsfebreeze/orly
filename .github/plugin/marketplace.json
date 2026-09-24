@@ -12,10 +12,7 @@
       "name": "orly",
       "source": "./",
       "description": "orly? — at the end of every turn, checks the agent's work against your specs and refuses the stop until they hold.",
-      "category": "productivity",
-      "interface": {
-        "displayName": "orly?"
-      }
+      "version": "0.3.0"
     }
   ]
 }

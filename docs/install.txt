@@ -3,11 +3,22 @@ INSTALLING ORLY
 
 Needs bun on PATH and a TypeSafe API key (https://console.typesafe.ai).
 
-  claude plugin marketplace add /path/to/orly
-  claude plugin install orly@orly-local
+  claude plugin marketplace add yesitsfebreeze/orly
+  claude plugin install orly@orly
 
 Then /orly:orly <your goal>: it writes the spec tree in .orly/, validates it, and starts
 work. With no specs, only the built-in honesty checks run, blocking at most once per turn.
+
+Any other agent: clone the repository and let orly wire its own hooks.
+
+  git clone https://github.com/yesitsfebreeze/orly
+  bun orly/bin/orly.ts install codex      # or gemini, cursor, copilot, droid, qwen, goose,
+                                          # opencode, kilo, pi, continue, junie
+  bun orly/bin/orly.ts hosts              # every host and how it is gated
+
+`--global` writes the user-level file; `--dry-run` shows what would be written. The
+per-host detail, including the plugin-ecosystem installs (codex plugin, gemini extensions,
+copilot plugin, droid plugin, pi install), is in docs/hosts.txt.
 
 
 THE KEY

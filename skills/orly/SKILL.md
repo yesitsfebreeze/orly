@@ -1,18 +1,17 @@
 ---
-description: Turn a goal into checkable specs and work until they pass — or report a mistake and have it fixed, specced and replayed in one go
-argument-hint: <a goal> | <what went wrong>
-allowed-tools: Read, Write, Bash, Glob, Grep
+name: orly
+description: Turn a goal into checkable specs and work until they pass — or report a mistake and have it fixed, specced and replayed in one go. Use when the user states a goal for this session, or says something the agent did was wrong.
 ---
 
-The user wrote: **$ARGUMENTS**
+The user wrote: **$ARGUMENTS** (when nothing follows, use their last message).
 
 Decide which this is. A goal ("add retries to the client") → *Setting a goal*. A report
 that something went wrong ("it said tests pass but they didn't", "that block was wrong")
 → *When something went wrong*, done in one go without asking.
 
 `orly` below means `bun "${CLAUDE_PLUGIN_ROOT}/bin/orly.ts"`. If that path is not set on
-this host, it is `bin/orly.ts` in the orly checkout, or plain `orly` after
-`bun install -g github:yesitsfebreeze/orly`.
+this host, it is `bin/orly.ts` in the orly checkout (two directories above this file when
+installed as a plugin), or plain `orly` after `bun install -g github:yesitsfebreeze/orly`.
 
 ## Setting a goal
 

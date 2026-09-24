@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code-session.ts\"",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code.ts\"",
             "timeout": 10,
             "statusMessage": "orly? loading the gate"
           }
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code-guard.ts\"",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code.ts\"",
             "timeout": 10
           }
         ]
