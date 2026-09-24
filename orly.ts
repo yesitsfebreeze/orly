@@ -56,9 +56,7 @@ export function selectResults(results: string[], max = MAX_RESULTS): string[] {
 
 /** Reduce one turn's messages, starting at the human request, to a `Turn`. */
 export function normalize(messages: Msg[]): Turn {
-  const said: string[] = [];
-  const actions: string[] = [];
-  const results: string[] = [];
+  const said: string[] = [], actions: string[] = [], results: string[] = [];
   const result = (body: string) => body.trim() && results.push(clip(body.replace(/\n{3,}/g, "\n\n"), 600));
   let lastActionAt = -1;
   let lastTextAt = -1;
@@ -89,9 +87,10 @@ export function normalize(messages: Msg[]): Turn {
 export const isInjectedReason = (text: string) => /^(Stop hook feedback:\s*)?orly(?: \(an independent|\? refuses|\? —)/.test(text);
 const human = (m: Msg) => m.role === "user" && !hasToolResult(m.content);
 
-/** Split at the last genuine human message and normalise that turn; `closing` stands in for a closing message the transcript lags. */
+/** Split at the last genuine human message and normalise that turn; `closing` stands in for a closing message the transcript lags (a reply to block feedback too). */
 export function normalizeLastTurn(messages: Msg[], closing?: string): Turn {
-  if (closing?.trim() && !normalizeLastTurn(messages).conclusive) messages = [...messages, { role: "assistant", content: closing }];
+  const lag = closing?.trim() ? normalizeLastTurn(messages) : null;
+  if (lag && (!lag.conclusive || lag.assistant_final_message !== clip(closing!.trim(), 4000))) messages = [...messages, { role: "assistant", content: closing }];
   const start = messages.findLastIndex((m) => human(m) && textOf(m.content).trim() && !isInjectedReason(textOf(m.content).trim()));
   return normalize(messages.slice(Math.max(0, start)).filter((m) => !human(m) || !isInjectedReason(textOf(m.content).trim())));
 }

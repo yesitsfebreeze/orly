@@ -124,6 +124,20 @@ test("a closing message the transcript has not caught up with makes the turn con
   expect(normalizeLastTurn(lagging, "  ").conclusive).toBe(false);
 });
 
+test("a reply to block feedback the transcript has not caught up with is what gets judged", () => {
+  const answered = [
+    { role: "user", content: "fix add" },
+    { role: "assistant", content: [{ type: "tool_use", id: "x", name: "Bash", input: { command: "bun test" } }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "x", content: "1 pass" }] },
+    { role: "assistant", content: "Fixed." },
+    { role: "user", content: "Stop hook feedback:\norly (an independent TypeSafe/Jev judgment on this turn) is not satisfied" },
+  ];
+  const t = normalizeLastTurn(answered, "Done: fixed, 1 pass. Open: nothing.");
+  expect(t.assistant_final_message).toBe("Done: fixed, 1 pass. Open: nothing.");
+  expect(t.assistant_said).toBe("Fixed.\n\nDone: fixed, 1 pass. Open: nothing.");
+  expect(t.user_request).toBe("fix add");
+});
+
 test("Codex: the hook fails open, and blocks a weakened gate with the transcript found by session id", async () => {
   const p = await project();
   try {
