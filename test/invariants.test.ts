@@ -206,9 +206,10 @@ test("the status line renders this session's last judgment beside the owl", () =
     });
     const out = r.stdout.toString().replace(/\x1b\[[0-9;]*m/g, "");
     expect(out).toContain("{@,@}");
-    expect(out).toContain("BLOCK  1/2 specs · round 2/");
+    expect(out).toContain("│ ✗ BLOCK           2m ago │");
+    expect(out).toContain("│ round 2/6    ███░░░░░░░  │");
     expect(out).toContain("2m ago");
-    expect(out).toContain("· coverage 2.50/3 · next fin…"); // clipped at 80 cells, never spilled
+    expect(out).toContain("└─ next finish 0.80 · 900+40 tok ─");
     expect(out).not.toContain("unverified_claim");
     expect(out.trimEnd().endsWith("after")).toBe(true);
     // Any other bar: no payload, one row, newest judgment for this project, no colour.

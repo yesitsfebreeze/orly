@@ -121,62 +121,100 @@ export function scroll(text: string, width: number, tick: number, rest = 6): str
 /** One goal as the status line sees it. `group` names it; `specs` are the ids serving it. */
 export type GoalRow = { group: string; text: string; specs: string[] };
 
+/** `row`, padded with spaces to exactly `width` cells. */
+const fit = (segs: Seg[], width: number) => {
+  const r = row(segs, width);
+  return r + " ".repeat(Math.max(0, width - cells(r.replace(/\x1b\[[0-9;]*m/g, ""))));
+};
+
+/** A `w`-cell gauge: filled cells for `n` of `of`. */
+const gauge = (n: number, of: number, w: number) => {
+  const f = of > 0 ? Math.round(Math.min(1, Math.max(0, n / of)) * w) : 0;
+  return "█".repeat(f) + "░".repeat(w - f);
+};
+
+/** A horizontal edge `w` cells wide with a title let into it, like `─ goals 3 ──────`. */
+const edge = (title: string, w: number) => {
+  const t = title ? `─ ${Array.from(title).slice(0, Math.max(0, w - 4)).join("")} ` : "";
+  return t + "─".repeat(Math.max(0, w - cells(t)));
+};
+
+const COCKPIT_OWL = [" , .", "{@,@}", "/) )", ` '"`];
+const GATE = 24; // cells inside the gate panel: a label, a count and a 10-cell gauge
+
 /**
- * The status line, in whole cells and at most `width` of them (80, the narrowest pane it will
- * meet). Row 1 beside the owl: verdict, specs met, round, age. Then one row per goal: its
- * specs met, its first failing spec with what was found, and its text, scrolling in whatever
- * cells are left. Only a failing count or the verdict carries colour.
+ * The status line as a cockpit, in whole cells and exactly `width` of them (80, the narrowest
+ * pane it will meet). Three panels under one sharp-cornered frame: the owl; the gate — verdict
+ * and age, specs met, the round against its cap, coverage, each with a gauge; and the goals —
+ * one row per goal with its count, its first failing spec and what was found, and its text
+ * scrolling in the cells left. The bottom edge carries why a failing turn was let go, else
+ * the judge's next step. Below 64 cells the owl panel is dropped first. Colour marks status
+ * only; the frame is dim so the readings lead.
  */
 export function statusLines(
   s: Status | null,
   ctx: { specs: number; goals: GoalRow[]; round?: number; maxRounds: number; now?: number; width?: number; oneline?: boolean },
 ): string[] {
   const now = ctx.now ?? Date.now();
-  const inner = (ctx.width ?? 80) - OWL_MARGIN - OWL_PAD;
+  const width = ctx.width ?? 80;
   const open = new Map((s?.unmet ?? []).map((u) => [u.id, u.found]));
   const tick = Math.floor(now / 500); // two cells a second at a one-second redraw
-
-  let head: Seg[];
-  if (!s) head = [["orly", ROLE.strong], [` ${ctx.specs} specs armed · not judged yet`, ROLE.quiet]];
-  else {
-    const parts = s.line.split(" · ").slice(1);
-    const met = (parts.find((p) => p.startsWith("specs ")) ?? "specs ?").slice(6);
-    const detail = parts
-      .filter((p) => /^(coverage|next=)/.test(p))
-      .map((p) => p.replace(/ \(conf [\d.]+\)/, "").replace("next=", "next "))
-      .join(" · ");
-    const [mark, role] = s.note ? ["◐ LET GO", ROLE.warn] : s.block ? ["✗ BLOCK", ROLE.bad] : ["✓ PASS", ROLE.good];
-    head = [
-      [mark, ROLE.strong + role],
-      [`  ${met} specs${ctx.round ? ` · round ${ctx.round}/${ctx.maxRounds}` : ""} · ${ago(s.at, now)}`],
-      [s.note ? ` · ${s.note}` : detail ? ` · ${detail}` : "", ROLE.quiet],
-    ];
-  }
+  const parts = s ? s.line.split(" · ").slice(1) : [];
+  const [metN, total] = ((parts.find((p) => p.startsWith("specs ")) ?? "").slice(6).split("/").map(Number) as number[]);
+  const specsTotal = total || ctx.specs;
+  const specsMet = s ? metN ?? specsTotal - open.size : undefined;
+  const cover = Number(/^coverage ([\d.]+)/.exec(parts.find((p) => p.startsWith("coverage")) ?? "")?.[1]);
+  const next = parts.find((p) => p.startsWith("next="))?.slice(5).replace(/ ([\d.]+)$/, " $1");
+  const tok = parts.find((p) => p.endsWith(" tok"));
+  const [mark, role] = !s ? ["○ ARMED", ROLE.quiet] : s.note ? ["◐ LET GO", ROLE.warn] : s.block ? ["✗ BLOCK", ROLE.bad] : ["✓ PASS", ROLE.good];
 
   const failing = (g: GoalRow) => g.specs.filter((id) => open.has(id));
   const why = (ids: string[]) => `✗ ${ids[0]} ${open.get(ids[0])}${ids.length > 1 ? ` +${ids.length - 1}` : ""}`;
   if (ctx.oneline) {
     const first = ctx.goals.map(failing).find((f) => f.length);
-    return [row([...head.slice(0, 2), [first ? ` · ${why(first)}` : ""]], ctx.width ?? 80)];
+    const head: Seg[] = [[mark, ROLE.strong + role], [s ? `  ${specsMet}/${specsTotal} specs · ${ago(s.at, now)}` : `  ${ctx.specs} specs`]];
+    return [row([...head, [first ? ` · ${why(first)}` : ""]], width)];
   }
 
+  const withOwl = width >= 64;
+  const goalsW = width - GATE - (withOwl ? 15 : 7); // three panels, their borders and one cell of air each side
+  const height = Math.max(4, ctx.goals.length);
+  const B = ROLE.quiet;
+  const bar = (n: number | undefined, of: number, r: string): Seg[] =>
+    n === undefined || !Number.isFinite(n) ? [["–".padEnd(11), ROLE.quiet]] : [[gauge(n, of, 10), r], [" "]];
+  const gate: Seg[][] = [
+    [[mark, ROLE.strong + role], [s ? ago(s.at, now).padStart(GATE - cells(mark)) : "not judged".padStart(GATE - cells(mark)), ROLE.quiet]],
+    [["specs ", ROLE.quiet], [`${specsMet ?? "–"}/${specsTotal}`.padEnd(7)], ...bar(specsMet, specsTotal, specsMet === specsTotal ? ROLE.good : ROLE.bad)],
+    [["round ", ROLE.quiet], [(ctx.round ? `${ctx.round}/${ctx.maxRounds}` : "–").padEnd(7)], ...bar(ctx.round, ctx.maxRounds, ctx.round && ctx.round >= ctx.maxRounds ? ROLE.warn : "")],
+    [["cover ", ROLE.quiet], [(Number.isFinite(cover) ? `${cover.toFixed(1)}/3` : "–").padEnd(7)], ...bar(Number.isFinite(cover) ? cover : undefined, 3, cover < 1.5 ? ROLE.bad : "")],
+  ];
   const name = Math.max(0, ...ctx.goals.map((g) => cells(g.group)));
-  const count = (n: number | string, of: number) => `${n}/${of}`.padStart(2 * String(Math.max(0, ...ctx.goals.map((g) => g.specs.length))).length + 1);
-  const goals = ctx.goals.map((g, i) => {
+  const count = (n: number | string, of: number) =>
+    `${n}/${of}`.padStart(2 * String(Math.max(0, ...ctx.goals.map((g) => g.specs.length))).length + 1);
+  const goals: Seg[][] = ctx.goals.map((g, i) => {
     const f = failing(g);
     const segs: Seg[] = [
-      [`▕${count(s ? g.specs.length - f.length : "–", g.specs.length)}▏`, s && f.length ? ROLE.bad : ROLE.quiet],
-      [` ${g.group.padEnd(name)}  `],
+      [g.group.padEnd(name + 1)],
+      [`▕${count(s ? g.specs.length - f.length : "–", g.specs.length)}▏ `, s && f.length ? ROLE.bad : ROLE.quiet],
       [f.length ? `${why(f)}  ` : ""],
     ];
-    const room = inner - segs.reduce((n, [t]) => n + cells(t), 0);
+    const room = goalsW - segs.reduce((n, [t]) => n + cells(t), 0);
     if (room >= 12) segs.push([scroll(g.text, room, tick + i * 5), ROLE.quiet]); // under 12 cells a goal is noise
-    return row(segs, inner);
+    return segs;
   });
 
-  // The owl's rule runs down every row, so the goals below the owl still read as its block.
-  const margin = " ".repeat(OWL_MARGIN);
-  const rows = [row(head, inner), ...goals];
-  while (rows.length < OWL.length) rows.push("");
-  return rows.map((r, i) => (margin + (OWL[i] ?? "|").padEnd(OWL_PAD) + r).trimEnd());
+  const foot = s?.note ?? [next && `next ${next}`, tok].filter(Boolean).join(" · ");
+  const inner = width - 2;
+  const top = withOwl ? `┌${"─".repeat(7)}┬${edge("gate", GATE + 2)}┬${edge(`goals ${ctx.goals.length}`, goalsW + 2)}┐` : `┌${edge("gate", GATE + 2)}┬${edge(`goals ${ctx.goals.length}`, goalsW + 2)}┐`;
+  const bottom = `└${edge(foot, inner)}┘`;
+  const rows: string[] = [`${B}${top}${OFF}`];
+  for (let i = 0; i < height; i++) {
+    const owl = withOwl ? `${B}│${OFF} ${fit([[COCKPIT_OWL[i] ?? ""]], 5)} ` : "";
+    rows.push(
+      `${owl}${B}│${OFF} ${fit(gate[i] ?? [], GATE)} ${B}│${OFF} ${fit(goals[i] ?? [], goalsW)} ${B}│${OFF}`,
+    );
+  }
+  // The bottom edge's title is the one reading that must not be missed: undimmed.
+  rows.push(foot ? `${B}└─${OFF} ${row([[foot, s?.note ? ROLE.warn : ""]], inner - 4)} ${B}${"─".repeat(Math.max(0, inner - 3 - cells(row([[foot]], inner - 4))))}┘${OFF}` : `${B}${bottom}${OFF}`);
+  return rows;
 }

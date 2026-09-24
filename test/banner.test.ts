@@ -28,10 +28,16 @@ test("each goal row carries its count and its first failing spec, inside the wid
   ];
   const status = { at: new Date(0).toISOString(), block: true, line: "orly ⛔ block · specs 1/3", unmet: [{ id: "b", found: "4431, needs ≤ 2862" }] };
   const out = statusLines(status, { specs: 3, goals, maxRounds: 6, now: 60_000, width: 64 }).map(plain);
-  expect(out[0]).toContain("✗ BLOCK  1/3 specs · 1m ago");
-  expect(out[1]).toContain("▕1/2▏ readme  ✗ b 4431, needs ≤ 2862");
-  expect(out[2]).toContain("▕1/1▏ other   specs that serve no goal");
-  for (const l of out) expect(Array.from(l).length).toBeLessThanOrEqual(64);
+  expect(out[0]).toStartWith("┌───────┬─ gate ");
+  expect(out[1]).toContain("│ ✗ BLOCK           1m ago │");
+  expect(out[2]).toContain("│ specs 1/3    ███░░░░░░░  │");
+  expect(out[1]).toContain("readme ▕1/2▏ ✗ b 4431, n… │"); // cut at its panel edge, never spilled
+  expect(out[2]).toContain("other  ▕1/1▏ specs that serve no goal");
+  // Every row is exactly the width, frame included; below 64 cells the owl panel goes first.
+  for (const l of out) expect(Array.from(l).length).toBe(64);
+  const narrow = statusLines(status, { specs: 3, goals, maxRounds: 6, now: 60_000, width: 50 }).map(plain);
+  expect(narrow[1]).not.toContain("{@,@}");
+  for (const l of narrow) expect(Array.from(l).length).toBe(50);
   expect(statusLines(status, { specs: 3, goals, maxRounds: 6, now: 60_000, oneline: true }).map(plain)).toEqual([
     "✗ BLOCK  1/3 specs · 1m ago · ✗ b 4431, needs ≤ 2862",
   ]);
