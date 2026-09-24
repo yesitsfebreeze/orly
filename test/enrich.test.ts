@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { projectEvidence } from "../orly.ts";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Turn } from "../orly.ts";
@@ -115,4 +115,28 @@ test("a check past its timeout is killed with its children, and the gate does no
   ]);
   expect(e.checks.slow.exit).toBeNull();
   expect(Date.now() - t0).toBeLessThan(2000);
+});
+
+test("a check reruns only when the git tree moved, or always when live", async () => {
+  const r = fresh(), runs = join(mkdtempSync(join(tmpdir(), "orly-runs-")), "n");
+  const git = (...a: string[]) => Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: r });
+  try {
+    git("init", "-q"); git("add", "."); git("commit", "-qm", "i");
+    const checks = { c: { command: `cat thing.ts; echo . >> ${runs}` }, l: { command: `echo . >> ${runs}.l`, live: true } };
+    const specs: any = ["c", "l"].map((n) => ({ id: n, instructions: "n/a", require: { path: `checks.${n}.exit`, op: "equals", value: 0 } }));
+    const count = (p: string) => readFileSync(p, "utf8").length / 2;
+    const e: any = await projectEvidence({ cwd: r, checks })(turn, specs);
+    await projectEvidence({ cwd: r, checks })(turn, specs);
+    expect(e.checks.c.out).toContain("done = true");
+    expect([count(runs), count(`${runs}.l`)]).toEqual([1, 2]);
+    writeFileSync(join(r, "note.txt"), "same"); await projectEvidence({ cwd: r, checks })(turn, specs);
+    await Bun.sleep(5); writeFileSync(join(r, "note.txt"), "same"); await projectEvidence({ cwd: r, checks })(turn, specs);
+    expect(count(runs)).toBe(2); // a new untracked file reran it once; rewriting it unchanged did not
+    writeFileSync(join(r, "thing.ts"), "export const done = false;\n");
+    const e2: any = await projectEvidence({ cwd: r, checks })(turn, specs);
+    expect(count(runs)).toBe(3);
+    expect(e2.checks.c.out).toContain("done = false");
+  } finally {
+    rmSync(r, { recursive: true, force: true });
+  }
 });
