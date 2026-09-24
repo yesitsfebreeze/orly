@@ -84,8 +84,9 @@ WHAT IS VERIFIED
 
 The transcript readers, the fail-open paths of every adapter, and the installer are
 exercised by `bun test` against payloads shaped like each host's documentation. Claude Code
-is used daily. Droid, Qwen, Continue, Junie, Kilo and the plugin-ecosystem install commands
-are wired from documentation and not yet run against the host; `orly hosts` marks them.
+is the host this repository was built in. Droid, Qwen, Continue, Junie, Kilo and the
+plugin-ecosystem install commands are wired from documentation and not yet run against the
+host; `orly hosts` marks them.
 A hook that fails, on any host, lets the agent stop: a judge that is down never becomes a
 wall.
 
