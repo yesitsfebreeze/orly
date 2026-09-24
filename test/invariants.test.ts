@@ -137,6 +137,25 @@ test("SessionEnd deletes the Stop hook's per-session temp files", () => {
   expect(files.filter((f) => existsSync(f))).toEqual([]);
 });
 
+test("a Stop with no key publishes the versioned status file, nokey set", () => {
+  const { dir } = specTree(0.7);
+  const id = `inv-status-${process.pid}`;
+  try {
+    const r = Bun.spawnSync(["bun", join(ROOT, "install", "claude/adapter.ts")], {
+      cwd: dir,
+      stdin: Buffer.from(JSON.stringify({ hook_event_name: "Stop", cwd: dir, session_id: id, transcript_path: join(dir, "nope.jsonl") })),
+      env: { ...process.env, HOME: join(dir, "home"), TYPESAFE_API_KEY: "", ORLY_KEY_COMMAND: "" },
+    });
+    expect(r.exitCode).toBe(0);
+    const s = JSON.parse(readFileSync(join(dir, "home", ".orly", "status", `${id}.json`), "utf8"));
+    expect(s).toMatchObject({ v: 1, pct: null, blocked: false, round: 0, rounds: 6, specs: { met: 0, total: 1 }, nokey: true });
+    expect(typeof s.ts).toBe("number");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(tmpdir(), `orly-nokey-${id}`), { force: true });
+  }
+});
+
 test("the core names no vendor, no host and no harness", () => {
   // Host knowledge lives in adapters and declared commands, never in the core file.
   const VENDOR = /\bkern\b|claude|anthropic|openai|cursor|opencode/i;

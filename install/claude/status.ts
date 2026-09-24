@@ -12,8 +12,11 @@ export const register: Register = (on) => {
   });
 
   on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
+    // kern's turn deck draws orly's row when present; kern is not in orly's PluginState, hence the cast.
+    const { value: deck } = await $.state.get({ plugin: 'kern', key: 'deck' } as any);
+    if (deck) return next(e);
     const drawn = await next(e);
-    let s: { pct: number | null; blocked: boolean; items: string[] };
+    let s: { pct: number | null; blocked: boolean; items: string[]; nokey?: boolean };
     try {
       s = JSON.parse(String(await $.fs.read(`${await $.env.get('HOME')}/.orly/status/${await $.session.id()}.json`)));
     } catch {
@@ -29,7 +32,7 @@ export const register: Register = (on) => {
       Text({ children: [
         '  ',
         Text({ color, children: '█'.repeat(full) }),
-        Text({ dimColor: true, children: `${'░'.repeat(width - full)} orly? ${s.pct === null ? '–' : `${pct}%`}${s.blocked ? ' · blocked' : ''}` }),
+        Text({ dimColor: true, children: `${'░'.repeat(width - full)} orly? ${s.pct === null ? '–' : `${pct}%`}${s.blocked ? ' · blocked' : ''}${s.nokey ? ' · no key' : ''}` }),
       ] }),
       ...s.items.map((item) => Text({ dimColor: true, children: `    ${item}` })),
     ] });
