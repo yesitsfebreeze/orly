@@ -80,7 +80,7 @@ test("a weakened spec set blocks before any key is needed", async () => {
   }
 });
 
-test("a failing require check blocks before any key or judge, in well under a second", async () => {
+test("a failing require check blocks before any key or judge", async () => {
   const dir = sandbox();
   try {
     mkdirSync(join(dir, ".orly", "specs", "g"), { recursive: true });
@@ -89,9 +89,7 @@ test("a failing require check blocks before any key or judge, in well under a se
     writeFileSync(join(dir, ".orly", "specs", "g", "tests.spec"), "require: checks.tests.exit equals 0\n\nDo the tests pass?\n");
     const turn = { user_request: "fix it", assistant_final_message: "done", assistant_said: "done", actions_taken: ["Edit: a.ts"], command_results: [], conclusive: true };
     const gate = () => withoutKey(() => gateTurn({ cwd: dir, sessionId: `c-${Math.random()}`, read: async () => turn, flush: false }));
-    const t0 = performance.now();
-    const failing = await gate();
-    expect(performance.now() - t0).toBeLessThan(1000);
+    const failing = await gate(); // without a key, a gate that asked for one first would allow
     expect(failing.block).toBe(true);
     expect(failing.reason).toContain('check "tests" failed');
     writeFileSync(join(dir, "ok"), "");
@@ -105,18 +103,18 @@ test("a failing require check blocks before any key or judge, in well under a se
 
 test("a check past the stop budget is left to the next stop instead of outlasting the hook", async () => {
   const dir = sandbox();
+  const go = join(sandbox(), "go"); // outside the project, so creating it does not move the tree
   process.env.ORLY_CHECK_BUDGET_MS = "100";
   try {
     mkdirSync(join(dir, ".orly", "specs", "g"), { recursive: true });
     writeFileSync(join(dir, ".orly", "goal"), "- g: tests\n");
-    writeFileSync(join(dir, ".orly", "config.json"), JSON.stringify({ checks: { tests: { command: "sleep 0.5; exit 1" } } }));
+    writeFileSync(join(dir, ".orly", "config.json"), JSON.stringify({ checks: { tests: { command: `until [ -e ${go} ]; do sleep 0.05; done; exit 1` } } }));
     writeFileSync(join(dir, ".orly", "specs", "g", "tests.spec"), "require: checks.tests.exit equals 0\n\nDo the tests pass?\n");
     const turn = { user_request: "fix it", assistant_final_message: "done", assistant_said: "done", actions_taken: ["Edit: a.ts"], command_results: [], conclusive: true };
     const gate = () => withoutKey(() => gateTurn({ cwd: dir, sessionId: `p-${Math.random()}`, read: async () => turn, flush: false }));
-    const t0 = performance.now();
-    expect((await gate()).block).toBe(false);
-    expect(performance.now() - t0).toBeLessThan(1000);
-    await Bun.sleep(700);
+    expect((await gate()).block).toBe(false); // returned while the check still waits on go: it did not outlast the budget
+    writeFileSync(go, "");
+    process.env.ORLY_CHECK_BUDGET_MS = "20000";
     const next = await gate();
     expect(next.block).toBe(true);
     expect(next.reason).toContain('check "tests" failed');

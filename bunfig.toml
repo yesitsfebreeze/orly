@@ -1,4 +1,2 @@
 [test]
-# Subprocess-heavy tests blow the 5s default on a loaded machine (seen at load avg 36).
-timeout = 30000
 preload = ["./test/preload.ts"]

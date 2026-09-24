@@ -304,11 +304,12 @@ test("a hung keyCommand times out with its children, leaving no key and no orpha
     mkdirSync(join(root, ".orly"));
     delete process.env.TYPESAFE_API_KEY;
     process.env.ORLY_KEY_TIMEOUT_MS = "200";
-    writeFileSync(join(root, ".orly", "config.json"), JSON.stringify({ keyCommand: "sleep 4.321; echo late" }));
+    const sleep = `sleep 30.${process.pid}`; // unique, so a parallel run's sleep is not counted as our orphan
+    writeFileSync(join(root, ".orly", "config.json"), JSON.stringify({ keyCommand: `${sleep}; echo late` }));
     const t0 = Date.now();
     expect(await resolveKey(root)).toBeUndefined();
-    expect(Date.now() - t0).toBeLessThan(2000);
-    expect(Bun.spawnSync(["pgrep", "-f", "sleep 4.321"]).stdout.toString().trim()).toBe("");
+    expect(Date.now() - t0).toBeLessThan(15_000); // half the sleep: killed, not waited out
+    expect(Bun.spawnSync(["pgrep", "-f", sleep]).stdout.toString().trim()).toBe("");
   } finally {
     if (saved.key === undefined) delete process.env.TYPESAFE_API_KEY;
     else process.env.TYPESAFE_API_KEY = saved.key;

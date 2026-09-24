@@ -110,11 +110,11 @@ test("evidence past the file limit is named as unread, never silently missing", 
 
 test("a check past its timeout is killed with its children, and the gate does not wait for them", async () => {
   const t0 = Date.now();
-  const e: any = await projectEvidence({ cwd: "/tmp", checks: { slow: { command: "sleep 3; echo done", timeoutMs: 200 } } })(turn, [
+  const e: any = await projectEvidence({ cwd: "/tmp", checks: { slow: { command: "sleep 30; echo done", timeoutMs: 200 } } })(turn, [
     { id: "a", instructions: "n/a", require: { path: "checks.slow.exit", op: "equals", value: 0 } },
   ]);
   expect(e.checks.slow.exit).toBeNull();
-  expect(Date.now() - t0).toBeLessThan(2000);
+  expect(Date.now() - t0).toBeLessThan(15_000); // half the sleep: it was killed, not waited out, at any load
 });
 
 test("a check reruns only when the git tree moved, or always when live", async () => {
@@ -146,12 +146,14 @@ test("a check past the budget is pending, keeps running, and the next stop reads
   Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", "init", "-q"], { cwd: r });
   Bun.spawnSync(["sh", "-c", "git add . && git -c user.name=t -c user.email=t@t commit -qm i"], { cwd: r });
   try {
-    const checks = { s: { command: `echo . >> ${runs}; sleep 0.4; exit 3` }, h: { command: "sleep 5", timeoutMs: 300 } };
+    // s waits for a go file, so it cannot finish inside the first stop at any load; h's timeout is 60x the budget.
+    const go = `${runs}.go`;
+    const checks = { s: { command: `echo . >> ${runs}; until [ -e ${go} ]; do sleep 0.05; done; exit 3` }, h: { command: "sleep 60", timeoutMs: 3000 } };
     const specs: any = ["s", "h"].map((n) => ({ id: n, instructions: "n/a", require: { path: `checks.${n}.exit`, op: "equals", value: 0 } }));
     const e: any = await projectEvidence({ cwd: r, checks, budgetMs: 50 })(turn, specs);
     expect([e.checks.s.pending, e.checks.h.pending]).toEqual([true, true]);
-    await Bun.sleep(600);
-    const e2: any = await projectEvidence({ cwd: r, checks, budgetMs: 50 })(turn, specs);
+    writeFileSync(go, "");
+    const e2: any = await projectEvidence({ cwd: r, checks, budgetMs: 20_000 })(turn, specs); // waits for s, then h's timeout
     expect([e2.checks.s.exit, e2.checks.h.exit, e2.checks.h.out]).toEqual([3, null, "[check killed: timeout]"]);
     expect(readFileSync(runs, "utf8")).toBe(".\n"); // ran once, finished after the first stop stopped waiting
   } finally {
