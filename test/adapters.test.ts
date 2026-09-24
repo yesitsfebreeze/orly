@@ -143,7 +143,7 @@ test("Codex: the hook fails open, and blocks a weakened gate with the transcript
   try {
     const hook = (payload: unknown) => Bun.spawnSync(["bun", join(import.meta.dir, "..", "install", "codex", "adapter.ts")], {
       cwd: p.dir, stdin: Buffer.from(typeof payload === "string" ? payload : JSON.stringify(payload)),
-      env: { ...process.env, CODEX_HOME: join(p.dir, "codex") }, stdout: "pipe", stderr: "pipe",
+      env: { ...process.env, CODEX_HOME: join(p.dir, "codex"), TYPESAFE_API_KEY: "test-key-never-used" }, stdout: "pipe", stderr: "pipe",
     });
     for (const bad of ["not json", { hook_event_name: "Stop", cwd: p.dir, session_id: "nope" }]) {
       const r = hook(bad);
