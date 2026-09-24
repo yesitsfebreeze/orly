@@ -489,7 +489,7 @@ export async function ask(state: unknown, questions: Record<string, unknown>, o:
   if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 300)}`);
   const out = await res.json(), answers = out?.answers as Record<string, any>;
   if (!answers || typeof answers !== "object") throw new Error("response had no answers");
-  if (!o.endpoint || new URL(o.endpoint).host === "api.typesafe.ai") try { const d = join(process.env.HOME || homedir(), ".jev", "log"); mkdirSync(d, { recursive: true }); appendFileSync(join(d, `${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify({ ts: Date.now(), client: "orly", model: o.model || "jev-latest", state, questions, answers }) + "\n"); } catch {}
+  if (!o.endpoint) try { const d = join(process.env.HOME || homedir(), ".jev", "log"); mkdirSync(d, { recursive: true }); appendFileSync(join(d, `${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify({ ts: Date.now(), client: "orly", model: o.model || "jev-latest", state, questions, answers }) + "\n"); } catch {}
   return { answers, usage: out.usage };
 }
 
