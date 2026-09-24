@@ -232,7 +232,9 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
       note,
       unmet: unmet(verdict.results).map((r) => ({
         id: r.spec.id,
-        found: r.spec.require ? `${JSON.stringify(r.actual)}, needs ${r.spec.require.op} ${String(r.spec.require.value ?? "")}` : `p=${r.p.toFixed(2)}`,
+        found: r.spec.require
+          ? `${JSON.stringify(r.actual)}, needs ${{ lte: "≤", gte: "≥", equals: "=" }[r.spec.require.op as string] ?? r.spec.require.op} ${String(r.spec.require.value ?? "")}`
+          : `p ${r.p.toFixed(2)}`,
       })),
     });
 

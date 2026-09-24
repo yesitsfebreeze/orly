@@ -83,64 +83,100 @@ const ago = (iso: string, now: number) => {
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
   return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`;
 };
-const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
-const RED = "\x1b[31m", GREEN = "\x1b[32m", YELLOW = "\x1b[33m", DIM = "\x1b[2m", OFF = "\x1b[0m";
+const OFF = "\x1b[0m";
+// Roles, not pigments: the user's palette supplies the colour. Colour only ever marks status.
+const ROLE = { bad: "\x1b[31m", good: "\x1b[32m", warn: "\x1b[33m", quiet: "\x1b[2m", strong: "\x1b[1m" };
+type Seg = [text: string, style?: string];
+const cells = (t: string) => Array.from(t).length;
 
-/** One goal as the status line sees it: its text, its spec ids, and whether it has been judged. */
-export type GoalRow = { text: string; specs: string[] };
-
-/**
- * One scrolling row per goal: a stat block with the goal's specs met out of total, then a
- * `width`-column window onto the goal text that moves one column every `stepMs`. The default
- * suits a bar that redraws once a second (Claude Code's `refreshInterval` floor): 2 columns a tick.
- * Before any judgment the block shows `–/n`.
- */
-export function goalBanners(goals: GoalRow[], s: Status | null, width = 60, now = Date.now(), stepMs = 500): string[] {
-  const open = new Set(s?.unmet.map((u) => u.id) ?? []);
-  const tick = Math.floor(now / stepMs);
-  return goals.map((g, i) => {
-    const met = g.specs.filter((id) => !open.has(id)).length;
-    const colour = !s ? DIM : met === g.specs.length ? GREEN : RED;
-    const stat = `${colour}▕${s ? met : "–"}/${g.specs.length}▏${OFF}`;
-    // Code points, not UTF-16 units, so an em dash never splits mid-scroll.
-    const text = Array.from(g.text);
-    const window =
-      text.length <= width
-        ? g.text
-        : (() => {
-            const loop = [...text, ..."   ·   "];
-            const at = (tick + i * 17) % loop.length; // offset per row so the goals do not move in lockstep
-            return [...loop, ...loop].slice(at, at + width).join("");
-          })();
-    return `${stat} ${i + 1}. ${window}`;
-  });
+/** Lay segments into `width` cells; the segment that overflows is cut with an ellipsis. */
+function row(segs: Seg[], width: number): string {
+  let out = "";
+  let left = width;
+  for (const [t, style] of segs) {
+    if (left <= 0 || !t) continue;
+    let c = Array.from(t);
+    if (c.length > left) c = [...c.slice(0, left - 1), "…"];
+    left -= c.length;
+    out += style ? `${style}${c.join("")}${OFF}` : c.join("");
+  }
+  return out;
 }
 
 /**
- * The owl for a status line: verdict, specs and round; what is unmet; the judge's detail.
- * Below it, one scrolling banner per goal. Before the first judgment it says what is armed.
+ * A `width`-cell window onto `text` that rests at the start, scrolls to the end, rests, and
+ * jumps back. An ellipsis at either edge says there is more that way. `tick` is the clock.
+ */
+export function scroll(text: string, width: number, tick: number, rest = 6): string {
+  const c = Array.from(text);
+  if (c.length <= width) return text;
+  const over = c.length - width;
+  const at = Math.min(Math.max((tick % (over + 2 * rest)) - rest, 0), over);
+  const win = c.slice(at, at + width);
+  if (at > 0) win[0] = "…";
+  if (at < over) win[width - 1] = "…";
+  return win.join("");
+}
+
+/** One goal as the status line sees it. `group` names it; `specs` are the ids serving it. */
+export type GoalRow = { group: string; text: string; specs: string[] };
+
+/**
+ * The status line, in whole cells and at most `width` of them (80, the narrowest pane it will
+ * meet). Row 1 beside the owl: verdict, specs met, round, age. Then one row per goal: its
+ * specs met, its first failing spec with what was found, and its text, scrolling in whatever
+ * cells are left. Only a failing count or the verdict carries colour.
  */
 export function statusLines(
   s: Status | null,
-  ctx: { specs: number; goals: GoalRow[]; round?: number; maxRounds: number; now?: number; width?: number },
+  ctx: { specs: number; goals: GoalRow[]; round?: number; maxRounds: number; now?: number; width?: number; oneline?: boolean },
 ): string[] {
   const now = ctx.now ?? Date.now();
-  const banners = goalBanners(ctx.goals, s, ctx.width, now).map((l) => `   ${l}`);
-  if (!s) return [...owlBlock([`orly · ${ctx.specs} specs armed · no turn judged yet`]).split("\n"), ...banners];
-  const parts = s.line.split(" · ").slice(1);
-  const specs = parts.find((p) => p.startsWith("specs ")) ?? "";
-  const detail = parts.filter((p) => /^(coverage|next=)| tok$|^waited/.test(p)).join(" · ");
-  const verdict = s.note ? `${YELLOW}◐ LET GO${OFF}` : s.block ? `${RED}⛔ BLOCK${OFF}` : `${GREEN}✓ PASS${OFF}`;
-  const round = ctx.round ? ` · round ${ctx.round}/${ctx.maxRounds}` : "";
-  const unmet = s.unmet.length
-    ? `unmet ${s.unmet.length}: ${clip(s.unmet.slice(0, 3).map((u) => `${u.id} (${u.found})`).join(" · "), 110)}`
-    : "every spec met";
-  return [
-    ...owlBlock([
-      `orly ${verdict} · ${specs}${round} · ${ago(s.at, now)}${s.note ? ` · ${s.note}` : ""}`,
-      unmet,
-      `${DIM}${detail}${OFF}`,
-    ]).split("\n"),
-    ...banners,
-  ];
+  const inner = (ctx.width ?? 80) - OWL_MARGIN - OWL_PAD;
+  const open = new Map((s?.unmet ?? []).map((u) => [u.id, u.found]));
+  const tick = Math.floor(now / 500); // two cells a second at a one-second redraw
+
+  let head: Seg[];
+  if (!s) head = [["orly", ROLE.strong], [` ${ctx.specs} specs armed · not judged yet`, ROLE.quiet]];
+  else {
+    const parts = s.line.split(" · ").slice(1);
+    const met = (parts.find((p) => p.startsWith("specs ")) ?? "specs ?").slice(6);
+    const detail = parts
+      .filter((p) => /^(coverage|next=)/.test(p))
+      .map((p) => p.replace(/ \(conf [\d.]+\)/, "").replace("next=", "next "))
+      .join(" · ");
+    const [mark, role] = s.note ? ["◐ LET GO", ROLE.warn] : s.block ? ["✗ BLOCK", ROLE.bad] : ["✓ PASS", ROLE.good];
+    head = [
+      [mark, ROLE.strong + role],
+      [`  ${met} specs${ctx.round ? ` · round ${ctx.round}/${ctx.maxRounds}` : ""} · ${ago(s.at, now)}`],
+      [s.note ? ` · ${s.note}` : detail ? ` · ${detail}` : "", ROLE.quiet],
+    ];
+  }
+
+  const failing = (g: GoalRow) => g.specs.filter((id) => open.has(id));
+  const why = (ids: string[]) => `✗ ${ids[0]} ${open.get(ids[0])}${ids.length > 1 ? ` +${ids.length - 1}` : ""}`;
+  if (ctx.oneline) {
+    const first = ctx.goals.map(failing).find((f) => f.length);
+    return [row([...head.slice(0, 2), [first ? ` · ${why(first)}` : ""]], ctx.width ?? 80)];
+  }
+
+  const name = Math.max(0, ...ctx.goals.map((g) => cells(g.group)));
+  const count = (n: number | string, of: number) => `${n}/${of}`.padStart(2 * String(Math.max(0, ...ctx.goals.map((g) => g.specs.length))).length + 1);
+  const goals = ctx.goals.map((g, i) => {
+    const f = failing(g);
+    const segs: Seg[] = [
+      [`▕${count(s ? g.specs.length - f.length : "–", g.specs.length)}▏`, s && f.length ? ROLE.bad : ROLE.quiet],
+      [` ${g.group.padEnd(name)}  `],
+      [f.length ? `${why(f)}  ` : ""],
+    ];
+    const room = inner - segs.reduce((n, [t]) => n + cells(t), 0);
+    if (room >= 12) segs.push([scroll(g.text, room, tick + i * 5), ROLE.quiet]); // under 12 cells a goal is noise
+    return row(segs, inner);
+  });
+
+  // The owl's rule runs down every row, so the goals below the owl still read as its block.
+  const margin = " ".repeat(OWL_MARGIN);
+  const rows = [row(head, inner), ...goals];
+  while (rows.length < OWL.length) rows.push("");
+  return rows.map((r, i) => (margin + (OWL[i] ?? "|").padEnd(OWL_PAD) + r).trimEnd());
 }

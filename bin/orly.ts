@@ -404,16 +404,21 @@ if (command === "statusline") {
     const status = sid ? readStatus(tmpdir(), String(sid)) : latestStatus(tmpdir(), projectRoot(cwd) ?? cwd);
     let lines = statusLines(status, {
       specs: specFile.specs.length,
-      goals: (specFile.goals ?? []).map((g, i) => ({
-        text: g.group ? `${g.group}: ${g.text}` : g.text,
-        specs: specFile.specs.filter((sp) => sp.rank === i).map((sp) => sp.id),
-      })),
-      width: Number(flag("--width") ?? 60),
+      goals: [
+        ...(specFile.goals ?? []).map((g, i) => ({
+          group: g.group ?? String(i + 1),
+          text: g.text,
+          specs: specFile.specs.filter((sp) => sp.rank === i).map((sp) => sp.id),
+        })),
+        // Specs serving no goal get a row too, so the rows add up to the header's count.
+        { group: "other", text: "specs that serve no goal", specs: specFile.specs.filter((sp) => typeof sp.rank !== "number").map((sp) => sp.id) },
+      ].filter((g) => g.specs.length),
+      width: flag("--width") ? Number(flag("--width")) : undefined,
+      oneline: process.argv.includes("--oneline"),
       round: sid ? readRounds(tmpdir(), String(sid))?.rounds : undefined,
       maxRounds: specFile.maxRounds ?? DEFAULT_MAX_ROUNDS,
     });
     if (process.env.NO_COLOR) lines = lines.map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""));
-    if (process.argv.includes("--oneline")) lines = [lines.slice(0, 2).map((l) => l.slice(10).trim()).filter(Boolean).join(" · ")];
     console.log(lines.join("\n"));
   }
   const then = flag("--then");
