@@ -1,1 +1,1 @@
-Does `assistant_final_message` name what was changed and verified in this turn separately from what is still unresolved or blocked, or state that nothing is unresolved?
+Does `assistant_final_message` keep apart what was done and verified from what is still unresolved or blocked, or state plainly that nothing is unresolved? A message that mixes the two in one list, or never says whether anything is left, is a no. A turn with no actions of its own still answers yes when its message makes that split.
