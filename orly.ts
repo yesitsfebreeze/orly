@@ -7,8 +7,7 @@
  * Everything fails open; bad specs fail closed.
  */
 import { existsSync, mkdirSync, readdirSync, lstatSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, parse, relative, resolve, sep } from "node:path";
-import { tmpdir } from "node:os";
+import { basename, dirname, join, parse, relative, resolve, sep } from "node:path"; import { tmpdir } from "node:os";
 
 export const MAX_RESULTS = 12;
 export const MAX_ACTIONS = 40;
@@ -91,8 +90,9 @@ export const isInjectedReason = (text: string) => text.startsWith("orly (an inde
 
 const human = (m: Msg) => m.role === "user" && !hasToolResult(m.content);
 
-/** Split at the last genuine human message and normalise that turn. */
-export function normalizeLastTurn(messages: Msg[]): Turn {
+/** Split at the last genuine human message and normalise that turn; `closing` stands in for a closing message the transcript lags. */
+export function normalizeLastTurn(messages: Msg[], closing?: string): Turn {
+  if (closing?.trim() && !normalizeLastTurn(messages).conclusive) messages = [...messages, { role: "assistant", content: closing }];
   const start = messages.findLastIndex((m) => human(m) && textOf(m.content).trim() && !isInjectedReason(textOf(m.content).trim()));
   return normalize(messages.slice(Math.max(0, start)).filter((m) => !human(m) || !isInjectedReason(textOf(m.content).trim())));
 }

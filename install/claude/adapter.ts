@@ -64,12 +64,8 @@ const outcome = await gateTurn({
   read: async () => {
     try {
       const messages = messagesFrom(await Bun.file(input.transcript_path).text());
-      if (!messages.length) return null;
-      const turn = normalizeLastTurn(messages);
       // The transcript can lag the Stop hook; the input carries the closing message itself.
-      const last = input.last_assistant_message;
-      return turn.conclusive || typeof last !== "string" || !last.trim() ? turn
-        : { ...turn, assistant_final_message: last, assistant_said: [turn.assistant_said, last].filter(Boolean).join("\n"), conclusive: true };
+      return messages.length ? normalizeLastTurn(messages, String(input.last_assistant_message ?? "")) : null;
     } catch {
       return null;
     }

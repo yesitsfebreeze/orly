@@ -107,6 +107,23 @@ test("Codex: a rollout reads as one turn, with injected context, reasoning and e
   expect(t.conclusive).toBe(true);
 });
 
+test("a closing message the transcript has not caught up with makes the turn conclusive", () => {
+  const lagging = [
+    { role: "user", content: "fix add" },
+    { role: "assistant", content: [{ type: "tool_use", id: "x", name: "Bash", input: { command: "bun test" } }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "x", content: "1 pass" }] },
+  ];
+  expect(normalizeLastTurn(lagging).conclusive).toBe(false);
+  const t = normalizeLastTurn(lagging, "Fixed; bun test passes.");
+  expect(t.conclusive).toBe(true);
+  expect(t.assistant_final_message).toBe("Fixed; bun test passes.");
+  expect(t.command_results).toEqual(["1 pass"]);
+  // A transcript that already has it is left alone, and a blank one changes nothing.
+  const flushed = [...lagging, { role: "assistant", content: "done" }];
+  expect(normalizeLastTurn(flushed, "done").assistant_final_message).toBe("done");
+  expect(normalizeLastTurn(lagging, "  ").conclusive).toBe(false);
+});
+
 test("Codex: the hook fails open, and blocks a weakened gate with the transcript found by session id", async () => {
   const p = await project();
   try {
