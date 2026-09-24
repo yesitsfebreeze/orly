@@ -17,41 +17,52 @@ sent back with the gap named. One gate, one adapter per coding agent.
 [![tests](https://img.shields.io/badge/bun%20test-144%20pass-green)](test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](package.json)
 
+## The technique
+
+A reviewer that re-reads the whole conversation costs as much as the agent did. orly
+doesn't read the conversation. It reduces the turn to a **bounded state** and asks a
+**System One judge** typed questions about it, in **one request**, getting back
+**probabilities, not prose**.
+
+- **The state.** The request, the closing message, what the agent said, one line per tool
+  call (the last 40, 300 chars each) and the tool output that matters (the last 12
+  results, failures kept first, 600 chars each). Files a spec names are read from disk
+  (8 at most, 12000 chars each), never from what the agent printed. A 200k-token session
+  and a 2k-token one produce a state of the same order.
+- **The questions.** Four yes/no hazards (a claim nothing verified, a stub left standing,
+  a part never addressed, a failure never reported), one choice of the next step, one
+  score for coverage, and one yes/no per spec of yours. All evaluated in parallel over
+  the same state; adding a spec adds a question, not a request.
+- **The policy, in code.** A hazard blocks above its cut; a spec passes above its cut;
+  cuts are fitted from the log, never guessed. A spec a command can decide (`require:
+  checks.tests.exit equals 0`) is asserted by running it: zero judge tokens.
+- **The verdict.** The block names the gap and one next step (fix the failure, verify the
+  claim, finish the work, report the blocker). The agent's next round starts from that
+  sentence, not from a human re-prompt carrying the whole context. Every banner prints
+  the judge's token count for the turn, so the cost is never a claim.
+
 ## Install
 
 Needs [bun](https://bun.sh) and a [TypeSafe](https://console.typesafe.ai) key in `TYPESAFE_API_KEY`.
 
 ```sh
 claude plugin marketplace add yesitsfebreeze/orly && claude plugin install orly@orly   # Claude Code
-codex plugin marketplace add yesitsfebreeze/orly                                        # Codex ($orly skill)
-gemini extensions install https://github.com/yesitsfebreeze/orly                        # Gemini CLI (/orly)
-copilot plugin install yesitsfebreeze/orly                                              # Copilot CLI
-droid plugin marketplace add https://github.com/yesitsfebreeze/orly                     # Factory Droid
-pi install git:github.com/yesitsfebreeze/orly                                           # Pi
+git clone https://github.com/yesitsfebreeze/orly ~/orly && bun ~/orly/bin/orly.ts install <agent>
+#   codex gemini cursor copilot droid qwen goose opencode kilo pi continue junie
 ```
 
-Every agent, including those, gets its hooks from one command run in your project:
+`orly install` merges into the agent's own hook file, adds `/orly` in the agent's format,
+and is safe to run twice (`--global`, `--dry-run`). Codex, Gemini, Copilot, Droid and Pi
+also take this repository through their own plugin installers.
 
-```sh
-git clone https://github.com/yesitsfebreeze/orly ~/orly
-bun ~/orly/bin/orly.ts install <agent>     # claude codex gemini cursor copilot droid qwen
-                                           # goose opencode kilo pi continue junie
-```
+| Agent | Gate |
+|---|---|
+| Claude Code, Codex, Gemini CLI, Copilot CLI, Goose, Pi | blocks the stop, reason sent back |
+| Droid, Qwen Code, Continue, Junie | same hook dialect as Claude Code |
+| Cursor · OpenCode, Kilo | follow-up message · plugin re-prompts the session |
+| Windsurf, Cline, Kiro, Amp, Aider | no hook can hold the agent: `orly judge` from your loop |
 
-It merges into the agent's own hook file, adds an `/orly` command in the agent's format,
-and is safe to run twice. `--global` writes the user-level file, `--dry-run` shows it.
-
-| Agent | Gate | Agent | Gate |
-|---|---|---|---|
-| Claude Code, Codex, Gemini CLI, Copilot CLI | blocks the stop, reason sent back | Cursor | follow-up message (5 in a row) |
-| Droid, Qwen Code, Continue, Junie | same hook dialect as Claude Code | OpenCode, Kilo | plugin re-prompts the session |
-| Goose, Pi | blocks the stop | Windsurf, Cline, Kiro, Amp, Aider | no hook can hold the agent: use `orly judge` |
-
-[docs/hosts.txt](docs/hosts.txt) has each agent's events, files and caveats. Any loop at all:
-
-```sh
-echo '{"messages":[…]}' | orly judge   # 0 = may stop, 2 = not done, 1 = could not run
-```
+Details per agent in [docs/hosts.txt](docs/hosts.txt). Any loop: `echo '{"messages":[…]}' | orly judge` (0 may stop, 2 not done, 1 could not run).
 
 ## Usage
 
@@ -62,19 +73,10 @@ orly ask "is the stub gone?" src/thing.ts   a yes/no now, between turns
 orly hosts                                  every agent and how it is gated
 ```
 
-## What it checks
-
-- **Claims without output.** "Tests pass" with no test run behind it is blocked.
-- **Stubs and dropped items.** A TODO where the work should be, or a skipped part of the request.
-- **Invented numbers.** A figure no command produced.
-- **Your specs.** One file each in `.orly/specs/<group>/`. Facts (exit codes, counts)
-  are decided in code; everything else by one judge request per turn, against your real
-  files and any command you declare as evidence.
-
 It fails closed: a malformed spec blocks. It can't trap you: the agent stops when every
-spec passes, when it states plainly what it couldn't do, or when the round cap runs out.
-And the agent can't file it down: lowering a cut or deleting a spec is refused, in the
-edit hook and again at the stop.
+spec passes, when it says plainly what it couldn't do, or when the round cap runs out. And
+the agent can't file it down: lowering a cut or deleting a spec is refused, in the edit
+hook and again at the stop.
 
 ## Measured
 
