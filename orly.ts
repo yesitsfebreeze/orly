@@ -21,7 +21,7 @@ export type Turn = {
   conclusive: boolean;
 };
 
-export type Msg = { role: string; content?: unknown; tool_calls?: Array<{ function?: { name?: string; arguments?: string }; name?: string }> };
+export type Msg = { role: string; content?: unknown; tool_call_id?: string; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string }; name?: string }> };
 
 const FAILURE = /\b(fail(?:ed|ure|s|ing)?|errors?|err!|exit (?:code|status) [1-9]|traceback|panic(?:ked)?|not found|cannot find|denied|refused|timed out|assertion)\b/i;
 const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n)}…[${s.length - n} more chars]`);
@@ -56,23 +56,23 @@ export function selectResults(results: string[], max = MAX_RESULTS): string[] {
 
 /** Reduce one turn's messages, starting at the human request, to a `Turn`. */
 export function normalize(messages: Msg[]): Turn {
-  const said: string[] = [], actions: string[] = [], results: string[] = [];
-  const result = (body: string) => body.trim() && results.push(clip(body.replace(/\n{3,}/g, "\n\n"), 600));
-  let lastActionAt = -1;
-  let lastTextAt = -1;
+  const said: string[] = [], actions: string[] = [], results: string[] = [], ids = new Map<string, number>(), answered = new Set<number>();
+  let lastActionAt = -1, lastTextAt = -1;
+  const act = (d: string, id: unknown, step: number) => (actions.push(`#${actions.length + 1} ${d}`), (lastActionAt = step), id && ids.set(String(id), actions.length));
+  // Tagged with the action it answers: by tool_use_id where the transcript has one, else the first unanswered action.
+  const result = (body: string, id: unknown, step: number) => {
+    let n = ids.get(String(id)) ?? 1; while (!ids.has(String(id)) && answered.has(n)) n++;
+    answered.add(n), (lastActionAt = step), results.push(`#${n} → ${body.trim() ? clip(body.trim().replace(/\n{3,}/g, "\n\n"), 600) : "(no output)"}`);
+  };
   messages.slice(1).forEach((m, step) => {
     if (m.role === "assistant") {
       const text = textOf(m.content).trim();
       if (text) (said.push(text), (lastTextAt = step));
-      for (const b of Array.isArray(m.content) ? (m.content as any[]) : []) if (b?.type === "tool_use") (actions.push(describeCall(b.name, b.input)), (lastActionAt = step));
-      for (const c of m.tool_calls ?? []) (actions.push(describeCall(c.function?.name ?? c.name ?? "tool", c.function?.arguments)), (lastActionAt = step));
-    } else if (m.role === "tool") {
-      result(textOf(m.content));
-      lastActionAt = step;
-    } else if (hasToolResult(m.content)) {
-      for (const b of m.content as any[]) if (b?.type === "tool_result") result(typeof b.content === "string" ? b.content : textOf(b.content));
-      lastActionAt = step;
-    }
+      for (const b of Array.isArray(m.content) ? (m.content as any[]) : []) if (b?.type === "tool_use") act(describeCall(b.name, b.input), b.id, step);
+      for (const c of m.tool_calls ?? []) act(describeCall(c.function?.name ?? c.name ?? "tool", c.function?.arguments), c.id, step);
+    } else if (m.role === "tool") result(textOf(m.content), m.tool_call_id, step);
+    else if (hasToolResult(m.content))
+      for (const b of m.content as any[]) if (b?.type === "tool_result") result(typeof b.content === "string" ? b.content : textOf(b.content), b.tool_use_id, step);
   });
   return {
     user_request: clip(textOf(messages[0]?.content).trim(), 4000),

@@ -25,8 +25,8 @@ test("the hook's own block message never becomes the user's request", () => {
 test("work done before a block stays in the turn being judged", () => {
   // Slicing at the injected message would hide the work the block was about.
   const t = normalizeLastTurn(messagesFrom(transcript));
-  expect(t.actions_taken).toEqual(["Edit: p.ts", "Bash: bun test"]);
-  expect(t.command_results).toEqual(["ok", "3 pass"]);
+  expect(t.actions_taken).toEqual(["#1 Edit: p.ts", "#2 Bash: bun test"]);
+  expect(t.command_results).toEqual(["#1 → ok", "#2 → 3 pass"]);
 });
 
 test("subagent and unparseable lines are still dropped", () => {
@@ -40,5 +40,5 @@ test("a block message as Claude Code really writes it (no isMeta) stays out of t
   expect(real).not.toContain("isMeta");
   const t = normalizeLastTurn(messagesFrom(real));
   expect(t.user_request).toBe("implement the parser and run the tests");
-  expect(t.actions_taken).toEqual(["Edit: p.ts", "Bash: bun test"]);
+  expect(t.actions_taken).toEqual(["#1 Edit: p.ts", "#2 Bash: bun test"]);
 });

@@ -17,8 +17,8 @@ test("OpenCode SDK messages and Pi messages map onto the same dialect", () => {
     { info: { role: "user" }, parts: [{ type: "text", text: "do it" }] },
     { info: { role: "assistant" }, parts: [{ type: "tool", tool: "bash", callID: "c", state: { status: "completed", input: { command: "ls" }, output: "a b" } }, { type: "text", text: "listed" }] },
   ]));
-  expect(t1.actions_taken).toEqual(["bash: ls"]);
-  expect(t1.command_results).toEqual(["a b"]);
+  expect(t1.actions_taken).toEqual(["#1 bash: ls"]);
+  expect(t1.command_results).toEqual(["#1 → a b"]);
   expect(t1.assistant_final_message).toBe("listed");
 
   const t2 = normalizeLastTurn(piMessages([
@@ -27,8 +27,8 @@ test("OpenCode SDK messages and Pi messages map onto the same dialect", () => {
     { role: "toolResult", toolCallId: "c", toolName: "bash", content: [{ type: "text", text: "a b" }], isError: false },
     { role: "assistant", content: [{ type: "text", text: "listed" }] },
   ]));
-  expect(t2.actions_taken).toEqual(["bash: ls"]);
-  expect(t2.command_results).toEqual(["a b"]);
+  expect(t2.actions_taken).toEqual(["#1 bash: ls"]);
+  expect(t2.command_results).toEqual(["#1 → a b"]);
   expect(t2.conclusive).toBe(true);
 });
 
@@ -101,8 +101,8 @@ const rollout = [
 test("Codex: a rollout reads as one turn, with injected context, reasoning and events dropped", () => {
   const t = normalizeLastTurn(codexMessages(rollout));
   expect(t.user_request).toBe("run the tests");
-  expect(t.actions_taken).toEqual(["exec: bun test", "shell: make"]);
-  expect(t.command_results).toEqual(["Script completed\n3 pass", "make: *** [all] Error 2\n[exit code 2]"]);
+  expect(t.actions_taken).toEqual(["#1 exec: bun test", "#2 shell: make"]);
+  expect(t.command_results).toEqual(["#1 → Script completed\n3 pass", "#2 → make: *** [all] Error 2\n[exit code 2]"]);
   expect(t.assistant_final_message).toBe("tests pass, make fails");
   expect(t.conclusive).toBe(true);
 });
@@ -117,7 +117,7 @@ test("a closing message the transcript has not caught up with makes the turn con
   const t = normalizeLastTurn(lagging, "Fixed; bun test passes.");
   expect(t.conclusive).toBe(true);
   expect(t.assistant_final_message).toBe("Fixed; bun test passes.");
-  expect(t.command_results).toEqual(["1 pass"]);
+  expect(t.command_results).toEqual(["#1 → 1 pass"]);
   // A transcript that already has it is left alone, and a blank one changes nothing.
   const flushed = [...lagging, { role: "assistant", content: "done" }];
   expect(normalizeLastTurn(flushed, "done").assistant_final_message).toBe("done");

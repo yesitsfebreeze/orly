@@ -11,11 +11,11 @@ const anthropic: Msg[] = [
     role: "assistant",
     content: [
       { type: "text", text: "on it" },
-      { type: "tool_use", name: "Edit", input: { file_path: "src/http.ts" } },
-      { type: "tool_use", name: "Bash", input: { command: "bun test" } },
+      { type: "tool_use", id: "tu1", name: "Edit", input: { file_path: "src/http.ts" } },
+      { type: "tool_use", id: "tu2", name: "Bash", input: { command: "bun test" } },
     ],
   },
-  { role: "user", content: [{ type: "tool_result", content: "1 fail: retry.test.ts" }] },
+  { role: "user", content: [{ type: "tool_result", tool_use_id: "tu2", content: "1 fail: retry.test.ts" }] },
   { role: "assistant", content: [{ type: "text", text: "All tests pass." }] },
 ];
 
@@ -26,26 +26,43 @@ const openai: Msg[] = [
     content: "on it",
     tool_calls: [
       { function: { name: "edit_file", arguments: '{"file_path":"src/http.ts"}' } },
-      { function: { name: "bash", arguments: '{"command":"bun test"}' } },
+      { id: "c2", function: { name: "bash", arguments: '{"command":"bun test"}' } },
     ],
   },
-  { role: "tool", name: "bash", content: "1 fail: retry.test.ts" },
+  { role: "tool", tool_call_id: "c2", name: "bash", content: "1 fail: retry.test.ts" },
   { role: "assistant", content: "All tests pass." },
 ];
 
 test("normalizes the Anthropic dialect", () => {
   const t = normalize(anthropic);
   expect(t.user_request).toBe("add a retry and run the tests");
-  expect(t.actions_taken).toEqual(["Edit: src/http.ts", "Bash: bun test"]);
-  expect(t.command_results).toEqual(["1 fail: retry.test.ts"]);
+  expect(t.actions_taken).toEqual(["#1 Edit: src/http.ts", "#2 Bash: bun test"]);
+  expect(t.command_results).toEqual(["#2 → 1 fail: retry.test.ts"]);
   expect(t.assistant_final_message).toBe("All tests pass.");
   expect(t.conclusive).toBe(true);
 });
 
+test("each result carries the index of the action it answers, an empty one included", () => {
+  const calls = Array.from({ length: 13 }, (_, i) => ({ type: "tool_use", id: `t${i + 1}`, name: "Bash", input: { command: `step ${i + 1}` } }));
+  const out = (i: number) => ({ type: "tool_result", tool_use_id: `t${i}`, content: i === 1 ? "" : i === 9 ? "Edited CONTRACT.md" : `out ${i}` });
+  const byId = normalize([{ role: "user", content: "go" }, { role: "assistant", content: calls },
+    { role: "user", content: [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map(out) }]);
+  expect(byId.actions_taken[8]).toBe("#9 Bash: step 9");
+  expect(byId.command_results).toContain("#9 → Edited CONTRACT.md");
+  expect(byId.command_results).toContain("#1 → (no output)"); // answered last, still paired with action 1
+  const byOrder = normalize([{ role: "user", content: "go" }, { role: "assistant", content: calls.map(({ id, ...c }) => c) },
+    { role: "user", content: calls.map((_, i) => { const { tool_use_id, ...r } = out(i + 1); return r; }) }]);
+  expect(byOrder.command_results.length).toBe(12);
+  expect(byOrder.command_results[0]).toBe("#2 → out 2");
+  expect(byOrder.command_results[7]).toBe("#9 → Edited CONTRACT.md");
+  expect(normalize([{ role: "user", content: "go" }, { role: "assistant", content: calls.slice(0, 2) }, { role: "user", content: [out(1), out(2)] }]).command_results)
+    .toEqual(["#1 → (no output)", "#2 → out 2"]);
+});
+
 test("normalizes the OpenAI dialect to the same turn", () => {
   const t = normalize(openai);
-  expect(t.actions_taken).toEqual(["edit_file: src/http.ts", "bash: bun test"]);
-  expect(t.command_results).toEqual(["1 fail: retry.test.ts"]);
+  expect(t.actions_taken).toEqual(["#1 edit_file: src/http.ts", "#2 bash: bun test"]);
+  expect(t.command_results).toEqual(["#2 → 1 fail: retry.test.ts"]);
   expect(t.assistant_final_message).toBe("All tests pass.");
 });
 
