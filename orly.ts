@@ -86,7 +86,7 @@ export function normalize(messages: Msg[]): Turn {
   };
 }
 
-export const isInjectedReason = (text: string) => text.startsWith("orly (an independent") || text.startsWith("orly? refuses") || text.startsWith("orly? —");
+export const isInjectedReason = (text: string) => /^(Stop hook feedback:\s*)?orly(?: \(an independent|\? refuses|\? —)/.test(text);
 
 const human = (m: Msg) => m.role === "user" && !hasToolResult(m.content);
 

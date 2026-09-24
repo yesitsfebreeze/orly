@@ -33,3 +33,12 @@ test("subagent and unparseable lines are still dropped", () => {
   const noisy = [transcript, "{not json", line({ type: "assistant", isSidechain: true, message: { content: [{ type: "text", text: "sub" }] } })].join("\n");
   expect(normalizeLastTurn(messagesFrom(noisy)).assistant_final_message).toBe("fixed");
 });
+
+test("a block message as Claude Code really writes it (no isMeta) stays out of the request", () => {
+  // Real transcripts carry the feedback as a plain user entry prefixed "Stop hook feedback:".
+  const real = transcript.replace('"isMeta":true,', "").replace("orly is not satisfied…", "orly (an independent TypeSafe/Jev judgment on this turn) is not satisfied…");
+  expect(real).not.toContain("isMeta");
+  const t = normalizeLastTurn(messagesFrom(real));
+  expect(t.user_request).toBe("implement the parser and run the tests");
+  expect(t.actions_taken).toEqual(["Edit: p.ts", "Bash: bun test"]);
+});
