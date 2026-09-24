@@ -102,6 +102,24 @@ test("selectResults keeps failures that a blind tail would drop", () => {
   expect(results.slice(-MAX_RESULTS)).not.toContain("npm ERR! build failed"); // what we fixed
 });
 
+test("evidence deep in a long result reaches the judge, inside one budget across all results", () => {
+  // Jev 1790265135628: `orchi tasks` notes saying "just verify green" sat past a 600-char clip, so a backed claim read as unverified.
+  const filler = (tag: string, n: number) => Array.from({ length: n }, (_, i) => `${tag} row ${i}: kev-token port the encoder to candle and Metal`).join("\n");
+  const long = `{"resolvedBy":"node_id"}\n${filler("a", 150)}\n↳ 06c32548: just verify green (1562 passed 0 failed)\n${filler("b", 150)}\nlast line`;
+  const calls = [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "rig whoami; orchi tasks" } }];
+  const one = normalize([{ role: "user", content: "go" }, { role: "assistant", content: calls },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: long }] }]).command_results[0];
+  expect(long.length).toBeGreaterThan(2 * MAX_RESULTS * 600);
+  expect(one.startsWith('#1 → {"resolvedBy"')).toBe(true);
+  expect(one).toContain("just verify green (1562 passed 0 failed)");
+  expect(one.endsWith("last line")).toBe(true);
+  const many = normalize([{ role: "user", content: "go" }, { role: "assistant", content: Array.from({ length: 12 }, (_, i) => ({ ...calls[0], id: `t${i}` })) },
+    { role: "user", content: Array.from({ length: 12 }, (_, i) => ({ type: "tool_result", tool_use_id: `t${i}`, content: i ? `short ${i}` : long })) }]).command_results;
+  expect(many.join("").length).toBeLessThan(MAX_RESULTS * 600 + 400); // the short ones cost what they are, the long one gets the rest
+  expect(many.slice(1)).toEqual(Array.from({ length: 11 }, (_, i) => `#${i + 2} → short ${i + 1}`));
+  expect(many[0]).toContain("1562 passed");
+});
+
 test("selectResults leaves a short list alone", () => {
   expect(selectResults(["a", "b"])).toEqual(["a", "b"]);
 });
