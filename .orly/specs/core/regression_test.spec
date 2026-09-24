@@ -1,0 +1,1 @@
+First check whether `actions_taken` show an edit or write to `orly.ts`. If NOT, answer yes. If they do, answer yes only when `actions_taken` also show an edit or write to a file under `test/`, and a later `bun test` run in `command_results` reports zero failures.

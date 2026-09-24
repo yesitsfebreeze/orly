@@ -1,75 +1,140 @@
 ```
-  , .  
- {@,@}  
- /) )   
-  '"  
-
-I have done what you asked, here is... oRly
+   , .
+  {@,@}
+  /) )
+---'"-------- orly
 ```
 
 # orly
 
-**Your agent says "done". orly says "oh rly?"** A Claude Code plugin that turns your goal
-into yes/no questions, asks a judge at the end of every turn, and refuses the stop until
-every answer is yes. Under 500 lines of code, one hook, one CLI.
+**Your agent says "done". orly asks "oh really?"** At the end of a coding agent's turn,
+orly checks the recorded work against your project's specs. If a spec does not hold, the
+stop is refused and the agent is sent back with the gap named.
+
+orly is one file, `orly.ts`, run with [bun](https://bun.sh). It has no dependencies.
 
 ## How it works
 
-1. `/orly:orly <goal>` has the agent write one question per acceptance criterion into
-   `.orly/specs/`, then run `orly specs`, which rejects anything the judge could not decide
-   from evidence.
-2. When the agent tries to end a turn, the Stop hook reduces the turn to a bounded state
-   (request, what the agent said, one line per tool call, the tool output that matters, files
-   a spec names read from disk) and asks [jev](https://console.typesafe.ai) every question in
-   one request.
-3. Anything below its cut blocks the stop, and the reason names exactly what is not yet true.
-   The agent works on that, not on a re-prompt carrying the whole conversation.
-
-Where a command can decide, no tokens are spent: a spec with `require: checks.tests.exit
-equals 0` runs the check from `.orly/config.json` in code, and a failing check blocks before
-the judge is asked at all. Four built-in questions cover the ways agents stop early: an
-unverified claim, a stub left standing, a part never addressed, a failure never reported.
-Every judgment prints its token count.
+- **A bounded state, not the transcript.** The turn is reduced to the user's request, what
+  the agent said, one line per tool call (the last 40) and the tool results that matter
+  (12 at most, failures first). A long session and a short one cost about the same to judge.
+- **One request.** Four built-in hazard questions (an unverified claim, a stub left
+  standing, a part never addressed, a failure never reported), a choice of next step, a
+  coverage score and one yes/no question per spec all go to the
+  [TypeSafe](https://typesafe.ai) Jev judge together. The judge answers with probabilities.
+- **Policy in code.** Thresholds turn probabilities into block or pass. A spec that a
+  command can decide (`require: checks.tests.exit equals 0`) runs that command and never
+  reaches the judge.
+- **A guard against easing the gate.** The agent being judged cannot lower a cut, delete a
+  spec, or mark one optional to get an easier pass. See [docs/guard.txt](docs/guard.txt).
 
 ## Install
 
-Needs [bun](https://bun.sh) and a [TypeSafe](https://console.typesafe.ai) key in `TYPESAFE_API_KEY`
-(or a `keyCommand` in `.orly/config.json` that prints it).
+Needs bun 1.1 or newer and a TypeSafe API key.
 
 ```sh
-claude plugin marketplace add yesitsfebreeze/orly && claude plugin install orly@orly
+git clone https://github.com/yesitsfebreeze/orly ~/orly
+export TYPESAFE_API_KEY=...        # or "keyCommand" in .orly/config.json
+alias orly="bun ~/orly/orly.ts"
 ```
 
-## Usage
+### Claude Code
 
-```
-/orly:orly add retries to the http client   writes the specs, validates them, starts the work
-/orly:orly it said tests pass but one failed  adds the question that would have caught it
-orly specs                                    is every spec decidable from recorded evidence?
-orly ask "is the stub gone?" src/thing.ts     one yes/no now, between turns
-orly tree                                     every spec and how it is decided
-echo '{"messages":[…]}' | orly judge          any loop: exit 0 may stop, 2 not done, 1 could not run
+The repository is a Claude Code plugin. It gates the stop, refuses spec edits that weaken
+the gate, briefs each session on the goals and specs, and cleans up when a session ends:
+
+```sh
+claude plugin marketplace add ~/orly && claude plugin install orly@orly
 ```
 
-A spec is a file: optional `key: value` headers, a blank line, one question.
+### OpenCode and Pi
 
+One-line shims load the shipped adapters. On a block they prompt the session again with
+the reason; spec edits that weaken the gate are refused.
+
+```sh
+mkdir -p .opencode/plugins && echo 'export { OrlyPlugin } from "'$HOME'/orly/install/opencode/plugin.ts";' > .opencode/plugins/orly.ts
+mkdir -p .pi/extensions && echo 'export { default } from "'$HOME'/orly/install/pi/extension.ts";' > .pi/extensions/orly.ts
 ```
-evidence: src/http.ts
 
-Look at `src/http.ts` under `project.files`, the file's real content. Does every request
-go through a retry loop with a bounded number of attempts?
+### Codex CLI
+
+Codex runs command hooks from `~/.codex/hooks.json` (or `.codex/hooks.json` in a project).
+Point Stop, SessionStart, SessionEnd and PreToolUse at the adapter:
+
+```json
+{ "hooks": {
+  "Stop":         [{ "hooks": [{ "type": "command", "command": "bun ~/orly/install/codex/adapter.ts", "timeout": 25 }] }],
+  "SessionStart": [{ "hooks": [{ "type": "command", "command": "bun ~/orly/install/codex/adapter.ts", "timeout": 10 }] }],
+  "SessionEnd":   [{ "hooks": [{ "type": "command", "command": "bun ~/orly/install/codex/adapter.ts", "timeout": 5 }] }],
+  "PreToolUse":   [{ "hooks": [{ "type": "command", "command": "bun ~/orly/install/codex/adapter.ts", "timeout": 10 }] }]
+} }
 ```
 
-It fails closed on your specs: a file that does not parse blocks every turn until fixed, and
-the agent cannot delete a spec, lower a cut or mark one optional without the next stop being
-refused. It fails open on itself: a judge that is down never becomes a wall. It cannot trap
-the agent: the loop ends when every spec holds, when the agent says plainly what it could
-not do and why, or at the round cap (`rounds: 6` in `.orly/goal`).
+Codex edits files through `apply_patch`, which the pre-edit guard cannot read; the gate's
+baseline check catches a weakened spec at the end of the turn instead.
 
-## Measured
+### Cursor
 
-`bun test/calibrate.ts` judges the twelve labelled turns in `test/fixtures/` live and prints
-each hazard's separation and the token total, so the numbers are regenerated rather than
-quoted. `bun test` runs offline against a local fake judge.
+Copy `install/cursor/hooks.json` to `.cursor/hooks.json` (or `~/.cursor/hooks.json`). A block
+becomes Cursor's follow-up message, and spec edits that weaken the gate are denied before
+they happen. Cursor does not document its transcript format; the adapter reads it only when
+it is JSONL of messages, and otherwise judges nothing but the weakening guard.
 
-Deeper: [writing specs](docs/specs.txt) · [llms.txt](llms.txt)
+Other hosts can call the gate from their own turn-end hook; see
+[docs/api.txt](docs/api.txt).
+
+Without a key, `orly gate` allows every turn and says so once per session; `orly judge`
+exits 1.
+
+## Quick start
+
+```sh
+orly goal build "the test suite passes"                 # appends to .orly/goal
+mkdir -p .orly/specs/build
+printf 'require: checks.tests.exit equals 0\n\nDoes the test suite exit zero?\n' \
+  > .orly/specs/build/tests_green.spec
+echo '{"checks": {"tests": {"command": "bun test"}}}' > .orly/config.json
+orly specs                                              # validate every spec
+orly tasks                                              # list specs, goal order
+```
+
+Then feed a turn to the gate, from a hook or by hand:
+
+```sh
+orly gate --session my-session < turn.json
+```
+
+## Commands
+
+| Command | Does |
+|---|---|
+| `orly judge` | `{"messages":[…]}` or `{"turn":{…}}` on stdin, verdict JSON on stdout |
+| `orly gate` | the same input through the full gate: baseline guard, round cap |
+| `orly goal [group] "<text>"` | appends a goal to `.orly/goal`, never overwrites |
+| `orly tasks` | the specs, most important goal first |
+| `orly specs` | validates every spec file and check name; exit 1 if any is rejected |
+| `orly help` | the command list and environment variables |
+
+Exit codes for `judge` and `gate`: `0` the turn may end, `2` it may not, `1` orly could not
+run (`judge` only; `gate` fails open).
+
+## Documentation
+
+- [docs/install.txt](docs/install.txt): the `.orly` layout, the API key, environment variables
+- [docs/specs.txt](docs/specs.txt): writing specs, goals, evidence, checks
+- [docs/guard.txt](docs/guard.txt): what counts as weakening the gate
+- [docs/api.txt](docs/api.txt): the library API, the Turn shape, wiring a host hook
+
+## Development
+
+```sh
+bun test
+```
+
+The tests never call the live judge. This repository gates its own development with the
+specs under `.orly/specs/`.
+
+## License
+
+[MIT](LICENSE.md)

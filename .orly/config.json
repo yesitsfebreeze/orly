@@ -1,17 +1,8 @@
 {
-  "keyCommand": "security find-generic-password -a typesafe/api-key -s kern -w",
   "checks": {
-    "tests": { "command": "bun test 2>&1 | tail -5" },
-    "build": { "command": "for f in $(git ls-files 'src/*.ts' 'bin/*.ts'); do bun build \"$f\" --target=bun --outfile=/dev/null >/dev/null || exit 1; done" },
-    "code_lines": { "command": "cat $(git ls-files 'src/*.ts' 'bin/*.ts')", "countPattern": "\\n" },
-    "other_hosts": { "command": "git ls-files adapters commands/orly.toml gemini-extension.json GEMINI.md .codex-plugin .cursor-plugin .agents scripts", "countPattern": "\\n" },
-    "readme_lines": { "command": "cat README.md", "countPattern": "\\n" },
-    "readme_owls": { "command": "cat README.md", "countPattern": "\\{@,@\\}" },
-    "net_in_tests": { "command": "cat test/*.test.ts", "countPattern": "fetch\\(" },
-    "git_dirty": { "command": "git status --porcelain", "countPattern": "\\n" },
-    "missing_docs": { "command": "grep -oh 'docs/[a-z/-]*\\.txt' llms.txt README.md | sort -u | while read d; do [ -f \"$d\" ] || echo \"MISSING $d\"; done", "countPattern": "MISSING" },
-    "taste_rejected": { "command": "d=$(mktemp -d); r=$PWD; mkdir -p \"$d/.orly/specs\"; printf 'Is the code clean and readable after this turn?\\n' > \"$d/.orly/specs/t.spec\"; (cd \"$d\" && TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" specs >/dev/null 2>&1); s=$?; rm -rf \"$d\"; [ $s -eq 2 ]" },
-    "malformed_blocks": { "command": "d=$(mktemp -d); r=$PWD; mkdir -p \"$d/.orly/specs\"; printf 'bogus: 1\\n\\nA question here?\\n' > \"$d/.orly/specs/bad.spec\"; out=$(cd \"$d\" && echo '{\"turn\":{\"user_request\":\"x\",\"assistant_final_message\":\"done\",\"assistant_said\":\"done\",\"actions_taken\":[\"Bash: ls\"],\"command_results\":[\"ok\"],\"conclusive\":true}}' | TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" judge 2>&1); s=$?; rm -rf \"$d\"; [ $s -eq 2 ] && echo \"$out\" | grep -q bad" },
-    "check_first": { "command": "d=$(mktemp -d); r=$PWD; mkdir -p \"$d/.orly/specs\"; printf 'require: checks.never.exit equals 0\\n\\nThe check passes.\\n' > \"$d/.orly/specs/c.spec\"; printf '{\"checks\":{\"never\":{\"command\":\"false\"}}}' > \"$d/.orly/config.json\"; out=$(cd \"$d\" && echo '{\"turn\":{\"user_request\":\"x\",\"assistant_final_message\":\"done\",\"assistant_said\":\"done\",\"actions_taken\":[\"Bash: ls\"],\"command_results\":[\"ok\"],\"conclusive\":true}}' | TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" judge 2>&1); s=$?; rm -rf \"$d\"; [ $s -eq 2 ] && echo \"$out\" | grep -q never" }
+    "tests": { "command": "bun test 2>&1", "timeoutMs": 120000 },
+    "build": { "command": "bun build orly.ts --target=bun --outfile=/tmp/orly2-build.js" },
+    "size": { "command": "test $(wc -l < orly.ts) -le 870" },
+    "specs": { "command": "bun orly.ts specs" }
   }
 }

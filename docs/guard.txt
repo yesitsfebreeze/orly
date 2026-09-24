@@ -1,0 +1,44 @@
+THE GUARD
+=========
+
+The agent that edits the specs is the one the specs judge. Left alone, the cheapest way to
+pass is to lower a cut. So weakening is refused in code, not discouraged in prose.
+
+
+WHAT COUNTS AS WEAKENING
+------------------------
+
+  - lowering a cut, including dropping an explicit cut that was above the default
+  - deleting a spec
+  - marking a spec optional
+  - rewording a spec while keeping its explicit cut (drop the cut, or refit it)
+  - deleting a check, or replacing its command with one that cannot fail
+    (true, :, exit 0, a bare echo)
+  - leaving a spec file that parsed before unparseable
+
+Tightening a cut, adding a spec or a check, and rewording a spec without a cut are allowed.
+
+
+WHERE IT IS ENFORCED
+--------------------
+
+Before an edit. `guardEdit(cwd, path, edit)` replays a planned edit to a spec file or to
+.orly/goal against the whole tree, and returns the refusal text if the result is weaker.
+`plannedEdit(tool, input)` turns a host's Write, Edit, MultiEdit or NotebookEdit input
+into the edit it describes. A host adapter calls both from its pre-tool hook.
+
+At the end of a turn. Shell commands never reach a pre-tool hook, so `gateTurn` also
+compares the current specs and checks with the strictest set seen, stored in
+.orly/baseline.json. A weakened set blocks the turn with the refusal text, and the
+baseline only advances when nothing was weakened.
+
+Changing the goal is how requirements legitimately change. Appending a goal keeps the
+baseline; removing or rewording a goal line starts a new one. A goal file that does not
+parse keeps the old baseline and blocks every turn until it is fixed.
+
+
+LIMIT
+-----
+
+A spec reworded into something vacuous passes both checks. The guard makes weakening
+visible and awkward; owning the specs stays with you.

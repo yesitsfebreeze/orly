@@ -1,0 +1,125 @@
+API
+===
+
+orly.ts is both the CLI and the library. Import it from bun, by path or as the package:
+
+  import { gateTurn, messagesFrom, normalizeLastTurn } from "orly";
+
+The core names no host. A host adapter reads its own transcript format, turns it into
+messages, and maps the gate's outcome to its own hook reply.
+
+
+THE TURN
+--------
+
+Everything the judge sees about a turn:
+
+  type Turn = {
+    user_request: string;             the human message that started the turn
+    assistant_final_message: string;  the last thing the agent said
+    assistant_said: string;           everything the agent said this turn
+    actions_taken: string[];          one line per tool call, the last 40
+    command_results: string[];        tool output, 12 at most, failures kept first
+    conclusive: boolean;              the agent spoke after its last tool call
+  };
+
+`conclusive` is never sent to the judge. `project` is added next to these fields when a
+spec names evidence.
+
+  messagesFrom(jsonl)       a JSONL transcript ({type: "user"|"assistant", message}) as
+                            messages; sidechain and meta events dropped
+  normalizeLastTurn(msgs)   the turn that starts at the last genuine human message; the
+                            gate's own block messages are not mistaken for one
+  normalize(msgs)           the same, for messages that already start at the request
+
+Messages are `{role, content, tool_calls?}`. Content is a string or an array of blocks
+(`text`, `tool_use`, `tool_result`); `tool_calls` and `role: "tool"` cover the
+OpenAI-style shape.
+
+
+THE GATE
+--------
+
+  gateTurn({ cwd, sessionId, read, answeringBlock?, flush? }): Promise<GateOutcome>
+
+    read           async () => Turn | null, called again while the closing message is
+                   still being written (flush: false turns that off)
+    answeringBlock true when the turn is the agent's reply to a block; with no specs it
+                   is allowed without judging
+
+    returns { block, reason?, message?, note? }
+      block    true: refuse the stop and send `reason` back to the agent
+      message  show to the user (the no-key notice)
+      note     why the gate allowed without a full judgment, for logs
+
+gateTurn never throws. It fails open when the transcript is unreadable, the key is
+missing or the judge is unreachable, and fails closed on a malformed spec or a weakened
+gate.
+
+  sessionBrief(cwd, cli?)   goals, specs and the one rule, for a session-start hook;
+                            null outside a project
+  endSession(sessionId)     deletes the gate's temp files for a session-end hook
+  guardEdit(cwd, path, e)   the refusal text if the edit weakens the gate, else null
+  plannedEdit(tool, input)  a host's Write/Edit/MultiEdit/NotebookEdit input as that edit
+
+
+LOWER LEVEL
+-----------
+
+  resolveKey(cwd)                  the TypeSafe key, or undefined (see install.txt)
+  loadSpecFile(cwd)                { goal, goals, specs, paths, maxRounds? } or null
+  validateSpecs(specs)             [{ id, problem }] for specs that cannot be judged
+  projectEvidence({ cwd, checks }) the enrich function: reads evidence files, runs checks
+  judge(turn, { apiKey, specs, enrich, endpoint, model, timeoutMs, thresholds })
+                                   one request; { verdict, answers, usage }
+  compose(answers, thresholds, specs, evidence)
+                                   answers to a verdict, in code; no network
+  QUESTIONS, DEFAULTS              the built-in questions and their thresholds
+
+
+THE CLI CONTRACT
+----------------
+
+`orly judge` and `orly gate` read `{"messages":[…]}` or `{"turn":{…}}` on stdin and print
+JSON on stdout.
+
+  judge   { block, reason, line, results, answers, usage }; exit 0 may end, 2 may not,
+          1 could not run (bad input, no key, judge unreachable)
+  gate    the GateOutcome; exit 0 or 2, never 1. --session <id> (or ORLY_SESSION) names
+          the session the round cap counts under; --answering-block sets answeringBlock
+
+
+WIRING A HOST HOOK
+------------------
+
+A turn-end hook that receives a transcript path and a session id is a few lines. For a
+host whose hook reads JSON on stdin and accepts {"decision": "block", "reason"} on stdout:
+
+  import { gateTurn, messagesFrom, normalizeLastTurn } from "./orly.ts";
+
+  const hook = await Bun.stdin.json();
+  const read = async () => {
+    try { return normalizeLastTurn(messagesFrom(await Bun.file(hook.transcript_path).text())); }
+    catch { return null; }
+  };
+  const out = await gateTurn({ cwd: hook.cwd, sessionId: hook.session_id, read });
+  if (out.block) console.log(JSON.stringify({ decision: "block", reason: out.reason }));
+
+Adapt the field names to the host. install/claude/adapter.ts is the complete Claude Code
+adapter: the same gate on Stop, plus sessionBrief on SessionStart, guardEdit on PreToolUse
+and endSession on SessionEnd. install/claude/hooks.json registers it.
+
+install/codex/adapter.ts speaks the same hook dialect as the Claude Code adapter. It reads
+Codex's rollout JSONL with `codexMessages` (context Codex injects as user messages, reasoning
+and UI events are dropped) and finds the rollout under $CODEX_HOME/sessions by session id when
+the hook is given no transcript path.
+
+install/cursor/adapter.ts uses Cursor's documented hooks: sessionStart returns the brief as
+additional_context, preToolUse returns {permission: "deny"} for a weakening edit, and stop
+returns the block as followup_message. It reads the transcript only when it is JSONL of
+messages, since Cursor does not document the format.
+
+install/opencode/plugin.ts (OpenCode, Kilo Code) and install/pi/extension.ts (Pi) are
+in-process: they map the host's messages onto the core's shape with `toAnthropic`, gate on
+the host's idle or end-of-agent event, send a block back as a new prompt, send the brief
+when a session starts, and refuse weakening edits from the host's pre-tool event.

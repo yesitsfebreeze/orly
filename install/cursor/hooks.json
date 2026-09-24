@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [{ "command": "bun ~/orly/install/cursor/adapter.ts" }],
+    "sessionEnd": [{ "command": "bun ~/orly/install/cursor/adapter.ts" }],
+    "preToolUse": [{ "command": "bun ~/orly/install/cursor/adapter.ts", "matcher": "Write|Edit" }],
+    "stop": [{ "command": "bun ~/orly/install/cursor/adapter.ts", "loop_limit": 6 }]
+  }
+}

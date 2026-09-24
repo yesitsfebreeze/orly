@@ -1,10 +1,16 @@
 # orly
 
-> A Claude Code plugin that gates the end of every turn. The goal becomes yes/no questions
-> in `.orly/specs/`; a Stop hook asks a System One judge (jev) every question about a bounded
-> record of the turn in one request and blocks the stop, naming the gap, until every answer
-> holds. A `require` spec is decided by a command and costs no tokens. Under 500 lines.
+> A turn-end gate for coding agents. At the end of every turn the recorded work is
+> checked against the project's specs in one TypeSafe/Jev judge request, with facts
+> decided in code; the agent keeps working until they hold. One file, `orly.ts`, run
+> with bun. `orly judge` exits 0 = may stop, 2 = not done, 1 = could not run.
 
-- [README](README.md): what it does, install, usage.
-- [Writing specs](docs/specs.txt): the spec tree, headers, the four rules, the state the judge sees.
-- `bin/orly.ts`: `orly hook | judge | specs | ask | tree`; `src/orly.ts`: the whole core.
+- [README](README.md): what it does, install, quick start, commands.
+- [Install](docs/install.txt): the .orly layout, the API key, environment variables.
+- [Writing specs](docs/specs.txt): the spec tree, rules for judgeable specs, goals, file evidence, checks.
+- [The guard](docs/guard.txt): what counts as weakening the gate and where it is refused.
+- [API](docs/api.txt): library exports, the Turn shape, the CLI contract, wiring a host hook.
+- [Claude Code adapter](install/claude/adapter.ts): the shipped hook, registered by install/claude/hooks.json.
+- [Codex CLI adapter](install/codex/adapter.ts): hook for ~/.codex/hooks.json; reads rollout transcripts.
+- [Cursor adapter](install/cursor/adapter.ts): hook for .cursor/hooks.json, registered by install/cursor/hooks.json.
+- [OpenCode plugin](install/opencode/plugin.ts) and [Pi extension](install/pi/extension.ts): in-process adapters.

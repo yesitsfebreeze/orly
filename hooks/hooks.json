@@ -1,7 +1,0 @@
-{
-  "hooks": {
-    "Stop": [{ "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}/bin/orly.ts\" hook", "timeout": 90, "statusMessage": "orly? checking the specs" }] }],
-    "SessionStart": [{ "matcher": "startup|resume|clear", "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}/bin/orly.ts\" hook", "timeout": 10 }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}/bin/orly.ts\" hook", "timeout": 5 }] }]
-  }
-}

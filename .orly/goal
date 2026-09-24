@@ -1,6 +1,3 @@
 rounds: 6
 
-- simple: orly is one Claude Code extension under 500 lines of shipped code: a Stop hook that turns the request and the project's specs into yes/no questions jev answers in one request, and blocks the stop until they are true
-- valid: every spec is validated before it is judged: taste words and unparseable files are rejected in code, and `orly specs` asks jev whether each question is decidable from recorded evidence
-- tokens: the judge sees a bounded state, a failing check blocks before any judge request is made, and every judgment prints its token count
-- tested: bun test passes with no network, every module builds, and the work is committed
+- core: Keep orly.ts a small, reliable single-file core: tests and build green, no growth without cause, every CLI command the skill relies on either implemented or removed from the docs

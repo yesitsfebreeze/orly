@@ -8,8 +8,8 @@ The user wrote: **$ARGUMENTS** (when nothing follows, use their last message).
 Decide which this is. A goal ("add retries to the client") → *Setting a goal*. A report
 that something went wrong ("it said tests pass but they didn't") → *When something went wrong*.
 
-`orly` below means `bun "${CLAUDE_PLUGIN_ROOT}/bin/orly.ts"`; without that variable it is
-`bin/orly.ts` in the orly checkout.
+`orly` below means `bun "${CLAUDE_PLUGIN_ROOT}/orly.ts"`; without that variable it is
+`orly.ts` in the orly checkout.
 
 ## Setting a goal
 
@@ -20,7 +20,7 @@ that something went wrong ("it said tests pass but they didn't") → *When somet
 3. Run `orly specs`. Rewrite every spec it rejects and re-run until clean; an undecidable
    spec yields a confident number that means nothing. If the judge cannot be reached, say
    so plainly: the word filter ran, decidability did not.
-4. Show the user the spec list in one short block (`orly tree`), then start the work.
+4. Show the user the spec list in one short block (`orly tasks`), then start the work.
 
 From then on every turn you try to end is judged against these specs. The loop ends when
 every spec is met, when you state plainly what you could not do and why, or when the

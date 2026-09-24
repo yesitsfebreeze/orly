@@ -1,21 +1,35 @@
 {
   "name": "orly",
   "version": "0.4.0",
-  "description": "orly? — turns your goal into yes/no questions a judge answers at the end of every turn, and refuses the stop until they hold.",
+  "description": "A turn-end gate for coding agents: checks each turn against the project's specs in one judge request and refuses the stop until they hold.",
   "type": "module",
   "license": "MIT",
   "repository": "github:yesitsfebreeze/orly",
   "bin": {
-    "orly": "bin/orly.ts"
+    "orly": "orly.ts"
   },
   "exports": {
-    ".": "./src/orly.ts"
+    ".": "./orly.ts"
   },
+  "files": [
+    "orly.ts",
+    "install",
+    ".claude-plugin",
+    "docs",
+    "llms.txt",
+    "LICENSE.md",
+    "README.md",
+    "skills"
+  ],
   "engines": {
     "bun": ">=1.1"
   },
   "scripts": {
-    "test": "bun test",
-    "calibrate": "bun test/calibrate.ts"
+    "test": "bun test"
+  },
+  "pi": {
+    "extensions": [
+      "./install/pi/extension.ts"
+    ]
   }
 }

@@ -1,0 +1,77 @@
+INSTALL
+=======
+
+orly is one file, orly.ts, with no dependencies. It needs bun 1.1 or newer.
+
+  git clone https://github.com/yesitsfebreeze/orly ~/orly
+  bun ~/orly/orly.ts help
+
+`orly` below means `bun ~/orly/orly.ts`.
+
+
+THE API KEY
+-----------
+
+Judged specs and the built-in questions go to the TypeSafe System One endpoint. The key is
+found in this order:
+
+  1. TYPESAFE_API_KEY in the environment. It always wins, so a project's config file
+     cannot swap a host's identity.
+  2. The output of ORLY_KEY_COMMAND, else of "keyCommand" in .orly/config.json. Hooks do
+     not inherit the shell's environment, so a command is the usual way:
+
+       { "keyCommand": "security find-generic-password -s typesafe -w" }
+
+     The command runs with `sh -c`. It is killed after ORLY_KEY_TIMEOUT_MS (10000), and a
+     command that times out or exits non-zero yields no key.
+
+With no key, `orly gate` allows every turn and says so once per session. `orly judge`
+exits 1.
+
+
+THE .orly DIRECTORY
+-------------------
+
+orly finds .orly by walking up from the working directory, as git finds .git. ~/.orly is
+never treated as a project.
+
+  .orly/goal            goals, most important first (see specs.txt)
+  .orly/specs/**.spec   one spec per file; folders group specs under a goal
+  .orly/config.json     checks and keyCommand
+  .orly/baseline.json   the strictest spec set seen, written by the gate (see guard.txt)
+
+config.json:
+
+  {
+    "keyCommand": "…",
+    "checks": {
+      "tests": { "command": "bun test", "countPattern": "\\bfail\\b", "timeoutMs": 120000 }
+    }
+  }
+
+The gate keeps per-session state in the system temp directory: orly-rounds-<session>.json
+(the round counter) and orly-nokey-<session> (the "no key" notice was shown).
+`endSession(sessionId)` deletes both.
+
+
+ENVIRONMENT
+-----------
+
+  TYPESAFE_API_KEY      the judge key
+  ORLY_KEY_COMMAND      command that prints the key; overrides keyCommand
+  ORLY_KEY_TIMEOUT_MS   how long the key command may run (10000)
+  TYPESAFE_BASE_URL     judge endpoint (https://api.typesafe.ai/v1/systemone)
+  ORLY_MODEL            judge model (jev-latest)
+  ORLY_TIMEOUT_MS       judge request timeout (12000)
+  ORLY_SESSION          session id for `orly gate` when --session is not given
+  ORLY_HAZARD           probability at which a built-in hazard blocks (0.7)
+  ORLY_SPEC_MET         probability at which a judged spec without a cut is met (0.7)
+  ORLY_MIN_COVERAGE     coverage score below which the turn blocks, out of 3 (1.5)
+  ORLY_MIN_CONFIDENCE   coverage confidence needed before low coverage blocks (0.35)
+  ORLY_MIN_ACTION_P     probability needed to name a specific next step (0.5)
+  ORLY_FLUSH_TRIES      how often the gate re-reads a transcript whose closing message has
+                        not been written yet (12)
+  ORLY_FLUSH_WAIT_MS    wait between those reads (150)
+  ORLY_CLI              how the brief names the orly command, for the Codex, OpenCode and
+                        Pi adapters (Claude Code derives it from the plugin root)
+  CODEX_HOME            where the Codex adapter looks for rollouts (~/.codex)

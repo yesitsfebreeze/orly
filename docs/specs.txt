@@ -2,91 +2,135 @@ WRITING SPECS
 =============
 
 A spec is one yes/no question about the recorded evidence of a turn: the commands that
-ran, what they printed, what the agent said, and files orly reads from disk itself.
-Nothing else is visible to the judge, so nothing else can be asked about.
+ran, what they printed, what the agent said, and evidence orly gathers itself. Nothing
+else is visible to the judge.
+
+Write as many as the project has rules. Every judged spec is one more question in the
+same single request. A `require` spec runs a command instead of asking the judge.
 
 
 THE TREE
 --------
 
-One file per spec under .orly/specs/; the file name is the id, folders only group.
-A file is optional `key: value` header lines, a blank line, then the question.
+One file per spec. The file name is the id; folders only group specs under a goal.
 
-  .orly/goal                         `rounds: 6`, a blank line, then the goal, one `- group: text` per line
+  .orly/goal
   .orly/specs/build/tests_green.spec
 
     require: checks.tests.exit equals 0
 
-    The test suite exits 0.
+    Does the test suite exit zero?
 
-  .orly/specs/build/tests_after_edit.spec
+A file is optional `key: value` header lines, a blank line, then the question:
 
-    cut: 0.6
+  cut         probability at which a judged spec is met, between 0 and 1 (default 0.70)
+  require     <path> <op> [value], decided in code instead of by the judge. op is one of
+              equals, lte, gte, present, absent, contains. The value is parsed as JSON
+              when it can be (0, true, "x"), else taken as a bare string
+  evidence    files to read at judging time, comma separated (see EVIDENCE)
+  optional    yes: the turn may end with this spec unmet
+  true        what "met" looks like, replacing the default criterion
+  false       what "not met" looks like
+  fitted      a note on where the cut came from; not used by the gate
 
-    First check whether `actions_taken` edits any file. If NOT, answer yes. If it does,
-    answer yes only when `command_results` show a test run after the last edit that
-    reports zero failures.
+An unknown header, a cut outside (0, 1) or a file with no question becomes a spec that can
+never be met, so a typo blocks every turn instead of silently dropping a check. The same
+holds for a .orly/goal file that does not parse.
 
-Headers:
+`orly specs` validates the whole tree and exits 1 when anything is rejected:
 
-  require     <path> <op> [value]: decided in code, no judge request. `path` reads
-              project.checks.<name>.exit or .matches; op is equals, lte, gte, present,
-              absent or contains. The check itself lives in .orly/config.json:
-                {"checks": {"tests": {"command": "bun test"},
-                            "todos": {"command": "cat src/*.ts", "countPattern": "TODO"}}}
-              A check that cannot run records exit null, which no op satisfies.
-  cut         probability at or above which the spec is met (default 0.70)
-  evidence    files read from disk at judging time into project.files, comma separated,
-              so a spec about file state never depends on what the agent printed
-  optional    yes: may stay unmet
-  true/false  what met and unmet look like, in one sentence each
-  fitted      a note on how the cut was fitted; ignored by the gate
+  - the id (file name) must be a slug: letters, digits, _ and -
+  - ids must be unique across folders
+  - `require` must name a path and a known op
+  - `require: checks.<name>…` must name a check that .orly/config.json defines
+  - the question must be at least 15 characters
+  - taste words (clean, readable, idiomatic, robust, proper, …) are rejected in judged
+    specs; inside a `code span` they are command text and allowed
 
-A file that does not parse becomes a spec that can never be met: a typo blocks instead
-of silently dropping a check. `orly tree` prints the index.
+
+GOALS
+-----
+
+.orly/goal is a list, most important first. Each line is `- <group>: <text>`, and the
+specs under .orly/specs/<group>/ serve that goal:
+
+  rounds: 6
+
+  - api: retries on every client call
+  - readme: the README says each thing once
+
+  orly goal api "retries on every client call"     appends; never overwrites
+  orly tasks                                       every spec, in goal order
+
+A body with no `- ` lines is read as one goal. `rounds` caps how many times in a row the
+gate may block one session (default 6). The gate also stops blocking once no additional
+spec has been met for more than 2 rounds, so a stuck agent is handed back to the user
+instead of looping. Unmet specs are listed in goal order in the block message.
+
+`orly goal` refuses to append to a goal file that does not parse, rather than drop the
+goals already in it.
 
 
 FOUR RULES
 ----------
 
-1. Observable. "Do `command_results` show a test run reporting zero failures after the
-   last edit?", not "the tests are good".
-2. Output, not behaviour. The judge cannot predict what code does at runtime; when a
-   command can show it, use `require` and let the command decide.
-3. No taste words. clean, readable, idiomatic, robust, proper and the like are rejected
-   by `orly specs` before any request is made.
-4. Branch when it only sometimes applies. "First check whether `actions_taken` edits X.
-   If NOT, answer yes. If it does, answer yes only when …". A spec that can only be met
-   on turns that touch X will otherwise block every other turn.
-
-`orly specs` runs the word filter, then asks the judge whether each remaining question
-could be decided from such a record at all. Rewrite what it rejects: an undecidable spec
-yields a confident number that means nothing.
+1. Ask about what is observable. "Do `command_results` show zero failures?", not "are
+   the tests good".
+2. Never make the judge predict runtime behaviour. Ask about a command's output, not
+   about what the code would do.
+3. No taste words. They are rejected.
+4. If a spec only sometimes applies, branch explicitly: "First check whether
+   `actions_taken` contains an edit to X. If NOT, answer yes. If it does, answer yes
+   only when `command_results` show zero failures after it."
 
 
-THE STATE THE JUDGE SEES
-------------------------
+EVIDENCE
+--------
 
-  user_request              the human's message, verbatim
-  assistant_final_message   how the agent ended the turn
-  assistant_said            everything the agent said this turn, in order
-  actions_taken             one line per tool call, the last 40, 300 chars each
-  command_results           tool output, the last 12 results with failures kept first,
-                            600 chars each
-  project.files             the files named in `evidence`, 8 at most, 12 000 chars each
+A spec about file state must not depend on what the agent chose to print. Name the file
+and orly reads it at judging time into `project.files`:
 
-A 200k-token session and a 2k-token one produce a state of the same order. The four
-built-in questions (unverified claim, placeholder left, unaddressed part, silent failure)
-and every spec are answered over this one state in one request; adding a spec adds a
-question, not a request. The token count of each judgment is printed on its line and
-logged to .orly/log.jsonl.
+  evidence: duration.js
+
+  Look at the `duration.js` entry under `project.files`, which is the file's real
+  current content. Is the `throw new Error("not implemented")` stub gone?
+
+Paths are relative to the project root (the folder holding .orly). Limits:
+
+  - 8 files per turn across all specs; the rest are recorded as not read, which the judge
+    must treat as unknown, not absent
+  - 12000 characters per file; a longer file is cut and says so
+  - a missing file is recorded as "[file does not exist]"
+  - a path or symlink that resolves outside the project is not read, because evidence is
+    sent to the judge
 
 
-WHEN SOMETHING WENT WRONG
--------------------------
+CHECKS: FACTS DECIDED IN CODE
+-----------------------------
 
-A mistake got through: write the question that would have caught it as a new spec, run
-`orly specs`, and fix the mistake in the work so the spec is met this turn. A fine turn
-was blocked: reword the spec that fired so it branches on when it applies. Never lower
-its cut or delete it to make it pass: the gate refuses the next stop when the spec set
-has become weaker under the same goal.
+A check is a shell command in .orly/config.json that runs at judging time, in the project
+root. A `require` spec asserts on its record and never reaches the model:
+
+  "checks": { "tests": { "command": "bun test", "countPattern": "\\bfail\\b" } }
+
+  require: checks.tests.exit equals 0
+
+Each check records:
+
+  exit      the exit status; null when the command could not run or was killed
+  out       the last 400 characters of stdout and stderr
+  matches   with countPattern, how many times the regex matched the full output
+
+A check is killed, with its child processes, after timeoutMs (60000). Only checks that some
+spec names are run, in parallel. Check records are never sent to the judge.
+
+A `require` that cannot be decided (a missing path, a number compared with a string) is
+unmet, never met.
+
+
+WHEN A SPEC MISFIRES
+--------------------
+
+Check, in this order: the state the judge received (`orly judge` prints the answers),
+the wording, then the cut. Wording moves the probability more than the cut does. Never
+lower a cut to make a turn pass; see guard.txt.
