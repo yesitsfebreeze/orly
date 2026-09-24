@@ -15,7 +15,6 @@ sent back with the gap named. One gate, one adapter per coding agent.
 
 [![stars](https://img.shields.io/github/stars/yesitsfebreeze/orly?style=flat)](https://github.com/yesitsfebreeze/orly/stargazers)
 [![tests](https://img.shields.io/badge/bun%20test-144%20pass-green)](test)
-[![license](https://img.shields.io/badge/license-MIT-blue)](package.json)
 
 ## The technique
 
