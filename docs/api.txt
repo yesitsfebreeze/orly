@@ -107,7 +107,9 @@ host whose hook reads JSON on stdin and accepts {"decision": "block", "reason"} 
 
 Adapt the field names to the host. install/claude/adapter.ts is the complete Claude Code
 adapter: the same gate on Stop, plus sessionBrief on SessionStart, guardEdit on PreToolUse
-and endSession on SessionEnd. install/claude/hooks.json registers it.
+and endSession on SessionEnd. install/claude/hooks.json registers it, together with
+install/claude/status.ts, a function-hook module that draws the last verdict under the
+turn's closing line from ~/.orly/status/<session>.json, which the Stop adapter writes.
 
 install/codex/adapter.ts speaks the same hook dialect as the Claude Code adapter. It reads
 Codex's rollout JSONL with `codexMessages` (context Codex injects as user messages, reasoning
@@ -123,3 +125,6 @@ install/opencode/plugin.ts (OpenCode, Kilo Code) and install/pi/extension.ts (Pi
 in-process: they map the host's messages onto the core's shape with `toAnthropic`, gate on
 the host's idle or end-of-agent event, send a block back as a new prompt, send the brief
 when a session starts, and refuse weakening edits from the host's pre-tool event.
+install/opencode/index.ts is the OpenCode 2 plugin ({id, setup}); it gates on
+session.execution.succeeded, since v2 never emits session.idle, and loads as the package
+directory "<orly>/install/opencode" because v2 ignores main.

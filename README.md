@@ -34,14 +34,16 @@ Needs bun 1.1 or newer and a TypeSafe API key.
 
 ```sh
 git clone https://github.com/yesitsfebreeze/orly ~/orly
-export TYPESAFE_API_KEY=...        # or "keyCommand" in .orly/config.json
+export TYPESAFE_API_KEY=...        # or "keyCommand" in .orly/config.json or ~/.orly/config.json
 alias orly="bun ~/orly/orly.ts"
 ```
 
 ### Claude Code
 
 The repository is a Claude Code plugin. It gates the stop, refuses spec edits that weaken
-the gate, briefs each session on the goals and specs, and cleans up when a session ends:
+the gate, briefs each session on the goals and specs, and cleans up when a session ends.
+Under each finished turn it draws a score bar and the three things behind it (unmet
+specs and hazards first):
 
 ```sh
 claude plugin marketplace add ~/orly && claude plugin install orly@orly
@@ -57,6 +59,10 @@ mkdir -p .opencode/plugins && echo 'export { OrlyPlugin } from "'$HOME'/orly/ins
 mkdir -p .pi/extensions && echo 'export { default } from "'$HOME'/orly/install/pi/extension.ts";' > .pi/extensions/orly.ts
 ```
 
+OpenCode 2 loads plugins by package directory instead: add
+`"plugins": [{"package": "<orly>/install/opencode"}]` to `opencode.jsonc`. It ignores
+`main`, so the entry stays `index.ts`.
+
 ### Codex CLI
 
 Codex runs command hooks from `~/.codex/hooks.json` (or `.codex/hooks.json` in a project).
@@ -66,7 +72,7 @@ Point Stop, SessionStart, SessionEnd and PreToolUse at the adapter:
 { "hooks": {
   "Stop":         [{ "hooks": [{ "type": "command", "command": "bun ~/orly/install/codex/adapter.ts", "timeout": 25 }] }],
   "SessionStart": [{ "hooks": [{ "type": "command", "command": "bun ~/orly/install/codex/adapter.ts", "timeout": 10 }] }],
-  "SessionEnd":   [{ "hooks": [{ "type": "command", "command": "bun ~/orly/install/codex/adapter.ts", "timeout": 5 }] }],
+  "SessionEnd":   [{ "hooks": [{ "type": "command", "command": "bun ~/orly/install/codex/adapter.ts", "timeout": 3 }] }],
   "PreToolUse":   [{ "hooks": [{ "type": "command", "command": "bun ~/orly/install/codex/adapter.ts", "timeout": 10 }] }]
 } }
 ```

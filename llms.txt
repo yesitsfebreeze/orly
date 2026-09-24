@@ -13,4 +13,4 @@
 - [Claude Code adapter](install/claude/adapter.ts): the shipped hook, registered by install/claude/hooks.json.
 - [Codex CLI adapter](install/codex/adapter.ts): hook for ~/.codex/hooks.json; reads rollout transcripts.
 - [Cursor adapter](install/cursor/adapter.ts): hook for .cursor/hooks.json, registered by install/cursor/hooks.json.
-- [OpenCode plugin](install/opencode/plugin.ts) and [Pi extension](install/pi/extension.ts): in-process adapters.
+- [OpenCode plugin](install/opencode/plugin.ts) (v1; [index.ts](install/opencode/index.ts) for OpenCode 2) and [Pi extension](install/pi/extension.ts): in-process adapters.

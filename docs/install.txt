@@ -22,6 +22,11 @@ found in this order:
 
        { "keyCommand": "security find-generic-password -s typesafe -w" }
 
+     A project without a keyCommand uses the one in ~/.orly/config.json, so one entry
+     serves every project. A key kept by kern in a pass store:
+
+       { "keyCommand": "PASSWORD_STORE_DIR=$HOME/dev/kern/.kern/secrets pass show typesafe/api-key | head -n 1" }
+
      The command runs with `sh -c`. It is killed after ORLY_KEY_TIMEOUT_MS (10000), and a
      command that times out or exits non-zero yields no key.
 

@@ -10,15 +10,18 @@ import { guardEdit, plannedEdit } from "../orly.ts";
 import { gateTurn, NO_KEY_MESSAGE, sessionBrief } from "../orly.ts";
 
 const sandbox = () => mkdtempSync(join(tmpdir(), "orly-core-"));
-const noKey = { TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY, ORLY_KEY_COMMAND: process.env.ORLY_KEY_COMMAND };
-const withoutKey = <T>(f: () => T): T => {
+const noKey = { TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY, ORLY_KEY_COMMAND: process.env.ORLY_KEY_COMMAND, HOME: process.env.HOME };
+// HOME moves too, so a keyCommand in the real ~/.orly/config.json cannot supply a key.
+const withoutKey = async <T>(f: () => Promise<T>): Promise<T> => {
   delete process.env.TYPESAFE_API_KEY;
   delete process.env.ORLY_KEY_COMMAND;
+  process.env.HOME = tmpdir();
   try {
-    return f();
+    return await f();
   } finally {
     if (noKey.TYPESAFE_API_KEY) process.env.TYPESAFE_API_KEY = noKey.TYPESAFE_API_KEY;
     if (noKey.ORLY_KEY_COMMAND) process.env.ORLY_KEY_COMMAND = noKey.ORLY_KEY_COMMAND;
+    process.env.HOME = noKey.HOME;
   }
 };
 

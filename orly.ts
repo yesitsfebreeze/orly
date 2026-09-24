@@ -278,10 +278,13 @@ export function loadConfig(cwd: string): Record<string, any> {
   try { return dir ? JSON.parse(readFileSync(join(dir, "config.json"), "utf8")) ?? {} : {}; } catch { return {}; }
 }
 
-/** `TYPESAFE_API_KEY`, else the output of `keyCommand` (hooks do not inherit the shell's env). A hung command yields no key. */
+/** `TYPESAFE_API_KEY`, else `keyCommand` from the project's config, else from `~/.orly/config.json`
+ *  (hooks do not inherit the shell's env). A hung command yields no key. */
 export async function resolveKey(cwd = process.cwd()): Promise<string | undefined> {
   if (process.env.TYPESAFE_API_KEY) return process.env.TYPESAFE_API_KEY;
-  const command = process.env.ORLY_KEY_COMMAND ?? loadConfig(cwd).keyCommand;
+  let home: Record<string, any> = {};
+  try { home = JSON.parse(readFileSync(join(process.env.HOME || "", ".orly", "config.json"), "utf8")) ?? {}; } catch {}
+  const command = process.env.ORLY_KEY_COMMAND ?? loadConfig(cwd).keyCommand ?? home.keyCommand;
   if (typeof command !== "string" || !command.trim()) return undefined;
   const r = await runCheck({ command: `${command} 2>/dev/null`, timeoutMs: num("ORLY_KEY_TIMEOUT_MS", 10_000) }, cwd);
   return r.exit === 0 ? String(r.out).trim() || undefined : undefined;
@@ -658,7 +661,7 @@ export function guardEdit(cwd: string, target: string, edit: PlannedEdit): strin
 export const DEFAULT_MAX_ROUNDS = 6;
 export const STALL_ROUNDS = 2;
 export const NO_KEY_MESSAGE =
-  'orly? is disabled: no TypeSafe key. Set TYPESAFE_API_KEY, or put {"keyCommand": "…"} in .orly/config.json.';
+  'orly? is disabled: no TypeSafe key. Set TYPESAFE_API_KEY, or put {"keyCommand": "…"} in .orly/config.json or ~/.orly/config.json.';
 
 const num = (name: string, fallback: number) => {
   const n = Number(process.env[name] ?? NaN);
@@ -702,7 +705,7 @@ export function endSession(sessionId: string): void {
 }
 
 export type GateInput = { cwd: string; sessionId: string; read: () => Promise<Turn | null>; answeringBlock?: boolean; flush?: boolean };
-export type GateOutcome = { block: boolean; reason?: string; message?: string; note?: string };
+export type GateOutcome = { block: boolean; reason?: string; message?: string; note?: string; judgment?: Judgment };
 
 /** Run the gate on one turn. Never throws; fails open, fails closed on bad specs. */
 export async function gateTurn(input: GateInput): Promise<GateOutcome> {
@@ -753,9 +756,9 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
   if (verdict.block && specs.length) {
     const d = advance(readRounds(sessionId), specFile!.goal, verdict.results.filter((r) => r.met).length, specFile!.maxRounds ?? DEFAULT_MAX_ROUNDS);
     write(roundsPath(sessionId), JSON.stringify(d.next));
-    if (!d.mayBlock) return { block: false, note: `${d.note} · ${open.length} spec(s) still unmet` };
+    if (!d.mayBlock) return { block: false, note: `${d.note} · ${open.length} spec(s) still unmet`, judgment: result };
   }
-  return verdict.block ? { block: true, reason: verdict.reason } : { block: false };
+  return verdict.block ? { block: true, reason: verdict.reason, judgment: result } : { block: false, judgment: result };
 }
 
 /** What the agent is told when a session starts: the goals, the specs, and the one rule. */
@@ -788,7 +791,7 @@ orly goal [group] "<text>"   append a goal to .orly/goal; specs under .orly/spec
 orly tasks         the specs, most important goal first
 orly specs         validate every spec file; names each rejected one, exit 1 if any
 
-env: TYPESAFE_API_KEY or .orly/config.json keyCommand (ORLY_KEY_TIMEOUT_MS), TYPESAFE_BASE_URL, ORLY_MODEL, ORLY_TIMEOUT_MS,
+env: TYPESAFE_API_KEY or keyCommand in .orly/config.json or ~/.orly/config.json (ORLY_KEY_TIMEOUT_MS), TYPESAFE_BASE_URL, ORLY_MODEL, ORLY_TIMEOUT_MS,
      ORLY_HAZARD, ORLY_SPEC_MET, ORLY_MIN_COVERAGE, ORLY_MIN_CONFIDENCE, ORLY_MIN_ACTION_P`;
 
 if (import.meta.main) {
@@ -857,7 +860,7 @@ if (import.meta.main) {
     process.exit(outcome.block ? 2 : 0);
   }
 
-  const key = (await resolveKey()) ?? fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json");
+  const key = (await resolveKey()) ?? fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json or ~/.orly/config.json");
   try {
     const { verdict, answers, usage } = await judgeHere(turn, key, cwd, loadSpecFile(cwd)?.specs ?? []);
     console.log(JSON.stringify({ ...verdict, answers, usage }));

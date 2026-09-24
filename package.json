@@ -1,6 +1,6 @@
 {
   "name": "orly",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A turn-end gate for coding agents: checks each turn against the project's specs in one judge request and refuses the stop until they hold.",
   "type": "module",
   "license": "MIT",

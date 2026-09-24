@@ -267,6 +267,9 @@ test("check results never reach the model, only the require specs", async () => 
 test("the key resolves for any host, not just the one with a hook", async () => {
   const root = mkdtempSync(join(tmpdir(), "orly-key-"));
   const saved = process.env.TYPESAFE_API_KEY;
+  const home = mkdtempSync(join(tmpdir(), "orly-home-"));
+  const savedHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     mkdirSync(join(root, ".orly"));
     delete process.env.TYPESAFE_API_KEY;
@@ -275,13 +278,22 @@ test("the key resolves for any host, not just the one with a hook", async () => 
     writeFileSync(join(root, ".orly", "config.json"), JSON.stringify({ keyCommand: "echo from-the-keychain" }));
     expect(await resolveKey(root)).toBe("from-the-keychain");
 
+    // A project without its own keyCommand falls back to ~/.orly/config.json.
+    mkdirSync(join(home, ".orly"));
+    writeFileSync(join(home, ".orly", "config.json"), JSON.stringify({ keyCommand: "echo from-the-user" }));
+    expect(await resolveKey(root)).toBe("from-the-keychain");
+    writeFileSync(join(root, ".orly", "config.json"), "{}");
+    expect(await resolveKey(root)).toBe("from-the-user");
+
     // The environment wins, so a config file cannot swap a host's identity.
     process.env.TYPESAFE_API_KEY = "from-the-env";
     expect(await resolveKey(root)).toBe("from-the-env");
   } finally {
     if (saved === undefined) delete process.env.TYPESAFE_API_KEY;
     else process.env.TYPESAFE_API_KEY = saved;
+    process.env.HOME = savedHome;
     rmSync(root, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
