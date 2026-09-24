@@ -103,6 +103,29 @@ test("a failing require check blocks before any key or judge, in well under a se
   }
 });
 
+test("a check past the stop budget is left to the next stop instead of outlasting the hook", async () => {
+  const dir = sandbox();
+  process.env.ORLY_CHECK_BUDGET_MS = "100";
+  try {
+    mkdirSync(join(dir, ".orly", "specs", "g"), { recursive: true });
+    writeFileSync(join(dir, ".orly", "goal"), "- g: tests\n");
+    writeFileSync(join(dir, ".orly", "config.json"), JSON.stringify({ checks: { tests: { command: "sleep 0.5; exit 1" } } }));
+    writeFileSync(join(dir, ".orly", "specs", "g", "tests.spec"), "require: checks.tests.exit equals 0\n\nDo the tests pass?\n");
+    const turn = { user_request: "fix it", assistant_final_message: "done", assistant_said: "done", actions_taken: ["Edit: a.ts"], command_results: [], conclusive: true };
+    const gate = () => withoutKey(() => gateTurn({ cwd: dir, sessionId: `p-${Math.random()}`, read: async () => turn, flush: false }));
+    const t0 = performance.now();
+    expect((await gate()).block).toBe(false);
+    expect(performance.now() - t0).toBeLessThan(1000);
+    await Bun.sleep(700);
+    const next = await gate();
+    expect(next.block).toBe(true);
+    expect(next.reason).toContain('check "tests" failed');
+  } finally {
+    delete process.env.ORLY_CHECK_BUDGET_MS;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a turn that only acknowledges a background notification is not judged", async () => {
   const dir = sandbox();
   try {

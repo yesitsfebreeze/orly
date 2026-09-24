@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "bun \"${CLAUDE_PLUGIN_ROOT}/install/claude/adapter.ts\"",
-            "timeout": 25,
+            "timeout": 35,
             "statusMessage": "orly? checking the goal specs"
           }
         ]

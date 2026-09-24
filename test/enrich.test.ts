@@ -140,3 +140,21 @@ test("a check reruns only when the git tree moved, or always when live", async (
     rmSync(r, { recursive: true, force: true });
   }
 });
+
+test("a check past the budget is pending, keeps running, and the next stop reads it; timeoutMs still kills", async () => {
+  const r = fresh(), runs = join(mkdtempSync(join(tmpdir(), "orly-runs-")), "n");
+  Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", "init", "-q"], { cwd: r });
+  Bun.spawnSync(["sh", "-c", "git add . && git -c user.name=t -c user.email=t@t commit -qm i"], { cwd: r });
+  try {
+    const checks = { s: { command: `echo . >> ${runs}; sleep 0.4; exit 3` }, h: { command: "sleep 5", timeoutMs: 300 } };
+    const specs: any = ["s", "h"].map((n) => ({ id: n, instructions: "n/a", require: { path: `checks.${n}.exit`, op: "equals", value: 0 } }));
+    const e: any = await projectEvidence({ cwd: r, checks, budgetMs: 50 })(turn, specs);
+    expect([e.checks.s.pending, e.checks.h.pending]).toEqual([true, true]);
+    await Bun.sleep(600);
+    const e2: any = await projectEvidence({ cwd: r, checks, budgetMs: 50 })(turn, specs);
+    expect([e2.checks.s.exit, e2.checks.h.exit, e2.checks.h.out]).toEqual([3, null, "[check killed: timeout]"]);
+    expect(readFileSync(runs, "utf8")).toBe(".\n"); // ran once, finished after the first stop stopped waiting
+  } finally {
+    rmSync(r, { recursive: true, force: true });
+  }
+});

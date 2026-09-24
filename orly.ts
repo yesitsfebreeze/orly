@@ -282,8 +282,12 @@ export async function resolveKey(cwd = process.cwd()): Promise<string | undefine
   try { home = JSON.parse(readFileSync(join(process.env.HOME || "", ".orly", "config.json"), "utf8")) ?? {}; } catch {}
   const command = process.env.ORLY_KEY_COMMAND ?? loadConfig(cwd).keyCommand ?? home.keyCommand;
   if (typeof command !== "string" || !command.trim()) return undefined;
-  const r = await runCheck({ command: `${command} 2>/dev/null`, timeoutMs: num("ORLY_KEY_TIMEOUT_MS", 10_000) }, cwd);
-  return r.exit === 0 ? String(r.out).trim() || undefined : undefined;
+  // Own process group, so a timeout also kills children holding the pipe.
+  const proc = Bun.spawn(["sh", "-c", command], { cwd, stdout: "pipe", stderr: "ignore", detached: true });
+  const timer = setTimeout(() => { try { process.kill(-proc.pid, "SIGKILL"); } catch { /* gone */ } }, num("ORLY_KEY_TIMEOUT_MS", 10_000));
+  const out = await new Response(proc.stdout).text();
+  clearTimeout(timer);
+  return (await proc.exited) === 0 ? out.trim() || undefined : undefined;
 }
 
 /** The spec tree under `orlyDir`, or null. `override` substitutes one file's text (the edit guard). */
@@ -495,29 +499,8 @@ function treeKey(root: string): string | null {
   return head + status + status.split("\0").map(stat).join();
 }
 
-/** Run one check. One that cannot run, or was killed, records `exit: null`: no numeric `require` passes. */
-async function runCheck(spec: CheckSpec, cwd: string): Promise<Record<string, unknown>> {
-  try {
-    // Own process group, so a timeout kills the children holding the pipes, not just `sh`.
-    const proc = Bun.spawn(["sh", "-c", spec.command], { cwd, stdout: "pipe", stderr: "pipe", detached: true });
-    const timer = setTimeout(() => { try { process.kill(-proc.pid, "SIGKILL"); } catch { proc.kill(); } }, spec.timeoutMs ?? 60_000);
-    const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-    const exit = await proc.exited;
-    clearTimeout(timer);
-    if (proc.signalCode) return { exit: null, matches: null, out: `[check killed: ${proc.signalCode}]` };
-    const text = out + err;
-    const record: Record<string, unknown> = { exit, out: text.slice(-400) };
-    if (spec.countPattern) {
-      try { record.matches = (text.match(new RegExp(spec.countPattern, "g")) ?? []).length; } catch { record.matches = null; }
-    }
-    return record;
-  } catch {
-    return { exit: null, out: "[check could not run]" };
-  }
-}
-
 /** `{files, checks}` for these specs. Only what some spec names is gathered. */
-export function projectEvidence(opts: { cwd?: string; checks?: Record<string, CheckSpec> } = {}) {
+export function projectEvidence(opts: { cwd?: string; checks?: Record<string, CheckSpec>; budgetMs?: number } = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const root = projectRoot(cwd) ?? cwd;
   const checks: Record<string, CheckSpec> = opts.checks ?? loadConfig(cwd).checks ?? {};
@@ -542,20 +525,38 @@ export function projectEvidence(opts: { cwd?: string; checks?: Record<string, Ch
     const wanted = specs.map((s) => s.require?.path.split(".")).filter((p) => p?.[0] === "checks").map((p) => p![1]);
     const names = Object.keys(checks).filter((n) => wanted.includes(n));
     if (!names.length) return out;
-    // A check reruns only when the tree moved (HEAD, or a changed file's content); `live: true` always reruns.
-    const cachePath = join(tmpdir(), `orly-checks-${Bun.hash(root)}.json`), tree = treeKey(root);
-    let cache: Record<string, { key: string; record: Record<string, unknown> }> = {};
-    try { cache = JSON.parse(readFileSync(cachePath, "utf8")); } catch { /* first run */ }
-    out.checks = Object.fromEntries(await Promise.all(names.map(async (n) => {
-      const key = tree !== null && !checks[n].live ? String(Bun.hash(tree + "\0" + checks[n].command)) : null;
-      if (key && cache[n]?.key === key) return [n, cache[n].record];
-      const record = await runCheck(checks[n], root);
-      if (key && record.exit !== null) cache[n] = { key, record };
-      return [n, record];
-    })));
-    write(cachePath, JSON.stringify(cache));
+    const dir = join(tmpdir(), `orly-checks-${Bun.hash(root)}`), tree = treeKey(root);
+    mkdirSync(dir, { recursive: true });
+    out.checks = Object.fromEntries(await Promise.all(names.map(async (n) => [n, await checkRecord(n, checks[n], root, dir, tree, opts.budgetMs)])));
     return out;
   };
+}
+
+/** One check's record, run detached with its output in `dir` so it outlives a gate that stopped waiting.
+ *  It reruns only when the tree moved (HEAD, or a changed file's content); `live: true` always reruns.
+ *  Past `budgetMs` it is `{pending: true}` and keeps running; the next stop reads its result. */
+async function checkRecord(n: string, spec: CheckSpec, root: string, dir: string, tree: string | null, budgetMs = Infinity): Promise<Record<string, unknown>> {
+  const [keyPath, outPath, exitPath] = ["key", "out", "exit"].map((x) => join(dir, `${Bun.hash(n)}.${x}`));
+  const key = String(Bun.hash(`${spec.live || tree === null ? "live" : tree}\0${spec.command}`)), limit = spec.timeoutMs ?? 60_000;
+  let [k, pid, start] = (existsSync(keyPath) ? readFileSync(keyPath, "utf8") : "").split("\n");
+  const alive = () => { try { return process.kill(-Number(pid), 0); } catch { return false; } };
+  const kill = () => { try { process.kill(-Number(pid), "SIGKILL"); } catch { /* gone */ } };
+  const killed = () => { kill(); rmSync(keyPath, { force: true }); return { exit: null, matches: null, out: "[check killed: timeout]" }; }; // rerun next stop
+  if (k === key && !existsSync(exitPath) && (!alive() || Date.now() - Number(start) > limit)) return killed();
+  if (k !== key) {
+    kill(); rmSync(exitPath, { force: true });
+    const proc = Bun.spawn(["sh", "-c", '( eval "$ORLY_CMD" ) >"$ORLY_OUT" 2>&1; echo $? >"$ORLY_EXIT.t" && mv "$ORLY_EXIT.t" "$ORLY_EXIT"'], {
+      cwd: root, detached: true, stdio: ["ignore", "ignore", "ignore"], env: { ...process.env, ORLY_CMD: spec.command, ORLY_OUT: outPath, ORLY_EXIT: exitPath } });
+    proc.unref(); [pid, start] = [String(proc.pid), String(Date.now())];
+    writeFileSync(keyPath, `${key}\n${pid}\n${start}`);
+  }
+  const until = Math.min(Date.now() + budgetMs, Number(start) + limit);
+  while (!existsSync(exitPath) && Date.now() < until) await Bun.sleep(50);
+  if (!existsSync(exitPath)) return Date.now() < Number(start) + limit ? { exit: null, pending: true, out: "[check still running]" } : killed();
+  const text = readFileSync(outPath, "utf8"), record: Record<string, unknown> = { exit: Number(readFileSync(exitPath, "utf8")), out: text.slice(-400) };
+  if (spec.countPattern) { try { record.matches = (text.match(new RegExp(spec.countPattern, "g")) ?? []).length; } catch { record.matches = null; } }
+  if (spec.live || tree === null) rmSync(keyPath, { force: true }); // a live result is read once
+  return record;
 }
 
 // ---------------------------------------------------------------- the guard
@@ -602,19 +603,14 @@ export function checkBaseline(baseline: SpecSet, current: SpecSet, defaultCut = 
   return { violations, nextBaseline: violations.length ? baseline : current };
 }
 
-export const refusal = (violations: Violation[]) =>
-  [
+export const refusal = (violations: Violation[]) => [
     "orly? refuses this edit: it would make the gate easier to pass.",
     ...violations.map((v) => `- \`${v.id}\`: ${v.problem}`),
     "",
-    "Tightening a cut, adding a spec, or rewording one and refitting it are all allowed. " +
-      "If a spec is genuinely wrong, say so to the user and leave it alone — you are the thing " +
-      "it judges, so this is not your call to make alone.",
+    "Tightening a cut, adding a spec, or rewording one and refitting it are all allowed. If a spec is genuinely wrong, say so to the user and leave it alone — you are the thing it judges, so this is not your call to make alone.",
   ].join("\n");
 
-export type PlannedEdit =
-  | { kind: "write"; content: string }
-  | { kind: "edit"; edits: Array<{ old_string: string; new_string: string; replace_all?: boolean }> };
+export type PlannedEdit = { kind: "write"; content: string } | { kind: "edit"; edits: Array<{ old_string: string; new_string: string; replace_all?: boolean }> };
 
 /** Any host's edit tool input as a PlannedEdit. Lowercase names and camelCase fields map to Claude Code's shape. */
 export function plannedEdit(tool: string, ti: any = {}): PlannedEdit | null {
@@ -743,11 +739,15 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
 
   // Deterministic checks decide first: a failing one blocks without a key or a judge call.
   let evidence: Record<string, any> = {};
-  try { evidence = await projectEvidence({ cwd })(turn, specs); } catch { /* judge on the transcript alone */ }
-  let result: Judgment = { verdict: compose({}, DEFAULTS, checked, evidence), answers: {} };
+  try { evidence = await projectEvidence({ cwd, budgetMs: num("ORLY_CHECK_BUDGET_MS", 8_000) })(turn, specs); } catch { /* judge on the transcript alone */ }
+  // A check still running past the budget decides the next stop, not this one: waiting outlasts the hook's timeout.
+  const pending = Object.keys(evidence.checks ?? {}).filter((n) => evidence.checks[n].pending);
+  const now = (s: Spec) => !pending.includes(s.require?.path.split(".")[1] ?? "");
+  const later = pending.length ? `checks still running, decided on the next stop: ${pending.join(", ")}` : undefined;
+  let result: Judgment = { verdict: compose({}, DEFAULTS, checked.filter(now), evidence), answers: {} };
   if (!result.verdict.block) {
     if (!(key ??= await resolveKey(cwd))) return noKey();
-    try { result = await judgeHere(turn, key, cwd, specs, evidence); } catch (e: any) { return allow(`judge unavailable (${e?.message ?? e})`); }
+    try { result = await judgeHere(turn, key, cwd, specs.filter(now), evidence); } catch (e: any) { return allow(`judge unavailable (${e?.message ?? e})`); }
   }
   const { verdict } = result;
   const open = unmet(verdict.results);
@@ -758,7 +758,7 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
     write(roundsPath(sessionId), JSON.stringify(d.next));
     if (!d.mayBlock) return { block: false, note: `${d.note} · ${open.length} spec(s) still unmet`, judgment: result };
   }
-  return verdict.block ? { block: true, reason: verdict.reason, judgment: result } : { block: false, judgment: result };
+  return verdict.block ? { block: true, reason: verdict.reason, judgment: result } : { block: false, judgment: result, ...(later && { note: later }) };
 }
 
 /** What the agent is told when a session starts: the goals, the specs, and the one rule. */
@@ -791,7 +791,7 @@ orly goal [group] "<text>"   append a goal to .orly/goal; specs under .orly/spec
 orly tasks         the specs, most important goal first
 orly specs         validate every spec file; names each rejected one, exit 1 if any
 
-env: TYPESAFE_API_KEY or keyCommand in .orly/config.json or ~/.orly/config.json (ORLY_KEY_TIMEOUT_MS), TYPESAFE_BASE_URL, ORLY_MODEL, ORLY_TIMEOUT_MS,
+env: TYPESAFE_API_KEY or keyCommand in .orly/config.json or ~/.orly/config.json (ORLY_KEY_TIMEOUT_MS), TYPESAFE_BASE_URL, ORLY_MODEL, ORLY_TIMEOUT_MS, ORLY_CHECK_BUDGET_MS,
      ORLY_HAZARD, ORLY_SPEC_MET, ORLY_MIN_COVERAGE, ORLY_MIN_CONFIDENCE, ORLY_MIN_ACTION_P`;
 
 if (import.meta.main) {

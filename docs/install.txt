@@ -68,6 +68,7 @@ ENVIRONMENT
   TYPESAFE_BASE_URL     judge endpoint (https://api.typesafe.ai/v1/systemone)
   ORLY_MODEL            judge model (jev-latest)
   ORLY_TIMEOUT_MS       judge request timeout (12000)
+  ORLY_CHECK_BUDGET_MS  how long a stop waits on checks before leaving them to the next stop (8000)
   ORLY_SESSION          session id for `orly gate` when --session is not given
   ORLY_HAZARD           probability at which a built-in hazard blocks (0.7)
   ORLY_SPEC_MET         probability at which a judged spec without a cut is met (0.7)

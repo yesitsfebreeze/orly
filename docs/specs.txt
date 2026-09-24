@@ -129,6 +129,10 @@ content of a changed or untracked file. Otherwise the last record is reused, so 
 changed nothing decides in milliseconds. A check that reads anything else (a gitignored file,
 a service, the clock) must set "live": true to run every time. A killed check is not reused.
 
+A stop waits on checks for ORLY_CHECK_BUDGET_MS (8000). A check still running then keeps
+running in the background, its specs are left out of this stop's verdict (the hook says so),
+and the next stop reads its result. timeoutMs still kills it.
+
 A `require` that cannot be decided (a missing path, a number compared with a string) is
 unmet, never met.
 
