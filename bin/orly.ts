@@ -104,7 +104,7 @@ if (command === "--help" || command === "-h" || command === "help") {
       "                   freeze the turn as a case, write the spec that must catch it, replay all",
       "orly goal [group] \"<text>\"   append a goal to .orly/goal; specs under <group>/ serve it",
       "orly tasks         unmet specs after the last judged turn, most important goal first",
-      "orly statusline [--session id] [--cwd dir] [--oneline] [--then <cmd>]",
+      "orly statusline [--session id] [--cwd dir] [--oneline] [--width n] [--then <cmd>]",
       "                   the owl and the last judgment, for any status bar (scripts/orly-status)",
       "orly tree          index the spec tree in .orly/specs/, in goal order",
       "orly replay [name…]  run every case through the live judge with the current specs",
@@ -404,7 +404,11 @@ if (command === "statusline") {
     const status = sid ? readStatus(tmpdir(), String(sid)) : latestStatus(tmpdir(), projectRoot(cwd) ?? cwd);
     let lines = statusLines(status, {
       specs: specFile.specs.length,
-      goals: (specFile.goals ?? []).map((g) => (g.group ? `${g.group}: ${g.text}` : g.text)),
+      goals: (specFile.goals ?? []).map((g, i) => ({
+        text: g.group ? `${g.group}: ${g.text}` : g.text,
+        specs: specFile.specs.filter((sp) => sp.rank === i).map((sp) => sp.id),
+      })),
+      width: Number(flag("--width") ?? 60),
       round: sid ? readRounds(tmpdir(), String(sid))?.rounds : undefined,
       maxRounds: specFile.maxRounds ?? DEFAULT_MAX_ROUNDS,
     });

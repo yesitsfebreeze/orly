@@ -6,6 +6,7 @@
 #   sh scripts/install-statusline.sh --project    this project's .claude/settings.json
 #   sh scripts/install-statusline.sh --uninstall  restore the status line it replaced
 #
+# It redraws every second (refreshInterval: 1, the floor) so the goal banners scroll.
 # An existing status line is kept: orly runs it after the owl (`--then`). Safe to run twice.
 set -eu
 command -v jq >/dev/null || { echo "needs jq" >&2; exit 1; }
@@ -46,7 +47,7 @@ fi
 
 cmd="\"$root/scripts/orly-status\""
 [ -n "$prev" ] && cmd="$cmd --then $(printf '%s' "$prev" | jq -Rr @sh)"
-jq --arg c "$cmd" '.statusLine = {type: "command", command: $c, padding: 0}' "$settings" >"$tmp"
+jq --arg c "$cmd" '.statusLine = {type: "command", command: $c, padding: 0, refreshInterval: 1}' "$settings" >"$tmp"
 mv "$tmp" "$settings"
 if [ -n "$prev" ]; then printf '%s' "$prev" >"$saved"; else rm -f "$saved"; fi
 echo "orly status line installed in $settings"

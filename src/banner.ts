@@ -86,16 +86,47 @@ const ago = (iso: string, now: number) => {
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const RED = "\x1b[31m", GREEN = "\x1b[32m", YELLOW = "\x1b[33m", DIM = "\x1b[2m", OFF = "\x1b[0m";
 
+/** One goal as the status line sees it: its text, its spec ids, and whether it has been judged. */
+export type GoalRow = { text: string; specs: string[] };
+
 /**
- * The owl for a status line: verdict, specs and round; what is unmet; the judge's detail;
- * the top goal. Before the first judgment it says what is armed.
+ * One scrolling row per goal: a stat block with the goal's specs met out of total, then a
+ * `width`-column window onto the goal text that moves one column every `stepMs`. The default
+ * suits a bar that redraws once a second (Claude Code's `refreshInterval` floor): 2 columns a tick.
+ * Before any judgment the block shows `–/n`.
+ */
+export function goalBanners(goals: GoalRow[], s: Status | null, width = 60, now = Date.now(), stepMs = 500): string[] {
+  const open = new Set(s?.unmet.map((u) => u.id) ?? []);
+  const tick = Math.floor(now / stepMs);
+  return goals.map((g, i) => {
+    const met = g.specs.filter((id) => !open.has(id)).length;
+    const colour = !s ? DIM : met === g.specs.length ? GREEN : RED;
+    const stat = `${colour}▕${s ? met : "–"}/${g.specs.length}▏${OFF}`;
+    // Code points, not UTF-16 units, so an em dash never splits mid-scroll.
+    const text = Array.from(g.text);
+    const window =
+      text.length <= width
+        ? g.text
+        : (() => {
+            const loop = [...text, ..."   ·   "];
+            const at = (tick + i * 17) % loop.length; // offset per row so the goals do not move in lockstep
+            return [...loop, ...loop].slice(at, at + width).join("");
+          })();
+    return `${stat} ${i + 1}. ${window}`;
+  });
+}
+
+/**
+ * The owl for a status line: verdict, specs and round; what is unmet; the judge's detail.
+ * Below it, one scrolling banner per goal. Before the first judgment it says what is armed.
  */
 export function statusLines(
   s: Status | null,
-  ctx: { specs: number; goals: string[]; round?: number; maxRounds: number; now?: number },
+  ctx: { specs: number; goals: GoalRow[]; round?: number; maxRounds: number; now?: number; width?: number },
 ): string[] {
-  const goal = ctx.goals.length ? `goal 1/${ctx.goals.length} ${clip(ctx.goals[0], 70)}` : "no goal yet";
-  if (!s) return owlBlock([`orly · ${ctx.specs} specs armed · no turn judged yet`, "", "", `${DIM}${goal}${OFF}`]).split("\n");
+  const now = ctx.now ?? Date.now();
+  const banners = goalBanners(ctx.goals, s, ctx.width, now).map((l) => `   ${l}`);
+  if (!s) return [...owlBlock([`orly · ${ctx.specs} specs armed · no turn judged yet`]).split("\n"), ...banners];
   const parts = s.line.split(" · ").slice(1);
   const specs = parts.find((p) => p.startsWith("specs ")) ?? "";
   const detail = parts.filter((p) => /^(coverage|next=)| tok$|^waited/.test(p)).join(" · ");
@@ -104,10 +135,12 @@ export function statusLines(
   const unmet = s.unmet.length
     ? `unmet ${s.unmet.length}: ${clip(s.unmet.slice(0, 3).map((u) => `${u.id} (${u.found})`).join(" · "), 110)}`
     : "every spec met";
-  return owlBlock([
-    `orly ${verdict} · ${specs}${round} · ${ago(s.at, ctx.now ?? Date.now())}${s.note ? ` · ${s.note}` : ""}`,
-    unmet,
-    `${DIM}${detail}${OFF}`,
-    `${DIM}${goal}${OFF}`,
-  ]).split("\n");
+  return [
+    ...owlBlock([
+      `orly ${verdict} · ${specs}${round} · ${ago(s.at, now)}${s.note ? ` · ${s.note}` : ""}`,
+      unmet,
+      `${DIM}${detail}${OFF}`,
+    ]).split("\n"),
+    ...banners,
+  ];
 }
