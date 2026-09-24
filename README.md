@@ -9,27 +9,32 @@ I have done what you asked, here is... oRly
 
 # orly
 
-**Your agent says "done". orly says "oh rly?"** A Claude Code plugin that turns your goal
-into yes/no questions, asks a judge at the end of every turn, and refuses the stop until
-every answer is yes. Under 500 lines of code, one hook, one CLI.
+**Your agent says "done". orly says "oh rly?"** A Claude Code plugin that keeps an
+evidence-backed picture of the codebase against its requirements, and refuses to let a turn
+end while one is violated.
+
+```
+requirement → source locations → evidence → satisfied | violated | unknown
+```
 
 ## How it works
 
-1. `/orly:orly <goal>` has the agent write one question per acceptance criterion into
-   `.orly/specs/`, then run `orly specs`, which rejects anything the judge could not decide
-   from evidence.
-2. When the agent tries to end a turn, the Stop hook reduces the turn to a bounded state
-   (request, what the agent said, one line per tool call, the tool output that matters, files
-   a spec names read from disk) and asks [jev](https://console.typesafe.ai) every question in
-   one request.
-3. Anything below its cut blocks the stop, and the reason names exactly what is not yet true.
-   The agent works on that, not on a re-prompt carrying the whole conversation.
+1. `/orly:orly <goal>` has the agent write one requirement per acceptance criterion into
+   `.orly/specs/`: a yes/no question, the files it is about (`evidence:`), or a command that
+   decides it (`require:`). `orly specs` rejects what could not be decided from evidence.
+2. `orly eval` evaluates every requirement against the codebase now. Checks run in code.
+   Questions about files go to [jev](https://console.typesafe.ai), a System One judge, in one
+   request. Each requirement gets a status, its locations, one line of evidence and a next
+   action. Results are reused while their inputs are unchanged, so an unchanged tree costs
+   nothing; the run reports what improved or regressed since last time, and which tracked
+   files no requirement names.
+3. The Stop hook runs the same evaluation when the agent tries to end a turn. A violated
+   requirement blocks the stop, with the gap named, before any question about the turn is
+   asked. If the requirements hold, four built-in questions on the turn itself follow: an
+   unverified claim, a stub left standing, a part never addressed, a failure never reported.
 
-Where a command can decide, no tokens are spent: a spec with `require: checks.tests.exit
-equals 0` runs the check from `.orly/config.json` in code, and a failing check blocks before
-the judge is asked at all. Four built-in questions cover the ways agents stop early: an
-unverified claim, a stub left standing, a part never addressed, a failure never reported.
-Every judgment prints its token count.
+A probability is a judgment, not proof; a check establishes only what it checks; missing
+evidence is unknown, never done. Every judgment prints its token count.
 
 ## Install
 
@@ -43,15 +48,14 @@ claude plugin marketplace add yesitsfebreeze/orly && claude plugin install orly@
 ## Usage
 
 ```
-/orly:orly add retries to the http client   writes the specs, validates them, starts the work
-/orly:orly it said tests pass but one failed  adds the question that would have caught it
-orly specs                                    is every spec decidable from recorded evidence?
-orly ask "is the stub gone?" src/thing.ts     one yes/no now, between turns
-orly tree                                     every spec and how it is decided
+/orly:orly add retries to the http client     writes the requirements, validates them, starts the work
+/orly:orly it said tests pass but one failed  adds the requirement that would have caught it
+orly eval                                     every requirement: status, where, evidence, next action
+orly specs                                    is every question decidable from recorded evidence?
 echo '{"messages":[…]}' | orly judge          any loop: exit 0 may stop, 2 not done, 1 could not run
 ```
 
-A spec is a file: optional `key: value` headers, a blank line, one question.
+A requirement is a file: optional `key: value` headers, a blank line, one question.
 
 ```
 evidence: src/http.ts
@@ -60,16 +64,16 @@ Look at `src/http.ts` under `project.files`, the file's real content. Does every
 go through a retry loop with a bounded number of attempts?
 ```
 
-It fails closed on your specs: a file that does not parse blocks every turn until fixed, and
-the agent cannot delete a spec, lower a cut or mark one optional without the next stop being
-refused. It fails open on itself: a judge that is down never becomes a wall. It cannot trap
-the agent: the loop ends when every spec holds, when the agent says plainly what it could
-not do and why, or at the round cap (`rounds: 6` in `.orly/goal`).
+It fails closed on your requirements: a file that does not parse is a violated requirement
+until fixed, and the agent cannot delete one, lower its cut or remove its check without the
+next stop being refused. It fails open on itself: a judge that is down never becomes a wall.
+It cannot trap the agent: the loop ends when every requirement holds, when the agent says
+plainly what it could not do and why, or at the round cap (`rounds: 6` in `.orly/goal`).
 
 ## Measured
 
 `bun test/calibrate.ts` judges the twelve labelled turns in `test/fixtures/` live and prints
-each hazard's separation and the token total, so the numbers are regenerated rather than
-quoted. `bun test` runs offline against a local fake judge.
+each built-in question's separation and the token total, so the numbers are regenerated
+rather than quoted. `bun test` runs offline against a local fake judge.
 
-Deeper: [writing specs](docs/specs.txt) · [llms.txt](llms.txt)
+Deeper: [writing requirements](docs/specs.txt) · [llms.txt](llms.txt)

@@ -8,7 +8,8 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { ask, HAZARD_CUT, HAZARDS, turnFromJsonl } from "../src/orly.ts";
+import { ask, HAZARD_CUT, HAZARDS } from "../src/evaluate.ts";
+import { turnFromJsonl } from "../src/turn.ts";
 
 const DIR = join(import.meta.dir, "fixtures");
 const KEY = process.env.TYPESAFE_API_KEY;

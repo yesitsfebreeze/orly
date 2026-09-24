@@ -4,3 +4,4 @@ rounds: 6
 - valid: every spec is validated before it is judged: taste words and unparseable files are rejected in code, and `orly specs` asks jev whether each question is decidable from recorded evidence
 - tokens: the judge sees a bounded state, a failing check blocks before any judge request is made, and every judgment prints its token count
 - tested: bun test passes with no network, every module builds, and the work is committed
+- evaluate: the codebase, not only the turn, is evaluated against its requirements: `orly eval` gives every requirement a status of satisfied, violated or unknown with its locations, evidence and next action, reuses results while their inputs are unchanged, shows what improved or regressed since the last run, and lists tracked files no requirement names

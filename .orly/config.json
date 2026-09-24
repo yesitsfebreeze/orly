@@ -1,17 +1,72 @@
 {
   "keyCommand": "security find-generic-password -a typesafe/api-key -s kern -w",
   "checks": {
-    "tests": { "command": "bun test 2>&1 | tail -5" },
-    "build": { "command": "for f in $(git ls-files 'src/*.ts' 'bin/*.ts'); do bun build \"$f\" --target=bun --outfile=/dev/null >/dev/null || exit 1; done" },
-    "code_lines": { "command": "cat $(git ls-files 'src/*.ts' 'bin/*.ts')", "countPattern": "\\n" },
-    "other_hosts": { "command": "git ls-files adapters commands/orly.toml gemini-extension.json GEMINI.md .codex-plugin .cursor-plugin .agents scripts", "countPattern": "\\n" },
-    "readme_lines": { "command": "cat README.md", "countPattern": "\\n" },
-    "readme_owls": { "command": "cat README.md", "countPattern": "\\{@,@\\}" },
-    "net_in_tests": { "command": "cat test/*.test.ts", "countPattern": "fetch\\(" },
-    "git_dirty": { "command": "git status --porcelain", "countPattern": "\\n" },
-    "missing_docs": { "command": "grep -oh 'docs/[a-z/-]*\\.txt' llms.txt README.md | sort -u | while read d; do [ -f \"$d\" ] || echo \"MISSING $d\"; done", "countPattern": "MISSING" },
-    "taste_rejected": { "command": "d=$(mktemp -d); r=$PWD; mkdir -p \"$d/.orly/specs\"; printf 'Is the code clean and readable after this turn?\\n' > \"$d/.orly/specs/t.spec\"; (cd \"$d\" && TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" specs >/dev/null 2>&1); s=$?; rm -rf \"$d\"; [ $s -eq 2 ]" },
-    "malformed_blocks": { "command": "d=$(mktemp -d); r=$PWD; mkdir -p \"$d/.orly/specs\"; printf 'bogus: 1\\n\\nA question here?\\n' > \"$d/.orly/specs/bad.spec\"; out=$(cd \"$d\" && echo '{\"turn\":{\"user_request\":\"x\",\"assistant_final_message\":\"done\",\"assistant_said\":\"done\",\"actions_taken\":[\"Bash: ls\"],\"command_results\":[\"ok\"],\"conclusive\":true}}' | TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" judge 2>&1); s=$?; rm -rf \"$d\"; [ $s -eq 2 ] && echo \"$out\" | grep -q bad" },
-    "check_first": { "command": "d=$(mktemp -d); r=$PWD; mkdir -p \"$d/.orly/specs\"; printf 'require: checks.never.exit equals 0\\n\\nThe check passes.\\n' > \"$d/.orly/specs/c.spec\"; printf '{\"checks\":{\"never\":{\"command\":\"false\"}}}' > \"$d/.orly/config.json\"; out=$(cd \"$d\" && echo '{\"turn\":{\"user_request\":\"x\",\"assistant_final_message\":\"done\",\"assistant_said\":\"done\",\"actions_taken\":[\"Bash: ls\"],\"command_results\":[\"ok\"],\"conclusive\":true}}' | TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" judge 2>&1); s=$?; rm -rf \"$d\"; [ $s -eq 2 ] && echo \"$out\" | grep -q never" }
+    "tests": {
+      "command": "bun test 2>&1 | tail -5"
+    },
+    "build": {
+      "command": "for f in $(git ls-files 'src/*.ts' 'bin/*.ts'); do bun build \"$f\" --target=bun --outfile=/dev/null >/dev/null || exit 1; done"
+    },
+    "code_lines": {
+      "command": "cat $(git ls-files 'src/*.ts' 'bin/*.ts')",
+      "countPattern": "\\n"
+    },
+    "other_hosts": {
+      "command": "git ls-files adapters commands/orly.toml gemini-extension.json GEMINI.md .codex-plugin .cursor-plugin .agents scripts",
+      "countPattern": "\\n"
+    },
+    "readme_lines": {
+      "command": "cat README.md",
+      "countPattern": "\\n"
+    },
+    "readme_owls": {
+      "command": "cat README.md",
+      "countPattern": "\\{@,@\\}"
+    },
+    "net_in_tests": {
+      "command": "cat test/*.test.ts",
+      "countPattern": "fetch\\("
+    },
+    "git_dirty": {
+      "command": "git status --porcelain",
+      "countPattern": "\\n"
+    },
+    "missing_docs": {
+      "command": "grep -oh 'docs/[a-z/-]*\\.txt' llms.txt README.md | sort -u | while read d; do [ -f \"$d\" ] || echo \"MISSING $d\"; done",
+      "countPattern": "MISSING"
+    },
+    "taste_rejected": {
+      "command": "d=$(mktemp -d); r=$PWD; mkdir -p \"$d/.orly/specs\"; printf 'Is the code clean and readable after this turn?\\n' > \"$d/.orly/specs/t.spec\"; (cd \"$d\" && TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" specs >/dev/null 2>&1); s=$?; rm -rf \"$d\"; [ $s -eq 2 ]"
+    },
+    "malformed_blocks": {
+      "command": "d=$(mktemp -d); r=$PWD; mkdir -p \"$d/.orly/specs\"; printf 'bogus: 1\\n\\nA question here?\\n' > \"$d/.orly/specs/bad.spec\"; out=$(cd \"$d\" && echo '{\"turn\":{\"user_request\":\"x\",\"assistant_final_message\":\"done\",\"assistant_said\":\"done\",\"actions_taken\":[\"Bash: ls\"],\"command_results\":[\"ok\"],\"conclusive\":true}}' | TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" judge 2>&1); s=$?; rm -rf \"$d\"; [ $s -eq 2 ] && echo \"$out\" | grep -q bad"
+    },
+    "check_first": {
+      "command": "d=$(mktemp -d); r=$PWD; mkdir -p \"$d/.orly/specs\"; printf 'require: checks.never.exit equals 0\\n\\nThe check passes.\\n' > \"$d/.orly/specs/c.spec\"; printf '{\"checks\":{\"never\":{\"command\":\"false\"}}}' > \"$d/.orly/config.json\"; out=$(cd \"$d\" && echo '{\"turn\":{\"user_request\":\"x\",\"assistant_final_message\":\"done\",\"assistant_said\":\"done\",\"actions_taken\":[\"Bash: ls\"],\"command_results\":[\"ok\"],\"conclusive\":true}}' | TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" judge 2>&1); s=$?; rm -rf \"$d\"; [ $s -eq 2 ] && echo \"$out\" | grep -q never"
+    },
+    "eval_statuses": {
+      "command": "d=$(mktemp -d); r=$PWD; mkdir -p \"$d/.orly/specs\"; cd \"$d\"; git init -q; printf 'require: checks.ok.exit equals 0\\n\\nPasses.\\n' > .orly/specs/a.spec; printf 'require: checks.bad.exit equals 0\\n\\nFails.\\n' > .orly/specs/b.spec; printf 'Does the turn run the tests after the last edit?\\n' > .orly/specs/c.spec; printf '{\"checks\":{\"ok\":{\"command\":\"true\"},\"bad\":{\"command\":\"false\"}}}' > .orly/config.json; out=$(TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" eval 2>&1); s=$?; rm -rf \"$d\"; [ $s -eq 2 ] && echo \"$out\" | grep -q \"^satisfied .*a\" && echo \"$out\" | grep -q \"^violated .*b\" && echo \"$out\" | grep -q \"^unknown .*c\""
+    },
+    "eval_reuse": {
+      "command": "d=$(mktemp -d); r=$PWD; mkdir -p \"$d/.orly/specs\"; cd \"$d\"; git init -q; printf 'require: checks.ok.exit equals 0\\n\\nPasses.\\n' > .orly/specs/a.spec; printf '{\"checks\":{\"ok\":{\"command\":\"echo ran >> ran.log\"}}}' > .orly/config.json; echo ran.log > .gitignore; git add -A; git commit -qm x; TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" eval >/dev/null 2>&1; out=$(TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" eval 2>&1); n=$(wc -l < ran.log); rm -rf \"$d\"; [ \"$n\" -eq 1 ] && echo \"$out\" | grep -q \"1 reused\""
+    },
+    "eval_change": {
+      "command": "d=$(mktemp -d); r=$PWD; mkdir -p \"$d/.orly/specs\"; cd \"$d\"; git init -q; printf 'require: checks.flag.exit equals 0\\n\\nThe flag file exists.\\n' > .orly/specs/flag.spec; printf '{\"checks\":{\"flag\":{\"command\":\"test -f flag\"}}}' > .orly/config.json; git add -A; git commit -qm x; TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" eval >/dev/null 2>&1; touch flag; out=$(TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" eval 2>&1); s=$?; rm -rf \"$d\"; [ $s -eq 0 ] && echo \"$out\" | grep -q \"improved.*flag\""
+    },
+    "eval_unassessed": {
+      "command": "d=$(mktemp -d); r=$PWD; mkdir -p \"$d/.orly/specs\"; cd \"$d\"; git init -q; printf 'require: checks.ok.exit equals 0\\n\\nPasses.\\n' > .orly/specs/a.spec; printf '{\"checks\":{\"ok\":{\"command\":\"true\"}}}' > .orly/config.json; echo x > orphan.txt; git add -A; git commit -qm x; out=$(TYPESAFE_API_KEY= ORLY_KEY_COMMAND=: bun \"$r/bin/orly.ts\" eval 2>&1); rm -rf \"$d\"; echo \"$out\" | grep -q \"unassessed.*orphan.txt\""
+    },
+    "hooks_wired": {
+      "command": "cat hooks/hooks.json",
+      "countPattern": "bin/orly.ts\\\\\" hook"
+    },
+    "manifest_versions": {
+      "command": "grep -oh '\"version\": *\"[^\"]*\"' package.json plugin.json .claude-plugin/plugin.json .claude-plugin/marketplace.json .github/plugin/marketplace.json | sort -u",
+      "countPattern": "\\n"
+    },
+    "skill_names_eval": {
+      "command": "cat skills/orly/SKILL.md commands/orly.md",
+      "countPattern": "orly eval"
+    }
   }
 }

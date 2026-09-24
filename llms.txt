@@ -1,10 +1,12 @@
 # orly
 
-> A Claude Code plugin that gates the end of every turn. The goal becomes yes/no questions
-> in `.orly/specs/`; a Stop hook asks a System One judge (jev) every question about a bounded
-> record of the turn in one request and blocks the stop, naming the gap, until every answer
-> holds. A `require` spec is decided by a command and costs no tokens. Under 500 lines.
+> A Claude Code plugin that keeps an evidence-backed picture of a codebase against its
+> requirements: requirement → source locations → evidence → satisfied | violated | unknown.
+> `orly eval` evaluates every requirement now (checks in code, file questions to the System One
+> judge jev in one request, results reused while inputs are unchanged). A Stop hook runs the
+> same evaluation and refuses to end a turn while a requirement is violated.
 
 - [README](README.md): what it does, install, usage.
-- [Writing specs](docs/specs.txt): the spec tree, headers, the four rules, the state the judge sees.
-- `bin/orly.ts`: `orly hook | judge | specs | ask | tree`; `src/orly.ts`: the whole core.
+- [Writing requirements](docs/specs.txt): the spec tree, headers, the four rules, evaluation and reuse.
+- `bin/orly.ts`: `orly eval | judge | specs | hook`. `src/`: `turn.ts` (the bounded turn),
+  `specs.ts` (requirements), `evaluate.ts` (the one evaluation mechanism), `gate.ts` (the Stop hook).

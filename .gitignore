@@ -6,6 +6,7 @@ node_modules/
 # orly runtime state: per-machine judgments, never source
 .orly/log.jsonl
 .orly/baseline.json
+.orly/eval.json
 
 # Editors
 .vscode/
