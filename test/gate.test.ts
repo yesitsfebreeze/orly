@@ -192,7 +192,7 @@ test("questions stay inside the API's stated limits", () => {
 // Calibrated against a replay of 102 blocked turns (2026-09-24): relayed reports and hold/stand-down
 // acknowledgements were false blocks; "matches my own check" with no check this turn stayed blocked.
 test("a relayed report is not the agent's claim, its own check is, and an acknowledged hold is covered", () => {
-  expect(QUESTIONS.unverified_claim.instructions).toContain("Repeating, with attribution, what the sender of `user_request` reported is not a claim.");
+  expect(QUESTIONS.unverified_claim.instructions).toContain("explicitly attributed to someone other than the agent");
   expect(QUESTIONS.unverified_claim.instructions).toContain("is always a claim, and needs that check in this turn");
   expect(QUESTIONS.coverage.criteria[3]).toContain("the request asked for no work");
 });
