@@ -1,12 +1,10 @@
 # orly
 
-> A turn-end gate for agent loops. At the end of every turn, the work is checked against
-> the project's specs in one judge request, with facts decided in code; the agent keeps
-> working until they hold. `orly judge` exits 0 = may stop, 2 = not done, 1 = could not run.
+> A Claude Code plugin that gates the end of every turn. The goal becomes yes/no questions
+> in `.orly/specs/`; a Stop hook asks a System One judge (jev) every question about a bounded
+> record of the turn in one request and blocks the stop, naming the gap, until every answer
+> holds. A `require` spec is decided by a command and costs no tokens. Under 500 lines.
 
-- [Install](docs/install.txt): setup, the API key, the .orly layout, environment variables.
-- [Hosts](docs/hosts.txt): every coding agent it runs in, how each is gated, `orly install <host>`, the adapters.
-- [Writing specs](docs/specs.txt): the spec tree, rules for judgeable specs, file, check and context evidence, mistakes as replayable cases, tuning.
-- [The guard](docs/guard.txt): what counts as weakening the gate and where it is refused.
-- [Porting](docs/porting.txt): module map, library calls, the CLI contract, the Turn shape, writing an adapter.
-- [Measured](docs/measured.txt): the fixture table from `bun test/calibrate.ts --write`.
+- [README](README.md): what it does, install, usage.
+- [Writing specs](docs/specs.txt): the spec tree, headers, the four rules, the state the judge sees.
+- `bin/orly.ts`: `orly hook | judge | specs | ask | tree`; `src/orly.ts`: the whole core.

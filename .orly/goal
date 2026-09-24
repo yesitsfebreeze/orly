@@ -1,5 +1,6 @@
 rounds: 6
 
-- readme: orly is cut down to what it does well — a turn-end gate that fails closed on bad specs — with non-orly state removed from the repo and a README that says each thing once
-- goals: goals are a list that `orly goal` appends to and specs are written against; the block, the tree and `orly tasks` list unmet specs in goal order, so every agent works the most important task first
-- simple: orly stays simple, reliable and fast: each turn fixes one evidence-backed defect or removes complexity, with a regression test, and shipped code never grows past its current size
+- simple: orly is one Claude Code extension under 500 lines of shipped code: a Stop hook that turns the request and the project's specs into yes/no questions jev answers in one request, and blocks the stop until they are true
+- valid: every spec is validated before it is judged: taste words and unparseable files are rejected in code, and `orly specs` asks jev whether each question is decidable from recorded evidence
+- tokens: the judge sees a bounded state, a failing check blocks before any judge request is made, and every judgment prints its token count
+- tested: bun test passes with no network, every module builds, and the work is committed
