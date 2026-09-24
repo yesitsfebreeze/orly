@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 // The owl, one row per status line; each row is padded to OWL_PAD before the text.
 const OWL = [`|  , .`, `| {@,@}`, `| /) )`, `|  '"`];
-const OWL_PAD = 7; // indent where the text starts
+const OWL_PAD = 8; // indent where the text starts
 const OWL_MARGIN = 3; // left margin for the complete status bar
 
 /** Split the CLI's " · "-joined verdict `line` into four rows: verdict and specs, coverage, next, the rest. */
