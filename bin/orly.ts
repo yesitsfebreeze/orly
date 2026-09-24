@@ -18,6 +18,7 @@ import { findOrlyDir, loadConfig, loadSpecFile, projectRoot, resolveKey } from "
 import { validateSpecs, type Spec } from "../src/specs.ts";
 import { EXT, formatSpec, loadTree, renderTree, TREE } from "../src/spectree.ts";
 import { check, listTurns, promote, readCases, readTurn, recordRun, saveTurn, type Outcome } from "../src/cases.ts";
+import { gateTurn } from "../src/turnend.ts";
 
 const fail = (msg: string, code = 1): never => {
   console.error(`orly: ${msg}`);
@@ -88,6 +89,9 @@ if (command === "--help" || command === "-h" || command === "help") {
     [
       "orly judge         read {messages:[…]} or {turn:{…}} on stdin, write a verdict as JSON",
       "                       exit 0 = the turn may end, 2 = it may not, 1 = the gate could not run",
+      "orly gate          same input; the full fail-open gate a hook runs (baseline, round cap, log)",
+      "                       prints {block, reason, banner}; exit 0 = may end, 2 = may not, never 1",
+      "                       --session <id> names the host session the round cap counts under",
       "orly schema        print both input shapes with a working example, and the output shape",
       "orly turns         list recently judged turns (kept locally, newest last)",
       "orly case <turn|last> block|pass \"what went wrong\" [--spec group/id [--ask \"question\"]]",
@@ -422,7 +426,7 @@ if (command === "replay") {
   process.exit((await replay(dir!, process.argv.slice(3))) ? 0 : 2);
 }
 
-if (command !== "judge") fail(`unknown command "${command}" — try: orly --help`);
+if (command !== "judge" && command !== "gate") fail(`unknown command "${command}" — try: orly --help`);
 
 // Validate shape before resolving the key, so a bad input never needs a key or costs a request.
 const raw = await new Response(Bun.stdin.stream()).text();
@@ -434,6 +438,24 @@ try {
 }
 const problem = inputProblem(input!);
 if (problem) fail(`${problem} — run \`orly schema\` for the expected shape`);
+
+if (command === "gate") {
+  // The hook path over stdin, for a host with no hook protocol of its own: fails open,
+  // counts rounds under --session, logs the judgment. A bad input is still exit 1 above.
+  const sessionFlag = process.argv.indexOf("--session");
+  const sessionId = sessionFlag > 0 ? process.argv[sessionFlag + 1] : undefined;
+  const turnIn: Turn = input!.turn ?? normalizeLastTurn(input!.messages!);
+  const outcome = await gateTurn({
+    cwd: process.cwd(),
+    sessionId: String(sessionId ?? process.env.ORLY_SESSION ?? "cli"),
+    read: async () => turnIn,
+    flush: false,
+    answeringBlock: process.argv.includes("--answering-block"),
+  });
+  if (outcome.note) console.error(`orly: ${outcome.note}`);
+  console.log(JSON.stringify(outcome));
+  process.exit(outcome.block ? 2 : 0);
+}
 
 const key = resolveKey();
 if (!key) fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json");
