@@ -27,7 +27,8 @@ THE STATUS LINE
 `scripts/orly-status` renders the owl, the last verdict, the unmet specs and a banner per goal
 for any status bar: it reads {session_id, cwd} on stdin when the bar sends it, else shows
 the newest judgment for the current project. `--oneline` fits one-row bars; NO_COLOR=1
-drops colour.
+drops colour. It draws the full terminal width: --width n fixes it, --width -n leaves
+n cells spare, ORLY_WIDTH or COLUMNS set it from outside; with no terminal to ask, 80.
 
   tmux:      set -g status-right '#(cd #{pane_current_path} && ~/orly/scripts/orly-status --oneline)'
   starship:  [custom.orly] command = "~/orly/scripts/orly-status --oneline"  when = "test -d .orly"

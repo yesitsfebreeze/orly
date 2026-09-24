@@ -104,7 +104,7 @@ if (command === "--help" || command === "-h" || command === "help") {
       "                   freeze the turn as a case, write the spec that must catch it, replay all",
       "orly goal [group] \"<text>\"   append a goal to .orly/goal; specs under <group>/ serve it",
       "orly tasks         unmet specs after the last judged turn, most important goal first",
-      "orly statusline [--session id] [--cwd dir] [--oneline] [--width n] [--then <cmd>]",
+      "orly statusline [--session id] [--cwd dir] [--oneline] [--width n|-n] [--then <cmd>]",
       "                   the owl and the last judgment, for any status bar (scripts/orly-status)",
       "orly tree          index the spec tree in .orly/specs/, in goal order",
       "orly replay [name…]  run every case through the live judge with the current specs",
@@ -383,6 +383,30 @@ if (command === "goal") {
   process.exit(0);
 }
 
+/**
+ * How wide the bar may draw: --width, else ORLY_WIDTH or COLUMNS, else the terminal itself
+ * (stdout when it is one, else the controlling tty, else the tmux pane the host runs in),
+ * else 80. `--width -4` means the terminal less four cells, for a bar with its own margin.
+ */
+function termWidth(arg?: string): number {
+  const asked = Number(arg ?? process.env.ORLY_WIDTH ?? NaN);
+  if (asked > 0) return asked;
+  let cols = Number(process.env.COLUMNS) || process.stdout.columns || 0;
+  if (!cols) {
+    try {
+      const r = Bun.spawnSync(["stty", "size"], { stdin: Bun.file("/dev/tty"), stderr: "ignore" });
+      cols = Number(r.stdout.toString().trim().split(/\s+/)[1]) || 0;
+    } catch {
+      /* no controlling tty: a detached bar */
+    }
+  }
+  if (!cols && process.env.TMUX_PANE) {
+    const r = Bun.spawnSync(["tmux", "display", "-p", "-t", process.env.TMUX_PANE, "#{pane_width}"], { stderr: "ignore" });
+    cols = Number(r.stdout.toString().trim()) || 0;
+  }
+  return Math.max(40, (cols || 80) + (asked < 0 ? asked : 0));
+}
+
 if (command === "statusline") {
   // Any status bar: JSON on stdin (session_id, cwd) when the host sends it, else flags, else
   // the newest judgment in this project. `--oneline` for one-row bars, NO_COLOR for plain.
@@ -413,7 +437,7 @@ if (command === "statusline") {
         // Specs serving no goal get a row too, so the rows add up to the header's count.
         { group: "other", text: "specs that serve no goal", specs: specFile.specs.filter((sp) => typeof sp.rank !== "number").map((sp) => sp.id) },
       ].filter((g) => g.specs.length),
-      width: flag("--width") ? Number(flag("--width")) : undefined,
+      width: termWidth(flag("--width")),
       oneline: process.argv.includes("--oneline"),
       round: sid ? readRounds(tmpdir(), String(sid))?.rounds : undefined,
       maxRounds: specFile.maxRounds ?? DEFAULT_MAX_ROUNDS,

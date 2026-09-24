@@ -217,6 +217,13 @@ test("the status line renders this session's last judgment beside the owl", () =
     writeFileSync(join(tmpdir(), `orly-status-${id}.json`), JSON.stringify({ at, cwd: root, block: false, line: "orly ✓ pass · specs 2/2", unmet: [] }));
     const one = Bun.spawnSync([join(root, "scripts", "orly-status"), "--oneline"], { cwd: root, env: { ...process.env, NO_COLOR: "1" } });
     expect(one.stdout.toString()).toBe("✓ PASS  2/2 specs · 2m ago\n");
+    // Full terminal width by default; --width -n leaves n cells for the host's own margin.
+    const wide = (args: string[]) =>
+      Bun.spawnSync([join(root, "scripts", "orly-status"), ...args], { cwd: root, env: { ...process.env, NO_COLOR: "1", COLUMNS: "132", ORLY_WIDTH: "" } })
+        .stdout.toString().split("\n")[0];
+    expect(Array.from(wide([])).length).toBe(132);
+    expect(Array.from(wide(["--width", "-6"])).length).toBe(126);
+    expect(Array.from(wide(["--width", "90"])).length).toBe(90);
   } finally {
     for (const f of ["status", "rounds"]) rmSync(join(tmpdir(), `orly-${f}-${id}.json`), { force: true });
   }
