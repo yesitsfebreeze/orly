@@ -6,8 +6,8 @@
  * deterministic checks, and the edit guard refuses spec changes that ease the gate.
  * Everything fails open; bad specs fail closed.
  */
-import { existsSync, mkdirSync, readdirSync, lstatSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, parse, relative, resolve, sep } from "node:path"; import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, lstatSync, readFileSync, realpathSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { basename, dirname, join, parse, relative, resolve, sep } from "node:path"; import { homedir, tmpdir } from "node:os";
 
 export const MAX_RESULTS = 12;
 export const MAX_ACTIONS = 40;
@@ -87,7 +87,6 @@ export function normalize(messages: Msg[]): Turn {
 }
 
 export const isInjectedReason = (text: string) => /^(Stop hook feedback:\s*)?orly(?: \(an independent|\? refuses|\? —)/.test(text);
-
 const human = (m: Msg) => m.role === "user" && !hasToolResult(m.content);
 
 /** Split at the last genuine human message and normalise that turn; `closing` stands in for a closing message the transcript lags. */
@@ -479,7 +478,7 @@ export type JudgeOptions = {
 };
 export type Judgment = { verdict: Verdict; answers: Record<string, any>; usage?: { input_tokens: number; output_tokens: number } };
 
-/** POST every question over one state. Throws on anything that is not the judge answering. */
+/** POST every question over one state. Throws unless the judge answers; Jev's answers also go to ~/.jev/log (orchi CONTRACT §8). */
 export async function ask(state: unknown, questions: Record<string, unknown>, o: Omit<JudgeOptions, "specs">) {
   const res = await fetch(o.endpoint || "https://api.typesafe.ai/v1/systemone", {
     method: "POST",
@@ -488,9 +487,10 @@ export async function ask(state: unknown, questions: Record<string, unknown>, o:
     signal: AbortSignal.timeout(o.timeoutMs ?? 12_000),
   });
   if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 300)}`);
-  const out = await res.json();
-  if (!out?.answers || typeof out.answers !== "object") throw new Error("response had no answers");
-  return { answers: out.answers as Record<string, any>, usage: out.usage };
+  const out = await res.json(), answers = out?.answers as Record<string, any>;
+  if (!answers || typeof answers !== "object") throw new Error("response had no answers");
+  if (!o.endpoint || new URL(o.endpoint).host === "api.typesafe.ai") try { const d = join(process.env.HOME || homedir(), ".jev", "log"); mkdirSync(d, { recursive: true }); appendFileSync(join(d, `${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify({ ts: Date.now(), client: "orly", model: o.model || "jev-latest", state, questions, answers }) + "\n"); } catch {}
+  return { answers, usage: out.usage };
 }
 
 /** One request, every question, one verdict. */

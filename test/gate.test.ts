@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { readFileSync, rmSync, writeFileSync } from "node:fs"; import { join } from "node:path";
 import { ask, compose, DEFAULTS, judge, QUESTIONS } from "../orly.ts";
 import { MAX_RESULTS, normalize, normalizeLastTurn, selectResults, type Msg } from "../orly.ts";
 
@@ -218,6 +219,26 @@ test("enrichment that throws never takes the judgment down", async () => {
     });
     expect(verdict.block).toBe(false);
   });
+});
+
+test("Jev's answers are appended to ~/.jev/log; other endpoints and a failed write change nothing", async () => {
+  const home = process.env.HOME!, log = join(home, ".jev", "log", `${new Date().toISOString().slice(0, 10)}.jsonl`);
+  rmSync(join(home, ".jev"), { recursive: true, force: true });
+  await withTransport({ answers: { q0: { noul: 0.9 } } }, 200, async () => {
+    await ask({ s: 1 }, { q0: { type: "noul" } }, { apiKey: "k" });
+    await ask({ s: 2 }, { q0: { type: "noul" } }, { apiKey: "k", endpoint: "http://localhost:9/v1/systemone" });
+  });
+  await withTransport("down", 503, async () => { await expect(ask({ s: 3 }, {}, { apiKey: "k" })).rejects.toThrow("503"); });
+  const lines = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  expect(lines.length).toBe(1);
+  expect(lines[0]).toMatchObject({ client: "orly", model: "jev-latest", state: { s: 1 }, questions: { q0: { type: "noul" } }, answers: { q0: { noul: 0.9 } } });
+  expect(typeof lines[0].ts).toBe("number");
+  rmSync(join(home, ".jev"), { recursive: true, force: true });
+  writeFileSync(join(home, ".jev"), "a file where the log dir should be");
+  await withTransport({ answers: { q0: { noul: 0.4 } } }, 200, async () => {
+    expect((await ask({}, { q0: { type: "noul" } }, { apiKey: "k" })).answers.q0.noul).toBe(0.4);
+  });
+  rmSync(join(home, ".jev"), { force: true });
 });
 
 test("the transport is one place: a non-2xx and a wrong-shaped 200 fail the same way", async () => {
