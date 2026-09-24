@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "node:fs"; import { join } from "node:path";
-import { ask, compose, DEFAULTS, judge, QUESTIONS } from "../orly.ts";
+import { ask, compose, DEFAULTS, judge, parseSpec, QUESTIONS } from "../orly.ts";
 import { MAX_RESULTS, normalize, normalizeLastTurn, selectResults, type Msg } from "../orly.ts";
 
 // ---------------------------------------------------------------- normalize
@@ -140,6 +140,18 @@ test("a coin-flip Choice falls back to the generic instruction", () => {
     next_action: { choice: "report_the_blocker", probabilities: { report_the_blocker: 0.34 } },
   };
   expect(compose(answers).reason).toContain("Finish the outstanding work now.");
+});
+
+test("pct is the share of the gate's own checks that pass: a turn the gate passes reads 100", () => {
+  const specs = ["a", "b", "c"].map((id) => parseSpec(id, `require: checks.${id}.exit equals 0\n\nDid ${id} pass?\n`));
+  const answers = { ...quiet, unverified_claim: { noul: 0.2 }, coverage: { score: 2.0, confidence: 0.9 } };
+  const ok = { checks: { a: { exit: 0 }, b: { exit: 0 }, c: { exit: 0 } } };
+  expect(compose(answers, DEFAULTS, specs, ok)).toMatchObject({ block: false, pct: 100 });
+  const oneUnmet = compose(answers, DEFAULTS, specs, { checks: { ...ok.checks, c: { exit: 1 } } });
+  expect(oneUnmet.block).toBe(true);
+  expect(oneUnmet.pct).toBe(80); // 4 of 5: specs a, b, worst hazard, coverage
+  expect(compose({ ...answers, coverage: { score: 0.6, confidence: 0.2 } }).pct).toBe(100); // low-confidence coverage is not judged
+  expect(compose({}).pct).toBe(null);
 });
 
 test("a missing or malformed answer never blocks by itself", () => {

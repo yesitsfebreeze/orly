@@ -29,11 +29,6 @@ function writeStatus(j: Judgment | undefined, blocked: boolean) {
   const hazards = ["unverified_claim", "placeholder_left", "unaddressed_part", "silent_failure"]
     .map((id) => ({ id, p: j?.answers?.[id]?.noul })).filter((h) => typeof h.p === "number").sort((a, b) => b.p - a.p);
   const cov = j?.answers?.coverage?.score;
-  const parts = [
-    results.length ? results.filter((r) => r.met).length / results.length : null,
-    typeof cov === "number" ? cov / 3 : null,
-    hazards.length ? 1 - hazards[0].p : null,
-  ].filter((x): x is number => x !== null);
   const items = [
     ...unmet(results).map((r) => `✗ ${r.spec.id}`),
     ...hazards.filter((h) => h.p >= DEFAULTS.hazard).map((h) => `⚠ ${h.id.replace(/_/g, " ")} ${h.p.toFixed(2)}`),
@@ -41,9 +36,8 @@ function writeStatus(j: Judgment | undefined, blocked: boolean) {
     ...(spec?.goals ?? []).map((g) => `◎ ${g.text}`),
     ...(typeof cov === "number" ? [`coverage ${cov.toFixed(1)}/3`] : []),
   ].slice(0, 3);
-  const pct = parts.length ? Math.round((parts.reduce((a, b) => a + b, 0) / parts.length) * 100) : null;
   const status = {
-    v: 1, ts: Date.now(), pct, blocked, items,
+    v: 1, ts: Date.now(), pct: j?.verdict.pct ?? null, blocked, items,
     round: readRounds(sessionId)?.rounds ?? 0, rounds: spec?.maxRounds ?? DEFAULT_MAX_ROUNDS,
     specs: { met: results.filter((r) => r.met).length, total: results.length || (spec?.specs.length ?? 0) }, nokey,
   };

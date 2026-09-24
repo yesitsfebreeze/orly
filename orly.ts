@@ -405,7 +405,7 @@ const ACTION_LEAD: Record<string, string> = {
   report_the_blocker: "You are blocked. Tell the user plainly what you could not do and exactly what you need from them.",
 };
 
-export type Verdict = { block: boolean; reason: string; line: string; results: SpecResult[] };
+export type Verdict = { block: boolean; reason: string; line: string; results: SpecResult[]; pct?: number | null }; // pct: share of the checks compose runs that pass (orchi CONTRACT §2)
 
 /** Policy, in code: answers plus thresholds to a verdict. A reworded question invalidates its thresholds. */
 export function compose(answers: Record<string, any>, t: Thresholds = DEFAULTS, specs: Spec[] = [], evidence?: unknown): Verdict {
@@ -421,22 +421,23 @@ export function compose(answers: Record<string, any>, t: Thresholds = DEFAULTS, 
       ? `- check "${r.spec.id}" failed: ${q.path} ${q.op} ${String(q.value ?? "")} — found ${JSON.stringify(r.actual)}`
       : `- spec "${r.spec.id}" is not met (p=${r.p.toFixed(2)}): ${r.spec.instructions}`);
   }
+  let checks = results.length, failed = failing.length; const specFired = fired.length;
   for (const id of Object.keys(HAZARD_LABELS)) {
     const p = answers?.[id]?.noul;
     if (typeof p !== "number") continue;
     parts.push(`${id} ${p.toFixed(2)}`);
     if (p >= t.hazard) fired.push(`- ${HAZARD_LABELS[id]} (p=${p.toFixed(2)})`);
   }
-  const cov = answers?.coverage;
-  const score = typeof cov?.score === "number" ? cov.score : null;
-  const confidence = typeof cov?.confidence === "number" ? cov.confidence : 0;
-  if (score !== null) parts.push(`coverage ${score.toFixed(2)}/3 (conf ${confidence.toFixed(2)})`);
-  if (score !== null && score < t.minCoverage && confidence >= t.minCoverageConfidence) fired.push(`- the work does not yet cover the request (coverage ${score.toFixed(2)} of 3)`);
+  if (Object.keys(HAZARD_LABELS).some((id) => typeof answers?.[id]?.noul === "number")) checks++, failed += +(fired.length > specFired);
+  const cov = answers?.coverage, score = typeof cov?.score === "number" ? cov.score : null, confidence = typeof cov?.confidence === "number" ? cov.confidence : 0;
+  if (score !== null) checks++, parts.push(`coverage ${score.toFixed(2)}/3 (conf ${confidence.toFixed(2)})`);
+  if (score !== null && score < t.minCoverage && confidence >= t.minCoverageConfidence) failed++, fired.push(`- the work does not yet cover the request (coverage ${score.toFixed(2)} of 3)`);
+  const pct = checks ? Math.round(((checks - failed) / checks) * 100) : null;
   const action = answers?.next_action;
   const actionP = action?.probabilities?.[action?.choice] ?? 0;
   if (action?.choice) parts.push(`next=${action.choice} ${actionP.toFixed(2)}`);
   const line = `orly ${fired.length ? "⛔ block" : "✓ pass"} · ${parts.join(" · ")}`;
-  if (!fired.length) return { block: false, reason: "", line, results };
+  if (!fired.length) return { block: false, reason: "", line, results, pct };
   const lead = (actionP >= t.minActionProbability && ACTION_LEAD[action.choice]) || "Finish the outstanding work now.";
   const reason = [
     "orly (an independent TypeSafe/Jev judgment on this turn) is not satisfied that the request is finished:",
@@ -445,7 +446,7 @@ export function compose(answers: Record<string, any>, t: Thresholds = DEFAULTS, 
     lead,
     "If it genuinely cannot be finished, say so explicitly to the user and name what is left and why — that also satisfies the gate.",
   ].join("\n");
-  return { block: true, reason, line, results };
+  return { block: true, reason, line, results, pct };
 }
 
 export type JudgeOptions = {
