@@ -103,6 +103,22 @@ test("a failing require check blocks before any key or judge, in well under a se
   }
 });
 
+test("a turn that only acknowledges a background notification is not judged", async () => {
+  const dir = sandbox();
+  try {
+    mkdirSync(join(dir, ".orly", "specs", "g"), { recursive: true });
+    writeFileSync(join(dir, ".orly", "goal"), "- g: tests\n");
+    writeFileSync(join(dir, ".orly", "config.json"), JSON.stringify({ checks: { tests: { command: "true" } } }));
+    writeFileSync(join(dir, ".orly", "specs", "g", "tests.spec"), "require: checks.tests.exit equals 0\n\nDo the tests pass?\n");
+    const turn = { user_request: "<task-notification>\n<summary>Monitor event</summary>\n</task-notification>", assistant_final_message: "Nothing new; waiting on the report.", assistant_said: "Nothing new; waiting on the report.", actions_taken: [], command_results: [], conclusive: true };
+    const out = await withoutKey(() => gateTurn({ cwd: dir, sessionId: `n-${Math.random()}`, read: async () => turn, flush: false }));
+    expect(out.block).toBe(false);
+    expect(out.message).toBeUndefined(); // allowed before the key was even looked up
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the brief is null outside a project and names the host's goal command inside one", () => {
   const dir = sandbox();
   try {

@@ -738,7 +738,7 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
     await Bun.sleep(num("ORLY_FLUSH_WAIT_MS", 150));
     turn = (await input.read()) ?? turn;
   }
-  if (!turn.user_request || (!turn.actions_taken.length && !turn.assistant_said)) return allow();
+  if (!turn.user_request || (!turn.actions_taken.length && (!turn.assistant_said || turn.user_request.startsWith("<task-notification>")))) return allow();
   if (!turn.conclusive) return allow("closing message never reached the transcript");
 
   // Deterministic checks decide first: a failing one blocks without a key or a judge call.
