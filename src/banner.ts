@@ -195,7 +195,7 @@ export function statusLines(
     const f = failing(g);
     const segs: Seg[] = [
       [g.group.padEnd(name + 1)],
-      [`▕${count(s ? g.specs.length - f.length : "–", g.specs.length)}▏ `, s && f.length ? ROLE.bad : ROLE.quiet],
+      [`${count(s ? g.specs.length - f.length : "–", g.specs.length)}  `, s && f.length ? ROLE.bad : ROLE.quiet],
       [f.length ? `${why(f)}  ` : ""],
     ];
     const room = goalsW - segs.reduce((n, [t]) => n + cells(t), 0);

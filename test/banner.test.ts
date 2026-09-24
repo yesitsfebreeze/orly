@@ -31,8 +31,8 @@ test("each goal row carries its count and its first failing spec, inside the wid
   expect(out[0]).toStartWith("┌───────┬─ gate ");
   expect(out[1]).toContain("│ ✗ BLOCK           1m ago │");
   expect(out[2]).toContain("│ specs 1/3    ███░░░░░░░  │");
-  expect(out[1]).toContain("readme ▕1/2▏ ✗ b 4431, n… │"); // cut at its panel edge, never spilled
-  expect(out[2]).toContain("other  ▕1/1▏ specs that … │");
+  expect(out[1]).toContain("readme 1/2  ✗ b 4431, ne… │"); // cut at its panel edge, never spilled
+  expect(out[2]).toContain("other  1/1  ");
   // Every row is exactly the width, frame included; below 64 cells the owl panel goes first.
   for (const l of out) expect(Array.from(l).length).toBe(64);
   const narrow = statusLines(status, { specs: 3, goals, maxRounds: 6, now: 60_000, width: 50 }).map(plain);
