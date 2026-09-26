@@ -1401,11 +1401,11 @@ export function swarmSeat(cwd: string, transcriptPath?: string): string | null {
   return holders.find((h) => h.name === agent)?.name ?? holders.find((h) => sameSession(h, me))?.name ?? null;
 }
 
-/** A seated sitter's spec group: its seat file's `specs:`, null when it names none; undefined outside a seat. */
+// why: Human-approved host routing keeps seat-specific gates on sitters and swarm gates on hosts.
 export function seatSpecGroup(cwd: string, transcriptPath?: string): string | null | undefined {
   const name = swarmSeat(cwd, transcriptPath);
-  if (!name) return undefined;
   const dir = findOrlyDir(cwd);
+  if (!name) return dir && existsSync(join(dir, "swarm")) ? "swarm" : undefined;
   const path = dir && join(dir, "swarm", "seats", `${name.replace(/-\d+$/, "")}.md`);
   const group = path && existsSync(path) ? frontmatter(readFileSync(path, "utf8")).fm.specs : null;
   return typeof group === "string" && group ? group : null;

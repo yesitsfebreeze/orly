@@ -272,7 +272,11 @@ test("a seated sitter answers to its own seat's specs only; the host and a seat 
   expect(names(root, host)).toEqual(["director", "work-1"]);
   const as = (name: string) => { const t = join(root, `${name}.jsonl`); writeFileSync(t, JSON.stringify({ type: "user", agentName: name }) + "\n"); return t; };
   expect(seatSpecGroup(root, as("work-1"))).toBe("work");
-  expect(seatSpecGroup(root)).toBeUndefined();
+  expect(seatSpecGroup(root)).toBe("swarm");
+  expect(seatSpecGroup(root, as("director"))).toBeNull();
+  const outside = mkdtempSync(join(tmpdir(), "outside-swarm-"));
+  scratch.push(outside);
+  expect(seatSpecGroup(outside)).toBeUndefined();
 });
 
 test("a Codex subagent is known by its rollout's agent_path, as a teammate by agentName", async () => {
