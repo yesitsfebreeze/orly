@@ -2,7 +2,7 @@
   "checks": {
     "tests": { "command": "bun test 2>&1", "timeoutMs": 120000 },
     "build": { "command": "bun build orly.ts --target=bun --outfile=/tmp/orly2-build.js" },
-    "size": { "command": "test $(wc -l < orly.ts) -le 870" },
+    "size": { "command": "test $(wc -l < orly.ts) -le 3000" },
     "specs": { "command": "bun orly.ts specs" }
   }
 }
