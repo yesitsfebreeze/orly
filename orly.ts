@@ -1416,7 +1416,7 @@ async function writeCache(s: Swarm, me: string, change: { state?: string; log?: 
 }
 
 // ---- lanes: one sitter's branch lane/<name>, written with git plumbing and never checked out. The sitter edits
-// copies of only the files it touches in data/work/<name>/<path>; main's tree is untouched. Only the director lands.
+// copies of only the files it touches in data/work/<name>/<path>; main's tree is untouched. Lands run one at a time.
 
 const laneRef = (name: string) => `refs/heads/lane/${name}`;
 const workDir = (s: Swarm, name: string) => join(s.data, "work", name);
@@ -1686,7 +1686,7 @@ orly lane get <name> <path...>             copy lane/<name>'s version of each pa
 orly lane put <name> -m <msg> [<path...>]  commit those copies onto lane/<name>
 orly lane sync <name>                      merge main into lane/<name>
 orly lane check <name> | gate <rev>        the gate (swarm.md's gate checks) on lane/<name> or <rev>
-orly lane land <name> <slug> [<sha>]       director only: merge, gate, move main, push
+orly lane land <name> <slug> [<sha>]       one land at a time: merge, gate, move main, push
 orly lane ls [<name>]                      every lane with ahead/behind main, or one lane's commits
 orly lane log seat <seat> [<slug>] | log sitter <name>   main's history by Sitter trailer`;
 
@@ -1756,7 +1756,7 @@ async function laneCommand(s: Swarm, [verb, ...a]: string[]): Promise<number> {
     case "sync": need(1, "sync <name>"); console.log(laneSync(s, a[0])); return 0;
     case "check": need(1, "check <name>"); laneOpen(s, a[0]); return (await laneGate(s, `lane/${a[0]}`, false, a[0])) ? 0 : 1;
     case "gate": need(1, "gate <rev>"); return (await laneGate(s, a[0])) ? 0 : 1;
-    case "land": need(2, "land <name> <slug> [<sha>]"); await laneLand(s, a[0], a[1], a[2]); return 0;
+    case "land": need(2, "land <name> <slug> [<sha>]"); await withLock(join(s.data, "land.lock"), () => laneLand(s, a[0], a[1], a[2])); return 0;
     case "ls": for (const l of laneList(s, a[0])) console.log(l); return 0;
     case "log": need(2, "log seat <seat> [<slug>] | log sitter <name>"); for (const l of laneLog(s, a[0], a[1], a[2])) console.log(l); return 0;
     default: console.error(LANE_HELP); return 2;
