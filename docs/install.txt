@@ -82,4 +82,8 @@ ENVIRONMENT
   ORLY_FLUSH_WAIT_MS    wait between those reads (150)
   ORLY_CLI              how the brief names the orly command, for the Codex, OpenCode and
                         Pi adapters (Claude Code derives it from the plugin root)
+  CODEX_THREAD_ID       Codex-provided thread identity; combined with the process id for swarm seats
+                        and leases so threads sharing one app server do not share ownership.
+                        Existing PID-only reservations remain reserved until their owner exits;
+                        coordinate active worker handovers before allocating new names.
   CODEX_HOME            where the Codex adapter looks for rollouts (~/.codex)

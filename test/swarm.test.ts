@@ -47,6 +47,31 @@ test("seating: the director once, one <seat>-<n> per session for each filled sea
   expect(JSON.parse(orly(root, ["swarm"]).out.split("\n")[1])).toMatchObject({ seat: "work", specs: "work", rows: 1 });
 });
 
+test("Codex threads sharing one app-server pid own distinct seats and director leases", () => {
+  const root = repo();
+  const call = (thread: string, ...args: string[]) => Bun.spawnSync(["bun", ORLY, ...args], {
+    cwd: root, env: { ...process.env, ...GIT, ORLY_PID: String(process.pid), CODEX_THREAD_ID: thread },
+  });
+  const plan = (thread: string) => call(thread, "swarm").stdout.toString().trim().split("\n").map((line) => JSON.parse(line).name);
+  expect(plan("thread-a")).toEqual(["director", "work-1"]);
+  expect(plan("thread-b")).toEqual(["work-2"]);
+  expect(plan("thread-a")).toEqual(["director", "work-1"]);
+  call("thread-b", "bus", "unlease", "director");
+  expect(call("thread-b", "bus", "lease", "director").exitCode).toBe(1);
+  call("thread-a", "bus", "unlease", "director");
+  expect(call("thread-b", "bus", "lease", "director").exitCode).toBe(0);
+});
+
+test("Codex threads do not adopt legacy PID-only seats or leases", () => {
+  const root = repo();
+  const call = (thread: string) => Bun.spawnSync(["bun", ORLY, "swarm"], {
+    cwd: root, env: { ...process.env, ...GIT, ORLY_PID: String(process.pid), CODEX_THREAD_ID: thread },
+  }).stdout.toString().trim().split("\n").map((line) => JSON.parse(line).name);
+  expect(call("")).toEqual(["director", "work-1"]);
+  expect(call("thread-a")).toEqual(["work-2"]);
+  expect(call("")).toEqual(["director", "work-1"]);
+});
+
 test("a dead pid frees the director lease and its sitter names", () => {
   const root = repo(), gone = deadPid();
   expect(names(root, gone)).toEqual(["director", "work-1"]);

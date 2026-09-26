@@ -1074,7 +1074,7 @@ export async function rowsCommand(arg: string | undefined, cwd: string): Promise
 // `.orly/swarm/swarm.md` (frontmatter: main, gate) and `.orly/swarm/seats/<seat>.md` (frontmatter: filled, specs).
 // Every session that runs `/orly` joins the repo's one swarm: `orly swarm` seats the director while its lease is
 // free, then one `<seat>-<n>` per worker seat whose `filled` query returns rows. The bus, the claims and the lanes'
-// work dirs live in `.orly/swarm/data/` (never tracked). A session is its harness pid, or ORLY_PID when set.
+// work dirs live in `.orly/swarm/data/` (never tracked). Session ownership combines the harness pid (or ORLY_PID) and CODEX_THREAD_ID when present.
 
 /** A failure the CLI prints as `orly: <message>`; `exit` 2 is a usage error, 1 a refusal. */
 class SwarmError extends Error {
@@ -1086,7 +1086,8 @@ const refuse = (text: string): never => { throw new SwarmError(text); };
 type Swarm = { root: string; data: string; main: string; gate: string[] };
 type BusLine = { seq: number; ts: string; head: string; from: string; to: string; verb: string | null; slug: string | null; sha: string | null; reply_to: number | null; text: string };
 type Claim = { ts: string; owner: string; slug: string; pid: number; files: string[] };
-type SitterName = { ts: string; name: string; seat: string; pid: number };
+type SessionOwner = { pid: number; thread?: string };
+type SitterName = SessionOwner & { ts: string; name: string; seat: string };
 export type Sitter = { name: string; seat: string; path: string; specs?: string; rows: number };
 
 const VERBS = ["claimed", "released", "land", "landed", "bounced", "seated", "ask", "answered", "finding", "question"];
@@ -1114,6 +1115,15 @@ function sessionPid(): number {
     pid = Number(m[1]);
   }
   return 0;
+}
+
+function sessionOwner(): SessionOwner {
+  const thread = process.env.CODEX_THREAD_ID;
+  return { pid: sessionPid(), ...(thread ? { thread } : {}) };
+}
+
+function sameSession(a: SessionOwner, b: SessionOwner): boolean {
+  return a.pid === b.pid && a.thread === b.thread;
 }
 
 /** An exclusive lock file that holds its owner's pid, for the length of `fn`. A dead owner's lock is taken over.
@@ -1296,16 +1306,16 @@ async function reap(s: Swarm): Promise<Claim[]> {
 async function lease(s: Swarm, role: string): Promise<boolean> {
   checkName("name", role);
   const path = join(s.data, `lease.${role}`);
-  const me = sessionPid();
+  const me = sessionOwner();
   return withLock(busLock(s), () => {
     const now = Math.floor(Date.now() / 1000);
-    let held: { at: number; pid: number } | null = null;
+    let held: (SessionOwner & { at: number }) | null = null;
     try { held = JSON.parse(readFileSync(path, "utf8")); } catch { /* free */ }
-    if (held && held.pid !== me) {
+    if (held && !sameSession(held, me)) {
       const live = held.pid ? alive(held.pid) : now - held.at < LEASE_HEARTBEAT_S;
       if (live) return false;
     }
-    writeAtomic(path, JSON.stringify({ role, at: now, pid: me }));
+    writeAtomic(path, JSON.stringify({ role, at: now, ...me }));
     return true;
   });
 }
@@ -1313,7 +1323,7 @@ async function lease(s: Swarm, role: string): Promise<boolean> {
 async function unlease(s: Swarm, role: string) {
   const path = join(s.data, `lease.${role}`);
   await withLock(busLock(s), () => {
-    try { if (JSON.parse(readFileSync(path, "utf8")).pid === sessionPid()) rmSync(path); } catch { /* not held */ }
+    try { if (sameSession(JSON.parse(readFileSync(path, "utf8")), sessionOwner())) rmSync(path); } catch { /* not held */ }
   });
 }
 
@@ -1321,15 +1331,15 @@ async function unlease(s: Swarm, role: string) {
 async function sit(s: Swarm, seat: string): Promise<string> {
   checkName("name", seat);
   const path = join(s.data, "sitters.jsonl");
-  const me = sessionPid();
+  const me = sessionOwner();
   return withLock(busLock(s), () => {
-    const live = readJsonl<SitterName>(path).filter((r) => r.pid === me || alive(r.pid)); // a gone session's names are free
-    let name = live.find((r) => r.seat === seat && r.pid === me)?.name;
+    const live = readJsonl<SitterName>(path).filter((r) => sameSession(r, me) || alive(r.pid)); // a gone session's names are free
+    let name = live.find((r) => r.seat === seat && sameSession(r, me))?.name;
     if (!name) {
       let n = 1;
       while (live.some((r) => r.name === `${seat}-${n}`)) n++;
       name = `${seat}-${n}`;
-      live.push({ ts: isoNow(), name, seat, pid: me });
+      live.push({ ts: isoNow(), name, seat, ...me });
     }
     writeJsonl(path, live);
     return name;
@@ -1343,7 +1353,7 @@ function filledRows(db: Database, seat: string, filled: unknown): number {
   try { return db.query(filled as string).all().length; } catch (e: any) { return refuse(`seat ${seat}: filled failed: ${e?.message ?? e}`); }
 }
 
-/** This session's seating plan. Names are reserved per session pid, so asking again returns the same plan. */
+/** This session's seating plan. Names are reserved per session identity, so rejoining returns the same plan. */
 export async function seatingPlan(s: Swarm): Promise<Sitter[]> {
   const orlyDir = join(s.root, ".orly");
   if (!existsSync(join(orlyDir, "swarm", "seats"))) refuse("no .orly/swarm/seats/ here");
@@ -1375,7 +1385,7 @@ export function swarmSeat(cwd: string, transcriptPath?: string): string | null {
   const holders = readJsonl<SitterName>(join(data, "sitters.jsonl")).filter((r) => alive(r.pid));
   try {
     const director = JSON.parse(readFileSync(join(data, "lease.director"), "utf8"));
-    if (alive(director.pid)) holders.push({ ts: "", name: "director", seat: "director", pid: director.pid });
+    if (alive(director.pid)) holders.push({ ts: "", name: "director", seat: "director", pid: director.pid, thread: director.thread });
   } catch { /* no director */ }
   let agent: string | undefined;
   try {
@@ -1387,8 +1397,8 @@ export function swarmSeat(cwd: string, transcriptPath?: string): string | null {
   } catch { /* no transcript */ }
   // No agentName: the host session, which reserves its teammates' names under its own pid and asks the human for them.
   if (!agent) return null;
-  const me = sessionPid();
-  return holders.find((h) => h.name === agent)?.name ?? holders.find((h) => h.pid === me)?.name ?? null;
+  const me = sessionOwner();
+  return holders.find((h) => h.name === agent)?.name ?? holders.find((h) => sameSession(h, me))?.name ?? null;
 }
 
 /** A seated sitter's spec group: its seat file's `specs:`, null when it names none; undefined outside a seat. */
@@ -1553,7 +1563,7 @@ function laneSync(s: Swarm, name: string): number {
 }
 
 /** The gate on `rev`: every gate check in one export of the revision, one build at a time. Prints `<sha> name=0 …`
- *  and a red check's last lines; a green tree is remembered in data/green.
+ *  and a red check's last lines; a green tree is remembered in data/green-provenance-v2.
  *  ponytail: a fixed pool of slots, not one per sitter: each slot's export costs its own build of the crate in target/. */
 async function laneGate(s: Swarm, rev: string, land = false, lane?: string): Promise<boolean> {
   const checks = gateChecks(s);
@@ -1561,8 +1571,7 @@ async function laneGate(s: Swarm, rev: string, land = false, lane?: string): Pro
   // a land waits ahead of lane checks: checks yield while land.wanted names a live pid, so lands never starve
   const wanted = join(s.data, "land.wanted");
   if (land) writeFileSync(wanted, String(process.pid));
-  // Each slot has its own export and check records; cargo's own target lock serializes only the compiles, so the
-  // test runs of up to ORLY_GATE_SLOTS gates overlap. Slot 0 keeps the old names and so its warm build.
+  // why: non-Rust checks may overlap; Rust exports hold cargo-provenance.lock through all checks because shared artifacts use relative source fingerprints.
   const slots = Array.from({ length: Math.max(1, num("ORLY_GATE_SLOTS", 3)) }, (_, i) => i ? `-${i}` : "");
   return withAnyLock(slots.map((x) => join(s.data, `build${x}.lock`)), async (slot) => {
     if (land) rmSync(wanted, { force: true });
@@ -1574,40 +1583,48 @@ async function laneGate(s: Swarm, rev: string, land = false, lane?: string): Pro
     const exported = run(["sh", "-c", 'git archive "$1" | tar -x -C "$2" && rsync -rlpc --delete "$2/" "$3/"', "export", rev, tmp, exportDir], s.root);
     rmSync(tmp, { recursive: true, force: true });
     if (!exported.ok) refuse(`export of ${sha} failed: ${exported.err.trim()}`);
-    // builds run without any model endpoint (`*_BASE_URL`), so a test cannot reach the agent's proxy
-    for (const key of Object.keys(process.env)) if (key.endsWith("_BASE_URL")) delete process.env[key];
-    // a check may judge by seat (a refactor lane must not grow the code, a port lane may): name the lane and the rev
-    if (lane) Object.assign(process.env, { ORLY_LANE: lane, ORLY_SHA: gitOut(s.root, "rev-parse", "--verify", `${rev}^{commit}`) });
-    const runs = join(s.data, `checks${slots[slot]}`);
-    mkdirSync(runs, { recursive: true });
-    let line = sha;
-    let green = true;
-    const base = gitOut(s.root, "merge-base", s.main, rev);
-    const changed = base ? (gitOut(s.root, "diff", "--name-only", base, rev) ?? "").split("\n").filter(Boolean) : null;
-    for (const [name, check] of Object.entries(checks)) {
-      if (changed && gateSkips(check, changed)) { line += ` ${name}=skip`; continue; }
-      // the slot is ours, so a check still recorded here belongs to a gate that died mid-run: kill it, run fresh
-      const stale = join(runs, `${Bun.hash(name)}.key`);
-      const [, orphan] = existsSync(stale) ? readFileSync(stale, "utf8").split("\n") : [];
-      if (Number(orphan) > 0) try { process.kill(-Number(orphan), "SIGKILL"); } catch { /* gone */ }
-      rmSync(stale, { force: true });
-      const record = await checkRecord(name, { ...check, timeoutMs: check.timeoutMs ?? 600_000 }, exportDir, runs, null);
-      const ok = record.exit === 0;
-      if (!ok) {
-        green = false;
-        // the next gate reuses this check's output file, so a red run keeps its own copy and names what failed
-        const out = join(runs, `${Bun.hash(name)}.out`), log = join(runs, `${sha}-${name}.log`);
-        if (existsSync(out)) copyFileSync(out, log);
-        const text = existsSync(log) ? readFileSync(log, "utf8") : String(record.out ?? "");
-        const failed = text.split("\n").filter((l) => /panicked at|^test .* FAILED$|^error(\[|:)/.test(l)).slice(0, 10);
-        for (const l of [...failed, ...text.trimEnd().split("\n").slice(-6)]) console.log(`${name}: ${l}`);
-        if (existsSync(log)) console.log(`${name}: full output ${log}`);
+    const runChecks = async () => {
+      // builds run without any model endpoint (`*_BASE_URL`), so a test cannot reach the agent's proxy
+      for (const key of Object.keys(process.env)) if (key.endsWith("_BASE_URL")) delete process.env[key];
+      // a check may judge by seat (a refactor lane must not grow the code, a port lane may): name the lane and the rev
+      if (lane) Object.assign(process.env, { ORLY_LANE: lane, ORLY_SHA: gitOut(s.root, "rev-parse", "--verify", `${rev}^{commit}`) });
+      const runs = join(s.data, `checks${slots[slot]}`);
+      mkdirSync(runs, { recursive: true });
+      let line = sha;
+      let green = true;
+      const base = gitOut(s.root, "merge-base", s.main, rev);
+      const changed = base ? (gitOut(s.root, "diff", "--name-only", base, rev) ?? "").split("\n").filter(Boolean) : null;
+      for (const [name, check] of Object.entries(checks)) {
+        if (changed && gateSkips(check, changed)) { line += ` ${name}=skip`; continue; }
+        // the slot is ours, so a check still recorded here belongs to a gate that died mid-run: kill it, run fresh
+        const stale = join(runs, `${Bun.hash(name)}.key`);
+        const [, orphan] = existsSync(stale) ? readFileSync(stale, "utf8").split("\n") : [];
+        if (Number(orphan) > 0) try { process.kill(-Number(orphan), "SIGKILL"); } catch { /* gone */ }
+        rmSync(stale, { force: true });
+        const record = await checkRecord(name, { ...check, timeoutMs: check.timeoutMs ?? 600_000 }, exportDir, runs, null);
+        const ok = record.exit === 0;
+        if (!ok) {
+          green = false;
+          // the next gate reuses this check's output file, so a red run keeps its own copy and names what failed
+          const out = join(runs, `${Bun.hash(name)}.out`), log = join(runs, `${sha}-${name}.log`);
+          if (existsSync(out)) copyFileSync(out, log);
+          const text = existsSync(log) ? readFileSync(log, "utf8") : String(record.out ?? "");
+          const failed = text.split("\n").filter((l) => /panicked at|^test .* FAILED$|^error(\[|:)/.test(l)).slice(0, 10);
+          for (const l of [...failed, ...text.trimEnd().split("\n").slice(-6)]) console.log(`${name}: ${l}`);
+          if (existsSync(log)) console.log(`${name}: full output ${log}`);
+        }
+        line += ` ${name}=${ok ? 0 : 1}`;
       }
-      line += ` ${name}=${ok ? 0 : 1}`;
-    }
-    console.log(line);
-    if (green) appendFileSync(join(s.data, "green"), `${gitOut(s.root, "rev-parse", `${rev}^{tree}`)}\n`);
-    return green;
+      console.log(line);
+      if (green) appendFileSync(join(s.data, "green-provenance-v2"), `${gitOut(s.root, "rev-parse", `${rev}^{tree}`)}\n`);
+      return green;
+    };
+    if (!existsSync(join(exportDir, "Cargo.toml"))) return runChecks();
+    return withLock(join(s.data, "cargo-provenance.lock"), async () => {
+      const fresh = run(["sh", "-c", 'find "$1" -type f -exec touch {} +', "freshen", exportDir], s.root);
+      if (!fresh.ok) refuse(`cannot freshen Rust export ${sha}: ${fresh.err.trim()}`);
+      return runChecks();
+    });
   }, land ? undefined : wanted);
 }
 
@@ -1639,7 +1656,7 @@ async function laneLand(s: Swarm, name: string, slug: string, at?: string) {
   }
   const sha = gitOut(s.root, "rev-parse", "--short", landing)!;
   const tree = gitOut(s.root, "rev-parse", `${landing}^{tree}`)!;
-  if (readLines(join(s.data, "green")).includes(tree)) console.log(`gate: tree of ${sha} already green`);
+  if (readLines(join(s.data, "green-provenance-v2")).includes(tree)) console.log(`gate: tree of ${sha} already green`);
   else if (!(await laneGate(s, landing, true, name))) refuse(`${name} at ${sha} is red; not landed`);
   const now = gitOut(s.root, "rev-parse", s.main)!;
   if (now !== main) refuse(`${s.main} moved from ${main.slice(0, 7)} to ${now.slice(0, 7)} while ${sha} was gated; only lane land writes ${s.main}; not landed`);
