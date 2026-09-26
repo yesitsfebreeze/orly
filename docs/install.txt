@@ -70,6 +70,7 @@ ENVIRONMENT
   ORLY_TIMEOUT_MS       judge request timeout (12000)
   ORLY_CHECK_BUDGET_MS  how long a stop waits on checks before leaving them to the next stop (8000)
   ORLY_SESSION          session id for `orly gate` when --session is not given
+  ORLY_PID              the session pid `orly swarm|bus` holds leases, names and claims under (default: the harness process)
   ORLY_HAZARD           probability at which a built-in hazard blocks (0.7)
   ORLY_SPEC_MET         probability at which a judged spec without a cut is met (0.7)
   ORLY_MIN_COVERAGE     coverage score below which the turn blocks, out of 3 (1.5)

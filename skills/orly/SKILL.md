@@ -5,7 +5,8 @@ description: Turn a goal into checkable specs and work until they pass, or turn 
 
 The user wrote: **$ARGUMENTS** (when nothing follows, use their last message).
 
-Decide which this is. A goal ("add retries to the client") → *Setting a goal*. A report
+When nothing follows and `.orly/swarm/` exists in this repo, go to *Joining the swarm*.
+Otherwise decide which this is. A goal ("add retries to the client") → *Setting a goal*. A report
 that something went wrong ("it said tests pass but they didn't") → *When something went wrong*.
 
 `orly` below means `bun "${CLAUDE_PLUGIN_ROOT}/orly.ts"`; without that variable it is
@@ -65,3 +66,29 @@ until fixed.
 
 If a fine turn was blocked, reword the spec that fired so it branches on when it applies.
 Never lower its cut or delete it: the next stop is refused when the spec set got weaker.
+
+## Joining the swarm
+
+This session joins the one swarm of this repo and keeps its sitters alive. More sessions mean
+more workers; nothing else sets a count.
+
+1. Read `.orly/swarm/swarm.md` (the director's brief and the rules every sitter keeps) and each
+   seat in `.orly/swarm/seats/`.
+2. Run `orly swarm`. Each line is one sitter this session hosts: `director` when the director's
+   lease was free (this session now holds it), then `<seat>-<n>` for each seat whose `filled`
+   query returned a row. The same session running it again gets the same names back.
+3. Per line, unless `ListAgents` already shows that name live: `orly lane open <name>` (skip for
+   `director`), then start one `Agent` teammate with `name` set to it, in the background. Its
+   prompt: the seat file with `<you>` replaced by the name and `<lane>` by the work dir, a line
+   `---`, then swarm.md's rules. The sitter posts `seated <seat> at <sha>` when ready.
+4. Arm one `Monitor` on `orly bus watch <session-name> '*'` and relay what a sitter must see.
+   Every wake: `orly bus lease director` when this session holds the director (a refusal means
+   another session took it; stop hosting the director), `orly bus reap` if you host the director
+   (releases the claims of sessions that are gone), and `orly swarm` again, seating new lines.
+5. Nobody but the director writes the main branch: sitters `orly lane put`, check with
+   `orly lane check <name>`, then post `land <slug> <sha>` to `director`. The director runs
+   `orly lane land <name> <slug> <sha>`, which gates on swarm.md's `gate` checks, and posts
+   `landed` or `bounced`. `orly bus pending` lists lands not yet answered.
+
+Stopping: `orly bus unlease director` if held; the sitters end with the session and their names
+free up.

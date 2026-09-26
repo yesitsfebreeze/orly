@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"; import { basename, dirname, join } from "node:path"; import { tmpdir } from "node:os";
 import { gateTurn, parseSpec, sessionBrief } from "../orly.ts";
-import { frontmatter, MAX_ROWS, runRows } from "../rows.ts";
+import { frontmatter, MAX_ROWS, runRows } from "../orly.ts";
 
 const MEMO = `---
 kind: seam

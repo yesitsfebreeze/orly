@@ -121,6 +121,9 @@ orly gate --session my-session < turn.json
 | `orly tasks` | the specs, most important goal first |
 | `orly specs` | validates every spec file and check name; exit 1 if any is rejected |
 | `orly rows <spec>` | runs a row spec (`select:` over `.orly/tables`) and prints its rows and answers; never gates |
+| `orly swarm` | this session's seating plan for `.orly/swarm/`, one JSON sitter per line (`director` while its lease is free, then `<seat>-<n>`) |
+| `orly bus <cmd>` | the swarm bus: post, read, watch, take, pending, claim, release, claims, reap, sit, lease, unlease, log, state, show |
+| `orly lane <cmd>` | sitter branches without worktrees: open, get, put, sync, check, gate, land, ls, log; the gate is swarm.md's `gate` checks |
 | `orly help` | the command list and environment variables |
 
 Exit codes for `judge` and `gate`: `0` the turn may end, `2` it may not, `1` orly could not
@@ -145,3 +148,19 @@ specs under `.orly/specs/`.
 ## License
 
 [MIT](LICENSE.md)
+
+## Swarm
+
+A repo with `.orly/swarm/` runs a swarm of agent sessions; a bare `/orly` joins it.
+
+```
+.orly/swarm/swarm.md        the director's brief; frontmatter main (branch), gate (check names from config.json)
+.orly/swarm/seats/<seat>.md  frontmatter filled (`always` or one SELECT over .orly/tables), specs; body the job
+.orly/swarm/data/            never tracked: bus.jsonl, claims.jsonl, sitters.jsonl, lease.<role>, work/, green
+```
+
+`director.md` is the singleton seat: the session holding `orly bus lease director` hosts it, and it
+alone lands lanes on the main branch. Every other session contributes one `<seat>-<n>` per filled
+seat. A lease or sitter name is held while its session's pid runs. `seat`, `bus`, `claims` and
+`sitters` are row-spec tables (see docs/specs.txt), so swarm health is written as row specs.
+Needs `git`, `tar` and `rsync`. All of it lives in `orly.ts`; there are no scripts.

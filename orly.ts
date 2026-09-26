@@ -6,8 +6,10 @@
  * deterministic checks, and the edit guard refuses spec changes that ease the gate.
  * Everything fails open; bad specs fail closed.
  */
-import { existsSync, mkdirSync, readdirSync, lstatSync, readFileSync, realpathSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
-import { basename, dirname, join, parse, relative, resolve, sep } from "node:path"; import { homedir, tmpdir } from "node:os";
+import { Database } from "bun:sqlite";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { homedir, tmpdir } from "node:os";
 
 export const MAX_RESULTS = 12, MAX_ACTIONS = 40;
 
@@ -120,6 +122,44 @@ export function messagesFrom(jsonl: string): Msg[] {
   return out;
 }
 
+// ---------------------------------------------------------------- shared helpers
+type Ran = { ok: boolean; code: number; out: string; err: string; bytes: Buffer };
+
+/** One command, captured; never throws. `input` goes to its stdin. */
+function run(cmd: string[], cwd: string, opts: { input?: string; env?: Record<string, string | undefined> } = {}): Ran {
+  const r = Bun.spawnSync(cmd, { cwd, env: opts.env ?? process.env, stdin: opts.input === undefined ? "ignore" : Buffer.from(opts.input) });
+  const bytes = Buffer.from(r.stdout ?? []);
+  return { ok: r.exitCode === 0, code: r.exitCode ?? 1, out: bytes.toString(), err: r.stderr?.toString() ?? "", bytes };
+}
+
+const git = (cwd: string, ...args: string[]) => run(["git", ...args], cwd);
+
+/** git's trimmed stdout, or null when it failed. */
+function gitOut(cwd: string, ...args: string[]): string | null {
+  const r = git(cwd, ...args);
+  return r.ok ? r.out.trim() : null;
+}
+
+/** Write through a temp file and a rename, so a reader never sees half a file. */
+function writeAtomic(path: string, text: string) {
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, text);
+  renameSync(tmp, path);
+}
+
+/** Every JSON line of a file; a torn or blank line is skipped, a missing file is empty. */
+function readJsonl<T = any>(path: string): T[] {
+  if (!existsSync(path)) return [];
+  const out: T[] = [];
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try { out.push(JSON.parse(line)); } catch { /* a torn line */ }
+  }
+  return out;
+}
+
+const writeJsonl = (path: string, rows: unknown[]) => writeAtomic(path, rows.map((r) => JSON.stringify(r) + "\n").join(""));
+
 // ---------------------------------------------------------------- specs, where they live
 export type Require = { path: string; op: "equals" | "lte" | "gte" | "present" | "absent" | "contains"; value?: unknown };
 export type Spec = {
@@ -131,7 +171,7 @@ export type Spec = {
   optional?: boolean;
   evidence?: string[];
   fitted?: string;
-  rank?: number; select?: string; // select: a row spec (rows.ts, `orly rows`), never judged at Stop
+  rank?: number; select?: string; // select: a row spec (`orly rows`), never judged at Stop
 };
 export type Goal = { group?: string; text: string };
 export type SpecFile = { goal: string; goals: Goal[]; specs: Spec[]; paths: Record<string, string>; maxRounds?: number };
@@ -489,8 +529,9 @@ export type CheckSpec = { command: string; countPattern?: string; timeoutMs?: nu
 
 /** HEAD, `git status`, and each listed file's content hash; null outside git or before the first commit. */
 function treeKey(root: string): string | null {
-  const git = (...a: string[]) => { const r = Bun.spawnSync(["git", ...a], { cwd: root }); return r.success ? r.stdout.toString() : null; };
-  const head = git("rev-parse", "--show-toplevel", "HEAD"), status = git("status", "--porcelain=v1", "-z", "--untracked-files=all");
+  const raw = (...args: string[]) => { const r = git(root, ...args); return r.ok ? r.out : null; };
+  const head = raw("rev-parse", "--show-toplevel", "HEAD");
+  const status = raw("status", "--porcelain=v1", "-z", "--untracked-files=all");
   if (head === null || status === null) return null;
   // Content, not mtime: tools rewrite untracked files unchanged (openrig, every 30s). ponytail: files over 1 MB go by mtime.
   const stat = (e: string) => { try { const p = join(head.split("\n")[0], e.slice(3)), s = lstatSync(p); return s.isFile() && s.size <= 1e6 ? Bun.hash(readFileSync(p)) : `${s.size}:${s.mtimeMs}`; } catch { return "-"; } };
@@ -691,7 +732,7 @@ export const roundsPath = (sessionId: string) => join(tmpdir(), `orly-rounds-${s
 export function readRounds(sessionId: string): RoundState | null {
   try { return JSON.parse(readFileSync(roundsPath(sessionId), "utf8")); } catch { return null; }
 }
-const write = (path: string, text: string) => { try { writeFileSync(path, text); } catch { /* temp state is a convenience */ } };
+const write = (path: string, text: string) => { try { writeAtomic(path, text); } catch { /* temp state is a convenience */ } };
 
 /** Delete the session's temp files; macOS does not reliably clean $TMPDIR. */
 export function endSession(sessionId: string): void {
@@ -781,6 +822,786 @@ export function sessionBrief(cwd: string, cli?: string): string | null {
   ].join("\n");
 }
 
+// ---------------------------------------------------------------- row specs (orchi CONTRACT §9)
+// `.orly/tables` maps a table name to a glob of markdown or JSONL files, loaded read-only into an in-memory
+// SQLite DB; a spec's `select:` picks rows, `require: rows <op> N` decides by count alone, otherwise Jev
+// answers one noul per row in one request. Never part of the Stop gate.
+export const MAX_ROWS = 50;
+/** One name per concept; the source files stay as they are. */
+const ALIAS: Record<string, string> = { targets: "target", asked_by: "askers", "asked-at": "asked_at" };
+const ARROW = /^\s*(-?\d+(?:\.\d+)?)\s*(?:→|->)\s*(-?\d+(?:\.\d+)?)\s*$/;
+
+function scalar(v: string): unknown {
+  if (/^\[.*\]$/.test(v)) return v.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean).map(scalar); // ponytail: commas inside quoted list items split
+  if (/^".*"$/.test(v)) try { return JSON.parse(v); } catch { return v.slice(1, -1); }
+  if (/^'.*'$/.test(v)) return v.slice(1, -1).replace(/''/g, "'");
+  if (/^-?\d+(?:\.\d+)?$/.test(v)) return Number(v);
+  return v === "true" ? true : v === "false" ? false : v;
+}
+
+/** The frontmatter these files use: `key: scalar`, quoted strings, `[a, b]`, and `- item` block lists.
+ *  Not YAML: a third of kern2's memos start values with a backtick, which YAML refuses. Nested maps are skipped. */
+export function frontmatter(text: string): { fm: Record<string, any>; body: string } {
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
+  if (!m) return { fm: {}, body: text };
+  const fm: Record<string, any> = {};
+  let last: string | undefined;
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = line.match(/^([A-Za-z_][\w-]*):(?:\s+(.*))?$/), item = line.match(/^\s*-\s+(.*)$/);
+    if (kv) fm[(last = kv[1])] = kv[2]?.trim() ? scalar(kv[2].trim()) : null;
+    else if (item && last && (fm[last] === null || Array.isArray(fm[last]))) (fm[last] ??= []).push(scalar(item[1].trim()));
+  }
+  return { fm: normalizeKeys(fm), body: text.slice(m[0].length) };
+}
+
+export function normalizeKeys(fm: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(fm)) {
+    const key = ALIAS[k] ?? k;
+    out[key] = v;
+    const a = typeof v === "string" && v.match(ARROW);
+    if (a) { out[`${key}_before`] = Number(a[1]); out[`${key}_after`] = Number(a[2]); }
+  }
+  return out;
+}
+
+/** `name: glob` per line, relative to the project or absolute (`~` allowed). */
+export function parseTables(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const m = line.trim().match(/^([A-Za-z_]\w*):\s*(\S.*)$/);
+    if (m) out[m[1]] = m[2].trim();
+  }
+  return out;
+}
+
+/** .orly/tables, over the swarm's own tables when .orly/swarm exists (seat, bus, claims, sitters); .orly/tables wins. */
+export function tablesFor(orlyDir: string): Record<string, string> {
+  const own = existsSync(join(orlyDir, "tables")) ? parseTables(readFileSync(join(orlyDir, "tables"), "utf8")) : {};
+  if (!existsSync(join(orlyDir, "swarm"))) return own;
+  const d = ".orly/swarm/data";
+  return { seat: ".orly/swarm/seats/*.md", bus: `${d}/bus.jsonl`, claims: `${d}/claims.jsonl`, sitters: `${d}/sitters.jsonl`, ...own };
+}
+
+/** Files a glob names; the part before the first wildcard is the scan root, so dot folders match. */
+function files(glob: string, root: string): string[] {
+  const abs = glob.startsWith("~/") ? join(homedir(), glob.slice(2)) : isAbsolute(glob) ? glob : join(root, glob);
+  const parts = abs.split("/"), i = parts.findIndex((p) => /[*?[{]/.test(p));
+  if (i < 0) return existsSync(abs) ? [abs] : [];
+  const cwd = parts.slice(0, i).join("/") || "/";
+  if (!existsSync(cwd)) return [];
+  return [...new Bun.Glob(parts.slice(i).join("/")).scanSync({ cwd, absolute: true, dot: true })].sort();
+}
+
+/** Every table into one in-memory DB, read-only once loaded. */
+export function loadTables(tables: Record<string, string>, root: string): Database {
+  const db = new Database(":memory:");
+  for (const [name, glob] of Object.entries(tables)) {
+    db.run(`CREATE TABLE "${name}" (path TEXT, kind TEXT, fm TEXT, body TEXT, mtime REAL)`);
+    const insert = db.prepare(`INSERT INTO "${name}" VALUES (?, ?, ?, ?, ?)`);
+    db.transaction(() => {
+      for (const path of files(glob, root)) {
+        const text = readFileSync(path, "utf8"), mtime = statSync(path).mtimeMs, dir = basename(dirname(path));
+        const put = (fm: Record<string, any>, body: string | null) => insert.run(path, typeof fm.kind === "string" ? fm.kind : dir, JSON.stringify(fm), body, mtime);
+        if (path.endsWith(".jsonl")) {
+          for (const o of readJsonl(path)) if (o && typeof o === "object") put(normalizeKeys(o), null);
+        } else {
+          const { fm, body } = frontmatter(text);
+          put(fm, body);
+        }
+      }
+    })();
+  }
+  db.run("PRAGMA query_only = ON");
+  return db;
+}
+
+export type RowAnswer = { row: Record<string, unknown>; p?: number; failed: boolean };
+export type RowsResult = { met: boolean; reason: string; rows: RowAnswer[] };
+type Ask = (state: unknown, questions: Record<string, unknown>) => Promise<{ answers: Record<string, any> }>;
+
+/** Run one row spec against a project whose `.orly` sits in `orlyDir`. */
+export async function runRows(spec: Spec, orlyDir: string, askFn?: Ask): Promise<RowsResult> {
+  const fail = (reason: string): RowsResult => ({ met: false, reason, rows: [] });
+  if (!spec.select) return fail("not a row spec: no select header");
+  const bad = validateSpecs([spec]);
+  if (bad.length) return fail(bad.map((b) => b.problem).join("; "));
+  const tables = tablesFor(orlyDir);
+  if (!Object.keys(tables).length) return fail(`no ${join(orlyDir, "tables")}`);
+  let found: Record<string, unknown>[];
+  try { found = loadTables(tables, dirname(orlyDir)).query(spec.select).all() as any[]; } catch (e: any) { return fail(`select failed: ${e?.message ?? e}`); }
+  const rows = found.map((r) => { try { return typeof r.fm === "string" ? { ...r, fm: JSON.parse(r.fm) } : r; } catch { return r; } });
+  if (spec.require) {
+    const { met } = evaluate(spec.require, { rows: rows.length });
+    return { met, reason: `rows ${rows.length}, require rows ${spec.require.op} ${spec.require.value ?? ""}`.trim(), rows: rows.slice(0, MAX_ROWS).map((row) => ({ row, failed: false })) };
+  }
+  if (rows.length > MAX_ROWS) return fail(`too broad: ${rows.length} rows, the cap is ${MAX_ROWS}; narrow the select`);
+  if (!rows.length) return { met: true, reason: "no rows", rows: [] };
+  const questions: Record<string, unknown> = {};
+  rows.forEach((row, n) => {
+    questions[`row:${n}`] = {
+      type: "noul",
+      instructions: `Judge only \`rows[${n}]\`${typeof row.path === "string" ? ` (path ${row.path})` : ""}; call it \`row\`. ${spec.instructions}`,
+      criteria: { true: spec.criteria?.true ?? "The row shows this is so.", false: spec.criteria?.false ?? "The row does not show this, or shows the opposite." },
+    };
+  });
+  const { answers } = await (askFn ?? (await defaultAsk(orlyDir)))({ rows }, questions);
+  const cut = spec.cut ?? 0.7;
+  const out = rows.map((row, n) => { const p = answers?.[`row:${n}`]?.noul; return { row, p, failed: typeof p === "number" && p > cut }; });
+  const failed = out.filter((r) => r.failed).length;
+  return { met: !failed, reason: `${failed} of ${rows.length} rows above cut ${cut}`, rows: out };
+}
+
+async function defaultAsk(orlyDir: string): Promise<Ask> {
+  const apiKey = await resolveKey(dirname(orlyDir));
+  if (!apiKey) throw new Error("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json or ~/.orly/config.json");
+  return (state, questions) => ask(state, questions, { apiKey, endpoint: process.env.TYPESAFE_BASE_URL, model: process.env.ORLY_MODEL, timeoutMs: Number(process.env.ORLY_TIMEOUT_MS) || 30_000 });
+}
+
+/** `orly rows <spec-path-or-id>`: rows and answers, never a gate. Exit 1 only when it could not run. */
+export async function rowsCommand(arg: string | undefined, cwd: string): Promise<number> {
+  if (!arg) { console.error("orly: usage: orly rows <spec-path-or-id>"); return 1; }
+  const path = resolve(cwd, arg);
+  const orlyDir = findOrlyDir(existsSync(path) ? dirname(path) : cwd);
+  if (!orlyDir) { console.error("orly: no .orly here or above"); return 1; }
+  const spec = existsSync(path) ? parseSpec(basename(path, EXT), readFileSync(path, "utf8")) : loadSpecFile(cwd)?.specs.find((s) => s.id === arg);
+  if (!spec) { console.error(`orly: no spec "${arg}"`); return 1; }
+  const t0 = performance.now();
+  let result: RowsResult;
+  try { result = await runRows(spec, orlyDir); } catch (e: any) { console.error(`orly: ${e?.message ?? e}`); return 1; }
+  const show = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === "string" && x.length > 160 ? `${x.slice(0, 160)}…` : x));
+  for (const r of result.rows) console.log(`${r.p === undefined ? "" : `${r.failed ? "✗" : "✓"} ${r.p.toFixed(2)}  `}${show(r.row)}`);
+  console.log(`${result.met ? "met" : "unmet"} · ${spec.id}: ${result.reason} · ${Math.round(performance.now() - t0)} ms`);
+  return 0;
+}
+
+// ---------------------------------------------------------------- the swarm (orchi CONTRACT §10)
+// `.orly/swarm/swarm.md` (frontmatter: main, gate) and `.orly/swarm/seats/<seat>.md` (frontmatter: filled, specs).
+// Every session that runs `/orly` joins the repo's one swarm: `orly swarm` seats the director while its lease is
+// free, then one `<seat>-<n>` per worker seat whose `filled` query returns rows. The bus, the claims and the lanes'
+// work dirs live in `.orly/swarm/data/` (never tracked). A session is its harness pid, or ORLY_PID when set.
+
+/** A failure the CLI prints as `orly: <message>`; `exit` 2 is a usage error, 1 a refusal. */
+class SwarmError extends Error {
+  constructor(message: string, readonly exit = 1) { super(message); }
+}
+const usage = (text: string): never => { throw new SwarmError(`usage: ${text}`, 2); };
+const refuse = (text: string): never => { throw new SwarmError(text); };
+
+type Swarm = { root: string; data: string; main: string; gate: string[] };
+type BusLine = { seq: number; ts: string; head: string; from: string; to: string; verb: string | null; slug: string | null; sha: string | null; reply_to: number | null; text: string };
+type Claim = { ts: string; owner: string; slug: string; pid: number; files: string[] };
+type SitterName = { ts: string; name: string; seat: string; pid: number };
+export type Sitter = { name: string; seat: string; path: string; specs?: string; rows: number };
+
+const VERBS = ["claimed", "released", "land", "landed", "bounced", "seated", "ask", "answered", "finding"];
+const NAME = /^[a-z0-9][a-z0-9-]*$/;
+const HELPERS = new Set(["sh", "bash", "zsh", "dash", "fish", "nu", "just", "env", "timeout", "perl", "sudo", "bun"]);
+const LEASE_HEARTBEAT_S = 120;
+const CACHE_LOG_LINES = 256;
+
+const isoNow = () => new Date().toISOString().replace(/\.\d+Z$/, "Z");
+const checkName = (what: string, name: string) => { if (!NAME.test(name)) refuse(`'${name}' is not a ${what}`); };
+
+/** Whether a pid runs. A pid we may not signal still runs. */
+function alive(pid: number): boolean {
+  if (!(pid > 0)) return false;
+  try { process.kill(pid, 0); return true; } catch (e: any) { return e?.code === "EPERM"; }
+}
+
+/** The agent process this call runs under: the first ancestor that is not a shell or helper. */
+function sessionPid(): number {
+  if (process.env.ORLY_PID) return Number(process.env.ORLY_PID);
+  for (let pid = process.ppid; pid > 1; ) {
+    const m = run(["ps", "-o", "ppid=,comm=", "-p", String(pid)], "/").out.trim().match(/^(\d+)\s+(.*)$/);
+    if (!m) break;
+    if (!HELPERS.has(basename(m[2]).replace(/^-/, ""))) return pid;
+    pid = Number(m[1]);
+  }
+  return 0;
+}
+
+/** An exclusive lock file that holds its owner's pid, for the length of `fn`. A dead owner's lock is taken over.
+ *  ponytail: two waiters that both find the owner dead can both take over; a real flock if that ever bites. */
+async function withLock<T>(path: string, fn: () => T | Promise<T>): Promise<T> {
+  for (;;) {
+    try { writeFileSync(path, String(process.pid), { flag: "wx" }); break; } catch (e: any) { if (e?.code !== "EEXIST") throw e; }
+    let owner = 0;
+    try { owner = Number(readFileSync(path, "utf8")); } catch { continue; }
+    if (owner > 0 && !alive(owner)) rmSync(path, { force: true });
+    else await Bun.sleep(20); // owner 0: the file is being written
+  }
+  try { return await fn(); } finally { rmSync(path, { force: true }); }
+}
+
+/** `.orly/swarm/` of the main tree, also when called from a lane's work dir: every lane shares one bus. */
+function swarmAt(cwd: string): Swarm {
+  const common = gitOut(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  const root = common ? dirname(common) : projectRoot(cwd);
+  if (!root || !existsSync(join(root, ".orly", "swarm"))) refuse("no .orly/swarm/ here or above");
+  const path = join(root!, ".orly", "swarm", "swarm.md");
+  const fm = existsSync(path) ? frontmatter(readFileSync(path, "utf8")).fm : {};
+  const gate = Array.isArray(fm.gate) ? fm.gate.map(String) : fm.gate ? [String(fm.gate)] : [];
+  const data = join(root!, ".orly", "swarm", "data");
+  mkdirSync(data, { recursive: true });
+  if (!existsSync(join(data, ".gitignore"))) writeFileSync(join(data, ".gitignore"), "*\n");
+  return { root: root!, data, main: typeof fm.main === "string" ? fm.main : "main", gate };
+}
+
+/** The gate: each name in swarm.md's `gate` with its check from config.json; a name with no check is refused. */
+function gateChecks(s: Swarm): Record<string, CheckSpec> {
+  const checks: Record<string, CheckSpec> = loadConfig(s.root).checks ?? {};
+  if (!s.gate.length) refuse("no gate: list check names under `gate` in .orly/swarm/swarm.md");
+  const missing = s.gate.filter((name) => !checks[name]);
+  if (missing.length) refuse(`swarm.md gate names no check in .orly/config.json: ${missing.join(", ")}`);
+  return Object.fromEntries(s.gate.map((name) => [name, checks[name]]));
+}
+
+// ---- the bus: .orly/swarm/data/bus.jsonl, one typed line per message, never trimmed
+
+const busPath = (s: Swarm) => join(s.data, "bus.jsonl");
+const busLock = (s: Swarm) => join(s.data, "bus.lock");
+
+/** Every bus line, with a seq for any line appended by hand (written back so the seqs stay). Call under the bus lock. */
+function stampedBus(s: Swarm): BusLine[] {
+  const lines = readJsonl<BusLine>(busPath(s));
+  let last = 0;
+  let stamped = false;
+  for (const line of lines) {
+    if (typeof line.seq !== "number") { line.seq = last + 1; stamped = true; }
+    last = Math.max(last, line.seq);
+  }
+  if (stamped) writeJsonl(busPath(s), lines);
+  return lines;
+}
+
+/** One line, typed from its text: verb (its first word, from the closed list), slug (the word after), sha (the first
+ *  word naming a commit), reply_to (N of `re N` or `took N`). Call under the bus lock. */
+function appendBus(s: Swarm, from: string, to: string, text: string): BusLine {
+  const words = text.split(" ");
+  const verb = VERBS.includes(words[0]) ? words[0] : null;
+  let sha: string | null = null;
+  for (const word of text.match(/[0-9a-f]{7,40}/g) ?? []) {
+    sha = gitOut(s.root, "rev-parse", "-q", "--short", "--verify", `${word}^{commit}`);
+    if (sha) break;
+  }
+  const reply = text.match(/^(re|took) (\d+)\b/);
+  const line: BusLine = {
+    seq: (stampedBus(s).at(-1)?.seq ?? 0) + 1,
+    ts: isoNow(),
+    head: gitOut(s.root, "rev-parse", "--short", s.main) ?? "none",
+    from,
+    to,
+    verb,
+    slug: verb && words[1] ? words[1].replace(/:$/, "") : null,
+    sha,
+    reply_to: reply ? Number(reply[2]) : null,
+    text,
+  };
+  appendFileSync(busPath(s), JSON.stringify(line) + "\n");
+  return line;
+}
+
+async function busPost(s: Swarm, from: string, to: string, text: string): Promise<BusLine> {
+  checkName("name; the slug goes in the text", from);
+  checkName("name; the slug goes in the text", to);
+  return withLock(busLock(s), () => appendBus(s, from, to, text));
+}
+
+/** Lines to `me`, its seat (`me` without `-N`), `all` or a tag, never its own; `*` is every line. */
+function addressedTo(me: string, tags: string[]) {
+  const to = new Set([me, me.replace(/-\d+$/, ""), "all", ...tags]);
+  return (line: BusLine) => line.from !== me && (to.has("*") || to.has(line.to));
+}
+
+/** New lines since `me`'s read mark that pass `keep`, printed; the mark moves past every line read. */
+async function busSince(s: Swarm, me: string, keep: (line: BusLine) => boolean) {
+  checkName("name", me);
+  const readToPath = join(s.data, `read.${me}`);
+  const readTo = existsSync(readToPath) ? Number(readFileSync(readToPath, "utf8")) || 0 : 0;
+  const lines = await withLock(busLock(s), () => stampedBus(s));
+  for (const line of lines) if (line.seq > readTo && keep(line)) console.log(JSON.stringify(line));
+  const last = lines.at(-1)?.seq ?? 0;
+  if (last > readTo) writeFileSync(readToPath, String(last));
+}
+
+/** Take line `seq` as yours to act on; refused when someone took it first. */
+async function busTake(s: Swarm, me: string, seq: number): Promise<BusLine> {
+  checkName("name", me);
+  return withLock(busLock(s), () => {
+    const lines = stampedBus(s);
+    const line = lines.find((l) => l.seq === seq) ?? refuse(`no line ${seq}`);
+    const took = lines.find((l) => l.text === `took ${seq}`);
+    if (took) refuse(`refused: ${took.from} took ${seq}`);
+    appendBus(s, me, line.from, `took ${seq}`);
+    return line;
+  });
+}
+
+/** `land` lines not yet answered by `landed` or `bounced` for their slug. */
+function busPending(s: Swarm): BusLine[] {
+  const open = new Map<string, BusLine>();
+  for (const line of readJsonl<BusLine>(busPath(s))) {
+    if (!line.slug) continue;
+    if (line.verb === "land") open.set(line.slug, line);
+    else if (line.verb === "landed" || line.verb === "bounced") open.delete(line.slug);
+  }
+  return [...open.values()];
+}
+
+// ---- claims, leases and sitter names: who holds what, by session pid
+
+const claimsPath = (s: Swarm) => join(s.data, "claims.jsonl");
+
+async function claim(s: Swarm, me: string, slug: string, files: string[]) {
+  checkName("name", me);
+  await withLock(busLock(s), () => {
+    const claims = readJsonl<Claim>(claimsPath(s));
+    const others = claims.filter((c) => c.owner !== me || c.slug !== slug);
+    const taken = others.flatMap((c) => files.filter((f) => c.files.includes(f)).map((f) => `${f} is ${c.owner}'s (${c.slug})`));
+    if (taken.length) refuse(`refused: ${taken.join(", ")}`);
+    const had = claims.filter((c) => c.owner === me && c.slug === slug).flatMap((c) => c.files);
+    const mine: Claim = { ts: isoNow(), owner: me, slug, pid: sessionPid(), files: [...new Set([...had, ...files])].sort() };
+    writeJsonl(claimsPath(s), [...others, mine]);
+    appendBus(s, me, "all", `claimed ${slug}: ${files.join(" ")}`);
+  });
+}
+
+async function release(s: Swarm, me: string, slug: string) {
+  await withLock(busLock(s), () => writeJsonl(claimsPath(s), readJsonl<Claim>(claimsPath(s)).filter((c) => c.owner !== me || c.slug !== slug)));
+}
+
+/** The director's sweep: every claim whose session pid is gone is released, one `released` line each. */
+async function reap(s: Swarm): Promise<Claim[]> {
+  return withLock(busLock(s), () => {
+    const claims = readJsonl<Claim>(claimsPath(s));
+    const gone = claims.filter((c) => !alive(c.pid));
+    writeJsonl(claimsPath(s), claims.filter((c) => alive(c.pid)));
+    for (const c of gone) appendBus(s, c.owner, "all", `released ${c.slug}: session pid ${c.pid} is gone`);
+    return gone;
+  });
+}
+
+/** Hold or renew the singleton `role` for this session. Held by another session while its pid runs; a lease
+ *  with no pid is held while its heartbeat is under two minutes old. Returns false when another session holds it. */
+async function lease(s: Swarm, role: string): Promise<boolean> {
+  checkName("name", role);
+  const path = join(s.data, `lease.${role}`);
+  const me = sessionPid();
+  return withLock(busLock(s), () => {
+    const now = Math.floor(Date.now() / 1000);
+    let held: { at: number; pid: number } | null = null;
+    try { held = JSON.parse(readFileSync(path, "utf8")); } catch { /* free */ }
+    if (held && held.pid !== me) {
+      const live = held.pid ? alive(held.pid) : now - held.at < LEASE_HEARTBEAT_S;
+      if (live) return false;
+    }
+    writeAtomic(path, JSON.stringify({ role, at: now, pid: me }));
+    return true;
+  });
+}
+
+async function unlease(s: Swarm, role: string) {
+  const path = join(s.data, `lease.${role}`);
+  await withLock(busLock(s), () => {
+    try { if (JSON.parse(readFileSync(path, "utf8")).pid === sessionPid()) rmSync(path); } catch { /* not held */ }
+  });
+}
+
+/** This session's sitter name for `seat`: the one it holds, else `<seat>-<n>` by the next n no live session holds. */
+async function sit(s: Swarm, seat: string): Promise<string> {
+  checkName("name", seat);
+  const path = join(s.data, "sitters.jsonl");
+  const me = sessionPid();
+  return withLock(busLock(s), () => {
+    const live = readJsonl<SitterName>(path).filter((r) => r.pid === me || alive(r.pid)); // a gone session's names are free
+    let name = live.find((r) => r.seat === seat && r.pid === me)?.name;
+    if (!name) {
+      let n = 1;
+      while (live.some((r) => r.name === `${seat}-${n}`)) n++;
+      name = `${seat}-${n}`;
+      live.push({ ts: isoNow(), name, seat, pid: me });
+    }
+    writeJsonl(path, live);
+    return name;
+  });
+}
+
+/** How many rows a seat's `filled` returns: `always` is one; anything but one SELECT or WITH is an error. */
+function filledRows(db: Database, seat: string, filled: unknown): number {
+  if (filled === "always") return 1;
+  if (typeof filled !== "string" || !/^\s*(select|with)\b/i.test(filled) || /;\s*\S/.test(filled)) refuse(`seat ${seat}: filled must be \`always\` or one SELECT`);
+  try { return db.query(filled as string).all().length; } catch (e: any) { return refuse(`seat ${seat}: filled failed: ${e?.message ?? e}`); }
+}
+
+/** This session's seating plan. Names are reserved per session pid, so asking again returns the same plan. */
+export async function seatingPlan(s: Swarm): Promise<Sitter[]> {
+  const orlyDir = join(s.root, ".orly");
+  if (!existsSync(join(orlyDir, "swarm", "seats"))) refuse("no .orly/swarm/seats/ here");
+  const db = loadTables(tablesFor(orlyDir), s.root);
+  const seats = (db.query("SELECT path, fm FROM seat ORDER BY path").all() as Array<{ path: string; fm: string }>)
+    .map((r) => ({ path: r.path, seat: basename(r.path, ".md"), fm: JSON.parse(r.fm) }));
+  const plan: Sitter[] = [];
+  for (const { path, seat, fm } of seats) {
+    const rows = filledRows(db, seat, fm.filled);
+    if (seat === "director") {
+      if (await lease(s, "director")) plan.unshift({ name: "director", seat, path, specs: fm.specs, rows });
+      continue;
+    }
+    if (rows) plan.push({ name: await sit(s, seat), seat, path, specs: fm.specs, rows });
+  }
+  return plan;
+}
+
+/** A sitter's cache, `data/cache/<me>.md`: a State it replaces and a Log it appends to (the last 256 kept). */
+async function writeCache(s: Swarm, me: string, change: { state?: string; log?: string }) {
+  checkName("name", me);
+  const dir = join(s.data, "cache");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${me}.md`);
+  await withLock(busLock(s), () => {
+    const text = existsSync(path) ? readFileSync(path, "utf8") : "";
+    const oldState = text.match(/## State\n\n([\s\S]*?)\n*## Log/)?.[1].trim() || "(none yet)";
+    const logs = (text.split("## Log\n")[1] ?? "").split("\n").filter((l) => l.startsWith("- "));
+    if (change.log) logs.push(change.log);
+    writeAtomic(path, `# ${me}\n\n## State\n\n${change.state ?? oldState}\n\n## Log\n\n${logs.slice(-CACHE_LOG_LINES).map((l) => l + "\n").join("")}`);
+  });
+}
+
+// ---- lanes: one sitter's branch lane/<name>, written with git plumbing and never checked out. The sitter edits
+// copies of only the files it touches in data/work/<name>/<path>; main's tree is untouched. Only the director lands.
+
+const laneRef = (name: string) => `refs/heads/lane/${name}`;
+const workDir = (s: Swarm, name: string) => join(s.data, "work", name);
+const readLines = (path: string) => (existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean) : []);
+const signed = (msg: string, name: string) => (/^Sitter: /m.test(msg) ? `${msg}\n` : `${msg}\n\nSitter: ${name}\n`);
+
+function checkPath(path: string) {
+  if (`/${path}/`.includes("/../") || path.startsWith("/")) refuse(`'${path}' is not a repo path`);
+}
+
+/** Make lane/<name> off main when new; the work dir. */
+function laneOpen(s: Swarm, name: string): string {
+  checkName("sitter name", name);
+  if (!git(s.root, "show-ref", "-q", "--verify", laneRef(name)).ok) {
+    const made = git(s.root, "branch", "-q", `lane/${name}`, s.main);
+    if (!made.ok) refuse(made.err.trim());
+  }
+  mkdirSync(workDir(s, name), { recursive: true });
+  return workDir(s, name);
+}
+
+/** Copy lane/<name>'s version of each path into the work dir, remembering the blob it came from. */
+function laneGet(s: Swarm, name: string, paths: string[]) {
+  const work = laneOpen(s, name);
+  for (const p of paths) {
+    checkPath(p);
+    const blob = gitOut(s.root, "rev-parse", "-q", "--verify", `lane/${name}:${p}`);
+    if (!blob) { console.error(`orly: ${p} is not on lane/${name}; write ${join(work, p)} to add it`); continue; }
+    mkdirSync(dirname(join(work, p)), { recursive: true });
+    writeFileSync(join(work, p), run(["git", "cat-file", "blob", blob], s.root).bytes);
+    appendFileSync(join(work, ".got"), `${p}\n`);
+    appendFileSync(join(work, ".base"), `${blob} ${p}\n`);
+    if (gitOut(s.root, "ls-tree", `lane/${name}`, "--", p)?.startsWith("100755")) chmodSync(join(work, p), 0o755);
+  }
+}
+
+/** Commit the work dir's copies of `paths` onto lane/<name>; a missing copy it got deletes the path, and no path
+ *  makes an empty commit (a checkpoint). After a sync that stopped on a conflict this is the merge commit. */
+function lanePut(s: Swarm, name: string, msg: string, paths: string[]): string {
+  const work = laneOpen(s, name);
+  const old = gitOut(s.root, "rev-parse", laneRef(name))!;
+  const merge = existsSync(join(work, ".merge")) ? readFileSync(join(work, ".merge"), "utf8").trim() : null;
+  const mergeFiles = readLines(join(work, ".merge-files"));
+  const base = merge ? readFileSync(join(work, ".merge-tree"), "utf8").trim() : old;
+  const parents = merge ? ["-p", old, "-p", merge] : ["-p", old];
+  for (const p of mergeFiles) {
+    if (existsSync(join(work, p)) && /^<<<<<<< /m.test(readFileSync(join(work, p), "utf8"))) refuse(`${p} still has conflict markers`);
+    if (!paths.includes(p)) paths.push(p);
+  }
+  const index = join(s.data, `index.${name}`);
+  const env = { ...process.env, GIT_INDEX_FILE: index };
+  const gitIndexed = (...args: string[]) => run(["git", ...args], s.root, { env });
+  rmSync(index, { force: true });
+  try {
+    gitIndexed("read-tree", `${base}^{tree}`);
+    const got = readLines(join(work, ".got"));
+    const gotBlob = new Map(readLines(join(work, ".base")).map((l) => [l.slice(l.indexOf(" ") + 1), l.slice(0, l.indexOf(" "))]));
+    const puts: string[] = [];
+    for (const p of paths) {
+      checkPath(p);
+      const file = join(work, p);
+      if (existsSync(file)) {
+        // a copy got before a sync moved the lane would write the old file back whole
+        const was = gotBlob.get(p);
+        const now = gitOut(s.root, "rev-parse", "-q", "--verify", `${base}:${p}`);
+        const blob = gitOut(s.root, "hash-object", "-w", file)!;
+        if (was && now && was !== now && blob !== now && !mergeFiles.includes(p))
+          refuse(`${p} changed on lane/${name} since you got it; keep your edit aside, lane get ${name} ${p}, redo it, put again`);
+        const mode = statSync(file).mode & 0o111 ? "100755" : "100644";
+        gitIndexed("update-index", "--add", "--cacheinfo", `${mode},${blob},${p}`);
+        puts.push(`${blob} ${p}`);
+      } else {
+        if (!got.includes(p) && !mergeFiles.includes(p)) refuse(`${p} has no copy in ${work} and was never got; get it, or it would be deleted`);
+        gitIndexed("update-index", "--force-remove", "--", p);
+      }
+    }
+    const tree = gitIndexed("write-tree").out.trim();
+    const commit = run(["git", "commit-tree", tree, ...parents], s.root, { input: signed(msg, name) }).out.trim();
+    if (!git(s.root, "update-ref", laneRef(name), commit, old).ok) refuse(`lane/${name} moved under you; put again`);
+    for (const p of paths) if (existsSync(join(work, p)) && !got.includes(p)) appendFileSync(join(work, ".got"), `${p}\n`);
+    if (puts.length) appendFileSync(join(work, ".base"), puts.map((l) => l + "\n").join(""));
+    for (const f of [".merge", ".merge-tree", ".merge-files"]) rmSync(join(work, f), { force: true });
+    const short = gitOut(s.root, "rev-parse", "--short", commit)!;
+    console.error(`[lane/${name} ${short}] ${msg.split("\n")[0]}`);
+    return short;
+  } finally {
+    rmSync(index, { force: true });
+  }
+}
+
+/** `git merge-tree --write-tree`: the tree, and the conflicted files when it could not merge cleanly. */
+function mergeTree(s: Swarm, ours: string, theirs: string): { tree: string; conflicts: string[] | null } {
+  const r = git(s.root, "merge-tree", "--write-tree", "--name-only", ours, theirs);
+  const [tree, ...rest] = r.out.split("\n");
+  if (r.ok) return { tree: tree.trim(), conflicts: null };
+  if (!/^[0-9a-f]{40}$/.test(tree.trim())) refuse(r.err.trim() || "merge-tree failed");
+  const end = rest.indexOf("");
+  return { tree: tree.trim(), conflicts: rest.slice(0, end < 0 ? undefined : end) };
+}
+
+/** Merge main into lane/<name> (a merge, never a rebase: the lane's shas stay the ones posted on the bus). On a
+ *  conflict the files, with markers, land in the work dir and `put` finishes the merge. Returns commits ahead. */
+function laneSync(s: Swarm, name: string): number {
+  const work = laneOpen(s, name);
+  if (existsSync(join(work, ".merge"))) refuse(`${name} has a merge waiting; resolve ${readLines(join(work, ".merge-files")).join(" ")} and put`);
+  const main = gitOut(s.root, "rev-parse", s.main)!;
+  const old = gitOut(s.root, "rev-parse", laneRef(name))!;
+  if (!git(s.root, "merge-base", "--is-ancestor", main, old).ok) {
+    const { tree, conflicts } = mergeTree(s, old, main);
+    if (!conflicts) {
+      const commit = run(["git", "commit-tree", tree, "-p", old, "-p", main], s.root, { input: signed(`sync: merge ${s.main} into lane/${name}`, name) }).out.trim();
+      git(s.root, "update-ref", laneRef(name), commit, old);
+    } else {
+      for (const p of conflicts) {
+        // never overwrite a copy the sitter changed and has not put
+        const file = join(work, p);
+        const onLane = run(["git", "cat-file", "blob", `${old}:${p}`], s.root);
+        if (existsSync(file) && (!onLane.ok || !onLane.bytes.equals(readFileSync(file)))) refuse(`${file} differs from lane/${name}; put or remove it, then sync`);
+      }
+      for (const p of conflicts) {
+        const merged = run(["git", "cat-file", "blob", `${tree}:${p}`], s.root);
+        mkdirSync(dirname(join(work, p)), { recursive: true });
+        if (merged.ok) writeFileSync(join(work, p), merged.bytes);
+        else rmSync(join(work, p), { force: true });
+      }
+      writeFileSync(join(work, ".merge"), `${main}\n`);
+      writeFileSync(join(work, ".merge-tree"), `${tree}\n`);
+      writeFileSync(join(work, ".merge-files"), conflicts.map((p) => p + "\n").join(""));
+      refuse(`${name} conflicts with ${s.main} in: ${conflicts.join(", ")}; resolve them in ${work} (a missing file is deleted), then orly lane put ${name} -m 'sync: merge ${s.main}'`);
+    }
+  }
+  return Number(gitOut(s.root, "rev-list", "--count", `${s.main}..lane/${name}`));
+}
+
+/** The gate on `rev`: every gate check in one export of the revision, one build at a time. Prints `<sha> name=0 …`
+ *  and a red check's last lines; a green tree is remembered in data/green.
+ *  ponytail: one export dir and one lock serialize every build; per-sitter export dirs if waits hurt. */
+async function laneGate(s: Swarm, rev: string): Promise<boolean> {
+  const checks = gateChecks(s);
+  const sha = gitOut(s.root, "rev-parse", "--short", "--verify", `${rev}^{commit}`) ?? refuse(`'${rev}' is not a commit`);
+  return withLock(join(s.data, "build.lock"), async () => {
+    const exportDir = join(s.data, "export");
+    const tmp = mkdtempSync(join(tmpdir(), "orly-export-"));
+    mkdirSync(exportDir, { recursive: true });
+    // rsync -c keeps the mtime of unchanged files, so an incremental build redoes only what the rev changed.
+    // ponytail: the export holds tracked files only; a check that needs installed deps installs them itself
+    const exported = run(["sh", "-c", 'git archive "$1" | tar -x -C "$2" && rsync -rlpc --delete "$2/" "$3/"', "export", rev, tmp, exportDir], s.root);
+    rmSync(tmp, { recursive: true, force: true });
+    if (!exported.ok) refuse(`export of ${sha} failed: ${exported.err.trim()}`);
+    // builds run without any model endpoint (`*_BASE_URL`), so a test cannot reach the agent's proxy
+    for (const key of Object.keys(process.env)) if (key.endsWith("_BASE_URL")) delete process.env[key];
+    const runs = join(s.data, "checks");
+    mkdirSync(runs, { recursive: true });
+    let line = sha;
+    let green = true;
+    for (const [name, check] of Object.entries(checks)) {
+      const record = await checkRecord(name, { ...check, timeoutMs: check.timeoutMs ?? 600_000 }, exportDir, runs, null);
+      const ok = record.exit === 0;
+      if (!ok) {
+        green = false;
+        for (const l of String(record.out ?? "").trimEnd().split("\n").slice(-6)) console.log(`${name}: ${l}`);
+      }
+      line += ` ${name}=${ok ? 0 : 1}`;
+    }
+    console.log(line);
+    if (green) appendFileSync(join(s.data, "green"), `${gitOut(s.root, "rev-parse", `${rev}^{tree}`)}\n`);
+    return green;
+  });
+}
+
+/** Director only: merge lane/<name> (or its commit `at`) into main, gate it, move main, push. */
+async function laneLand(s: Swarm, name: string, slug: string, at?: string) {
+  checkName("sitter name", name);
+  if (gitOut(s.root, "rev-parse", "--abbrev-ref", "HEAD") !== s.main) refuse(`land runs in the main tree on ${s.main}`);
+  // orly's stop hook rewrites its run state in the tree it runs in; that is nobody's work
+  if (git(s.root, "ls-files", "--error-unmatch", ".orly/baseline.json").ok) git(s.root, "restore", "--source=HEAD", "--worktree", "--", ".orly/baseline.json");
+  if (!git(s.root, "diff", "--quiet", "HEAD", "--").ok) refuse("the main tree has uncommitted changes; commit them first");
+  if (existsSync(join(workDir(s, name), ".merge"))) refuse(`${name} has an unfinished sync merge; not landed`);
+  const main = gitOut(s.root, "rev-parse", s.main)!;
+  let lane = gitOut(s.root, "rev-parse", "--verify", "-q", laneRef(name)) ?? refuse(`no lane/${name}`);
+  // the sha the land request named: commits the sitter put after it stay on the lane for its next land
+  if (at) {
+    const commit = gitOut(s.root, "rev-parse", "--verify", "-q", `${at}^{commit}`);
+    if (!commit || !git(s.root, "merge-base", "--is-ancestor", commit, lane).ok) refuse(`${at} is not a commit on lane/${name}; not landed`);
+    lane = commit!;
+  }
+  if (git(s.root, "merge-base", "--is-ancestor", lane, main).ok) refuse(`${name} has nothing to land`);
+  let landing = lane;
+  if (!git(s.root, "merge-base", "--is-ancestor", main, lane).ok) {
+    const { tree, conflicts } = mergeTree(s, main, lane);
+    if (conflicts) refuse(`${name} conflicts with ${s.main} in: ${conflicts.join(", ")}; ${name} runs orly lane sync; not landed`);
+    landing = run(["git", "commit-tree", tree, "-p", main, "-p", lane], s.root, { input: signed(`land(${slug}): merge lane/${name}`, name) }).out.trim();
+  }
+  const sha = gitOut(s.root, "rev-parse", "--short", landing)!;
+  const tree = gitOut(s.root, "rev-parse", `${landing}^{tree}`)!;
+  if (readLines(join(s.data, "green")).includes(tree)) console.log(`gate: tree of ${sha} already green`);
+  else if (!(await laneGate(s, landing))) refuse(`${name} at ${sha} is red; not landed`);
+  const moved = git(s.root, "merge", "-q", "--ff-only", landing);
+  if (!moved.ok) refuse(moved.err.trim());
+  git(s.root, "tag", "-f", "approved", sha);
+  console.log(`landed ${slug} from ${name} at ${sha}`);
+  // main is published after every landing; a failed push is unavailable, never a bounce
+  if (git(s.root, "remote", "get-url", "origin").ok) {
+    const pushed = git(s.root, "push", "-q", "origin", s.main);
+    if (!pushed.ok) console.error(`orly: push unavailable: ${pushed.err.trim().split("\n").at(-1)}`);
+  }
+}
+
+/** Every lane with ahead/behind main, or one lane's commits. */
+function laneList(s: Swarm, name?: string): string[] {
+  if (name) return (gitOut(s.root, "log", "--format=%h %ar %s", `${s.main}..lane/${name}`) ?? "").split("\n").filter(Boolean);
+  const lanes = (gitOut(s.root, "for-each-ref", "--format=%(refname:short)", "refs/heads/lane") ?? "").split("\n").filter(Boolean);
+  return lanes.map((b) => `${b.slice("lane/".length).padEnd(18)} ahead ${gitOut(s.root, "rev-list", "--count", `${s.main}..${b}`)} behind ${gitOut(s.root, "rev-list", "--count", `${b}..${s.main}`)}`);
+}
+
+/** Main's history for one seat (trailer `Sitter: <seat>-<n>`, optionally one slug) or one sitter (`Sitter: <name>`). */
+function laneLog(s: Swarm, by: string, who: string, slug?: string): string[] {
+  const grep = by === "seat" ? `^Sitter: ${who}-[0-9]+$` : by === "sitter" ? `^Sitter: ${who}$` : usage("orly lane log seat <seat> [<slug>] | log sitter <name>");
+  const lines = (gitOut(s.root, "log", "--format=%h %s", "-E", `--grep=${grep}`, s.main) ?? "").split("\n").filter(Boolean);
+  return slug ? lines.filter((l) => l.includes(`(${slug})`)) : lines;
+}
+
+const BUS_HELP = `orly bus post <from> <to> <text...>    append one line
+orly bus read <me> [tag...]            new lines to <me>, its seat, all or a tag; '*' is every line
+orly bus drain <me>                    every new line since <me>'s read mark, once
+orly bus watch <me> [tag...]           read every 2s, forever (a Monitor target)
+orly bus take <me> <seq>               claim line <seq> as yours to act on; refused when someone took it first
+orly bus pending                       land lines not yet answered by landed or bounced for their slug
+orly bus lease <role> | unlease <role> hold, renew or give back the singleton <role> (director) for this session
+orly bus sit <seat>                    this session's sitter name for <seat>
+orly bus reap                          release every claim whose session pid is gone
+orly bus claim <me> <slug> <file...>   add files to a slug's claim; refused if another claim holds one
+orly bus release <me> <slug>           give a slug's files back
+orly bus claims                        every claim: owner, slug, files
+orly bus log <me> <sha> <what> -- <why> | state <me> [text...] | show <me>   a sitter's cache`;
+
+const LANE_HELP = `orly lane open <name>                      make lane/<name> off main if new; print the work dir
+orly lane get <name> <path...>             copy lane/<name>'s version of each path into the work dir
+orly lane put <name> -m <msg> [<path...>]  commit those copies onto lane/<name>
+orly lane sync <name>                      merge main into lane/<name>
+orly lane check <name> | gate <rev>        the gate (swarm.md's gate checks) on lane/<name> or <rev>
+orly lane land <name> <slug> [<sha>]       director only: merge, gate, move main, push
+orly lane ls [<name>]                      every lane with ahead/behind main, or one lane's commits
+orly lane log seat <seat> [<slug>] | log sitter <name>   main's history by Sitter trailer`;
+
+async function busCommand(s: Swarm, [verb, ...a]: string[]): Promise<number> {
+  const need = (n: number, text: string) => { if (a.length < n) usage(`orly bus ${text}`); };
+  switch (verb) {
+    case "post": need(3, "post <from> <to> <text...>"); await busPost(s, a[0], a[1], a.slice(2).join(" ")); return 0;
+    case "read": need(1, "read <me> [tag...]"); await busSince(s, a[0], addressedTo(a[0], a.slice(1))); return 0;
+    case "drain": need(1, "drain <me>"); await busSince(s, a[0], () => true); return 0;
+    case "watch": need(1, "watch <me> [tag...]"); for (;;) { await busSince(s, a[0], addressedTo(a[0], a.slice(1))); await Bun.sleep(2000); }
+    case "take": {
+      need(2, "take <me> <seq>");
+      if (!/^\d+$/.test(a[1])) refuse(`'${a[1]}' is not a seq`);
+      console.log(JSON.stringify(await busTake(s, a[0], Number(a[1]))));
+      return 0;
+    }
+    case "pending": for (const l of busPending(s)) console.log(`${l.seq} ${l.from} ${l.text}`); return 0;
+    case "lease": {
+      need(1, "lease <role>");
+      if (await lease(s, a[0])) return 0;
+      const held = JSON.parse(readFileSync(join(s.data, `lease.${a[0]}`), "utf8"));
+      return refuse(`refused: ${a[0]} is held by pid ${held.pid}, renewed ${Math.floor(Date.now() / 1000) - held.at}s ago`);
+    }
+    case "unlease": need(1, "unlease <role>"); await unlease(s, a[0]); return 0;
+    case "sit": need(1, "sit <seat>"); console.log(await sit(s, a[0])); return 0;
+    case "reap": await reap(s); return 0;
+    case "claim": need(3, "claim <me> <slug> <file...>"); await claim(s, a[0], a[1], a.slice(2)); return 0;
+    case "release": need(2, "release <me> <slug>"); await release(s, a[0], a[1]); return 0;
+    case "claims": for (const c of readJsonl<Claim>(claimsPath(s))) console.log(`${c.owner}\t${c.slug}\t${c.files.join(" ")}`); return 0;
+    case "show": {
+      need(1, "show <me>");
+      const path = join(s.data, "cache", `${a[0]}.md`);
+      console.log(existsSync(path) ? readFileSync(path, "utf8").trimEnd() : `no cache for ${a[0]}`);
+      return 0;
+    }
+    case "log": {
+      need(3, "log <me> <sha> <what> -- <why>");
+      const sha = gitOut(s.root, "rev-parse", "--short", "--verify", `${a[1]}^{commit}`) ?? refuse(`'${a[1]}' is not a commit`);
+      const rest = a.slice(2).join(" ");
+      if (!rest.includes(" -- ")) usage("orly bus log <me> <sha> <what> -- <why>: say why after --");
+      const [what, why] = [rest.slice(0, rest.indexOf(" -- ")), rest.slice(rest.indexOf(" -- ") + 4)];
+      await writeCache(s, a[0], { log: `- ${isoNow()} \`${sha}\` ${what}. Why: ${why}` });
+      return 0;
+    }
+    case "state": {
+      need(1, "state <me> [text...]");
+      // text as arguments, or stdin; never block on a terminal and never blank the state
+      const body = a.length > 1 ? a.slice(1).join(" ") : process.stdin.isTTY ? usage("orly bus state <me> <text...> | orly bus state <me> < file") : await new Response(Bun.stdin.stream()).text();
+      if (!body.trim()) refuse("empty state refused; the cache keeps its old one");
+      await writeCache(s, a[0], { state: body.trim() });
+      return 0;
+    }
+    default: console.error(BUS_HELP); return 2;
+  }
+}
+
+async function laneCommand(s: Swarm, [verb, ...a]: string[]): Promise<number> {
+  const need = (n: number, text: string) => { if (a.length < n) usage(`orly lane ${text}`); };
+  switch (verb) {
+    case "open": need(1, "open <name>"); console.log(laneOpen(s, a[0])); return 0;
+    case "get": need(2, "get <name> <path...>"); laneGet(s, a[0], a.slice(1)); return 0;
+    case "put": {
+      if (a.length < 3 || a[1] !== "-m" || !a[2]) usage("orly lane put <name> -m <msg> [<path...>]");
+      console.log(lanePut(s, a[0], a[2], a.slice(3)));
+      return 0;
+    }
+    case "sync": need(1, "sync <name>"); console.log(laneSync(s, a[0])); return 0;
+    case "check": need(1, "check <name>"); laneOpen(s, a[0]); return (await laneGate(s, `lane/${a[0]}`)) ? 0 : 1;
+    case "gate": need(1, "gate <rev>"); return (await laneGate(s, a[0])) ? 0 : 1;
+    case "land": need(2, "land <name> <slug> [<sha>]"); await laneLand(s, a[0], a[1], a[2]); return 0;
+    case "ls": for (const l of laneList(s, a[0])) console.log(l); return 0;
+    case "log": need(2, "log seat <seat> [<slug>] | log sitter <name>"); for (const l of laneLog(s, a[0], a[1], a[2])) console.log(l); return 0;
+    default: console.error(LANE_HELP); return 2;
+  }
+}
+
+/** `orly swarm`, `orly bus …`, `orly lane …`. */
+export async function swarmCommand(command: string, args: string[], cwd: string): Promise<number> {
+  try {
+    const s = swarmAt(cwd);
+    if (command === "bus") return await busCommand(s, args);
+    if (command === "lane") return await laneCommand(s, args);
+    for (const sitter of await seatingPlan(s)) console.log(JSON.stringify(sitter));
+    return 0;
+  } catch (e: any) {
+    console.error(`orly: ${e?.message ?? e}`);
+    return e instanceof SwarmError ? e.exit : 1;
+  }
+}
+
 // ---------------------------------------------------------------- the CLI
 const HELP = `orly judge         {messages:[…]} or {turn:{…}} on stdin, the verdict as JSON (exit 0 may end, 2 not, 1 could not run)
 orly gate          same input through the full gate a hook runs (baseline, round cap); never exit 1
@@ -789,6 +1610,9 @@ orly goal [group] "<text>"   append a goal to .orly/goal; specs under .orly/spec
 orly tasks         the specs, most important goal first
 orly specs         validate every spec file; names each rejected one, exit 1 if any
 orly rows <spec>   run a row spec (select: over .orly/tables) and print its rows and answers; never gates
+orly swarm         this session's seating plan for .orly/swarm, one JSON sitter per line
+orly bus …         the swarm's bus, claims and leases (orly bus help)
+orly lane …        sitter lanes and the gated land (orly lane help)
 
 env: TYPESAFE_API_KEY or keyCommand in .orly/config.json or ~/.orly/config.json (ORLY_KEY_TIMEOUT_MS), TYPESAFE_BASE_URL, ORLY_MODEL, ORLY_TIMEOUT_MS, ORLY_CHECK_BUDGET_MS,
      ORLY_HAZARD, ORLY_SPEC_MET, ORLY_MIN_COVERAGE, ORLY_MIN_CONFIDENCE, ORLY_MIN_ACTION_P`;
@@ -840,7 +1664,8 @@ if (import.meta.main) {
     process.exit(problems.length ? 1 : 0);
   }
 
-  if (command === "rows") process.exit(await (await import("./rows.ts")).rowsCommand(args[0], cwd));
+  if (command === "rows") process.exit(await rowsCommand(args[0], cwd));
+  if (command === "swarm" || command === "bus" || command === "lane") process.exit(await swarmCommand(command, args, cwd));
   if (command !== "judge" && command !== "gate") fail(`unknown command "${command}" — try: orly help`);
 
   let input: { messages?: any[]; turn?: Turn };
