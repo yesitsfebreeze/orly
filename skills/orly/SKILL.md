@@ -77,23 +77,28 @@ more workers; nothing else sets a count.
 2. Run `orly swarm`. Each line is one sitter this session hosts: `director` when the director's
    lease was free (this session now holds it), then `<seat>-<n>` for each seat whose `filled`
    query returned a row. The same session running it again gets the same names back.
-3. Per line, unless `ListAgents` already shows that name live: `orly lane open <name>` (skip for
-   `director`), then start one `Agent` teammate with `name` set to it, in the background. Its
-   prompt: the seat file with `<you>` replaced by the name and `<lane>` by the work dir, a line
-   `---`, then swarm.md's rules. The sitter posts `seated <seat> at <sha>` when ready.
-4. Arm one `Monitor` on `orly bus watch <session-name> '*'` and relay what a sitter must see.
+3. Per line, unless that name is already live: `orly lane open <name>` (skip for `director`),
+   then start one background worker named exactly that. Its prompt: the seat file with `<you>`
+   replaced by the name and `<lane>` by the work dir, a line `---`, then swarm.md's rules.
+   - Claude Code: `ListAgents` shows who is live; `Agent` with `name` set to it.
+   - Codex: `spawn_agent` with the name as its task name (`work-1` may be written `work_1`;
+     orly reads either); `send_input` relays a line, `wait` collects a finished worker.
+   The sitter posts `seated <seat> at <sha>` when ready.
+4. Watch the bus: Claude Code arms one `Monitor` on `orly bus watch <session-name> '*'`; Codex
+   runs `orly bus read <session-name>` at the start of every turn. Relay what a sitter must see.
    Every wake: `orly bus lease director` when this session holds the director (a refusal means
    another session took it; stop hosting the director), `orly bus reap` if you host the director
    (releases the claims of sessions that are gone), and `orly swarm` again, seating new lines.
-5. Nobody but the director writes the main branch: sitters `orly lane put`, check with
-   `orly lane check <name>`, then post `land <slug> <sha>` to `director`. The director runs
-   `orly lane land <name> <slug> <sha>`, which gates on swarm.md's `gate` checks, and posts
-   `landed` or `bounced`. `orly bus pending` lists lands not yet answered.
+5. Only `orly lane land` writes the main branch. A sitter `orly lane put`s its files, and when
+   the unit is whole runs `orly lane sync <name> && orly lane land <name> <slug>` itself: the land
+   merges, gates on swarm.md's `gate` checks with the lane named, moves main and pushes, one
+   land at a time. Red means not landed: fix and land again. The director lands only for a
+   sitter that is gone (`orly bus pending`).
 6. No seat blocks on the human, the director included: never call AskUserQuestion (the hook
    denies it to every seat). A seat that needs a decision writes `.orly/swarm/questions/<slug>.md`
    (frontmatter `status: open`; body the question and the options), posts `question <slug>` on the
    bus and keeps working. The director's brief, added to its prompt: every turn read the questions
-   with `status: open`, send one `PushNotification` to the human for each new one, and keep landing;
+   with `status: open`, tell the human once for each new one (Claude Code: `PushNotification`; Codex: say it in the turn's reply), and keep landing;
    the human's answer lands in that file verbatim.
 
 Stopping: `orly bus unlease director` if held; the sitters end with the session and their names

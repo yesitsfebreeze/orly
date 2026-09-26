@@ -68,13 +68,15 @@ if (import.meta.main) {
 
   const sessions = join(process.env.CODEX_HOME ?? join(process.env.HOME ?? "", ".codex"), "sessions");
   const find = () => { try { for (const f of new Glob(`**/*${sessionId}.jsonl`).scanSync(sessions)) return join(sessions, f); } catch { /* no sessions dir */ } };
+  const transcriptPath = input.transcript_path || find();
   const outcome = await gateTurn({
     cwd,
     sessionId,
+    transcriptPath,
     answeringBlock: input.stop_hook_active === true,
     read: async () => {
       try {
-        const messages = codexMessages(await Bun.file(input.transcript_path || find() || "").text());
+        const messages = codexMessages(await Bun.file(transcriptPath || "").text());
         return messages.length ? normalizeLastTurn(messages) : null;
       } catch {
         return null;

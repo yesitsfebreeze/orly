@@ -1380,7 +1380,8 @@ export function swarmSeat(cwd: string, transcriptPath?: string): string | null {
   let agent: string | undefined;
   try {
     for (const line of readFileSync(transcriptPath ?? "", "utf8").split("\n").slice(0, 50)) {
-      try { agent = JSON.parse(line).agentName; } catch { /* a torn line */ }
+      // Claude Code names a teammate `agentName`; Codex names a spawned agent by the last segment of its agent_path
+      try { const e = JSON.parse(line); agent = e.agentName ?? e.payload?.source?.subagent?.thread_spawn?.agent_path?.split("/").pop()?.replaceAll("_", "-"); } catch { /* a torn line */ }
       if (agent) break;
     }
   } catch { /* no transcript */ }

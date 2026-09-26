@@ -249,3 +249,12 @@ test("a seated sitter answers to its own seat's specs only; the host and a seat 
   expect(seatSpecGroup(root, as("work-1"))).toBe("work");
   expect(seatSpecGroup(root)).toBeUndefined();
 });
+
+test("a Codex subagent is known by its rollout's agent_path, as a teammate by agentName", async () => {
+  const { seatSpecGroup } = await import("../orly.ts");
+  const root = repo(), host = livePid();
+  expect(names(root, host)).toEqual(["director", "work-1"]);
+  const t = join(root, "rollout.jsonl");
+  writeFileSync(t, JSON.stringify({ type: "session_meta", payload: { source: { subagent: { thread_spawn: { agent_path: "/root/work_1", agent_nickname: "Curie" } } } } }) + "\n");
+  expect(seatSpecGroup(root, t)).toBe("work");
+});
