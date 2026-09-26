@@ -1,6 +1,6 @@
 {
   "name": "orly",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "A turn-end gate for coding agents: checks each turn against the project's specs and refuses the stop until they hold.",
   "author": {
     "name": "Stefan Hoevelmanns"
