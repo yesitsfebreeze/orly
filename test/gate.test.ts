@@ -301,3 +301,11 @@ test("the transport is one place: a non-2xx and a wrong-shaped 200 fail the same
     expect(out.usage?.input_tokens).toBe(10);
   });
 });
+
+import { gateSkips } from "../orly.ts";
+test("gateSkips: an empty diff never skips, a docs-only diff does", () => {
+  const spec = { command: "true", skipOnly: "\\.md$" } as Parameters<typeof gateSkips>[0];
+  expect(gateSkips(spec, [])).toBe(false);
+  expect(gateSkips(spec, ["a.md"])).toBe(true);
+  expect(gateSkips(spec, ["a.md", "src/x.rs"])).toBe(false);
+});

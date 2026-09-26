@@ -599,7 +599,7 @@ export type CheckSpec = { command: string; countPattern?: string; timeoutMs?: nu
 
 /** A lane gate skips a check whose `skipOnly` regex matches every path the rev changes against main (a memo-only lane builds nothing). */
 export const gateSkips = (spec: CheckSpec, changed: string[]): boolean =>
-  !!spec.skipOnly && changed.every((path) => new RegExp(spec.skipOnly!).test(path));
+  !!spec.skipOnly && changed.length > 0 && changed.every((path) => new RegExp(spec.skipOnly!).test(path));
 
 /** HEAD, `git status`, and each listed file's content hash; null outside git or before the first commit. */
 function treeKey(root: string): string | null {
