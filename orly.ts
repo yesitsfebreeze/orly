@@ -1628,6 +1628,32 @@ async function laneGate(s: Swarm, rev: string, land = false, lane?: string): Pro
   }, land ? undefined : wanted);
 }
 
+async function laneTest(s: Swarm, manifestArg: string, exact: string, bin?: string): Promise<number> {
+  const manifest = resolve(s.root, manifestArg);
+  if (basename(manifest) !== "Cargo.toml" || !existsSync(manifest)) refuse(`not a Cargo manifest: ${manifest}`);
+  if (!exact || exact.startsWith("-")) refuse("name one exact Rust test");
+  const source = dirname(manifest);
+  const wanted = join(s.data, "land.wanted");
+  return withLock(join(s.data, "cargo-provenance.lock"), async () => {
+    const fresh = run(["find", source, "-type", "d", "(", "-name", "target", "-o", "-name", ".git", "-o", "-name", ".orly", ")", "-prune", "-o", "-type", "f", "-exec", "touch", "{}", "+"], s.root);
+    if (!fresh.ok) refuse(`cannot freshen Rust source: ${fresh.err.trim()}`);
+    const env = { ...process.env, CARGO_TARGET_DIR: join(s.root, "target") };
+    for (const key of Object.keys(env)) if (key.endsWith("_BASE_URL")) delete env[key];
+    const args = ["cargo", "test", "--manifest-path", manifest, ...(bin ? ["--bin", bin] : ["--lib"]), exact, "--", "--exact"];
+    console.error(`targeted test: ${manifest} ${exact}; target=${env.CARGO_TARGET_DIR}`);
+    const child = Bun.spawn(args, { cwd: source, env, stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    process.stdout.write(out);
+    process.stderr.write(err);
+    if (code) return code;
+    if (!/^test result: ok\. 1 passed; 0 failed; 0 ignored;/m.test(out)) {
+      console.error(`refused: expected one executed test: ${exact}`);
+      return 1;
+    }
+    return 0;
+  }, wanted);
+}
+
 /** Director only: merge lane/<name> (or its commit `at`) into main, gate it, move main, push. */
 async function laneLand(s: Swarm, name: string, slug: string, at?: string) {
   checkName("sitter name", name);
@@ -1704,6 +1730,7 @@ orly lane get <name> <path...>             copy lane/<name>'s version of each pa
 orly lane put <name> -m <msg> [<path...>]  commit those copies onto lane/<name>
 orly lane sync <name>                      merge main into lane/<name>
 orly lane check <name> | gate <rev>        the gate (swarm.md's gate checks) on lane/<name> or <rev>
+orly lane test <manifest> <exact-test> [--bin <name>]  targeted test with shared source provenance
 orly lane land <name> <slug> [<sha>]       one land at a time: merge, gate, move main, push
 orly lane ls [<name>]                      every lane with ahead/behind main, or one lane's commits
 orly lane log seat <seat> [<slug>] | log sitter <name>   main's history by Sitter trailer`;
@@ -1774,6 +1801,10 @@ async function laneCommand(s: Swarm, [verb, ...a]: string[]): Promise<number> {
     case "sync": need(1, "sync <name>"); console.log(laneSync(s, a[0])); return 0;
     case "check": need(1, "check <name>"); laneOpen(s, a[0]); return (await laneGate(s, `lane/${a[0]}`, false, a[0])) ? 0 : 1;
     case "gate": need(1, "gate <rev>"); return (await laneGate(s, a[0])) ? 0 : 1;
+    case "test": {
+      if (a.length !== 2 && !(a.length === 4 && a[2] === "--bin")) usage("orly lane test <manifest> <exact-test> [--bin <name>]");
+      return laneTest(s, a[0], a[1], a[3]);
+    }
     case "land": need(2, "land <name> <slug> [<sha>]"); await withLock(join(s.data, "land.lock"), () => laneLand(s, a[0], a[1], a[2])); return 0;
     case "ls": for (const l of laneList(s, a[0])) console.log(l); return 0;
     case "log": need(2, "log seat <seat> [<slug>] | log sitter <name>"); for (const l of laneLog(s, a[0], a[1], a[2])) console.log(l); return 0;

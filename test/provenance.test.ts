@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 
@@ -61,4 +61,32 @@ test("legacy tree-only green records cannot bypass the repaired gate", () => {
   expect(landed.code).toBe(1);
   expect(landed.out).toContain("test=1");
   expect(landed.out).not.toContain("already green");
+}, 120000);
+
+test("targeted lane tests freshen restored sources and refuse a missing exact test", () => {
+  const { root } = repo();
+  const manifest = join(root, "Cargo.toml");
+  const testA = "#[test]\nfn lane_a() {}\n";
+  writeFileSync(join(root, "src/lib.rs"), testA);
+  expect(orly(root, "lane", "test", manifest, "lane_a").code).toBe(0);
+  writeFileSync(join(root, "src/lib.rs"), "#[test]\nfn lane_b() {}\n");
+  expect(orly(root, "lane", "test", manifest, "lane_b").code).toBe(0);
+  writeFileSync(join(root, "src/lib.rs"), testA);
+  utimesSync(join(root, "src/lib.rs"), new Date(0), new Date(0));
+  const restored = orly(root, "lane", "test", manifest, "lane_a");
+  expect(restored.code).toBe(0);
+  expect(restored.out).toContain("1 passed");
+  const missing = orly(root, "lane", "test", manifest, "not_present");
+  expect(missing.code).not.toBe(0);
+  expect(missing.err).toContain("expected one executed test");
+}, 120000);
+
+test("targeted lane tests support bin tests without selecting lib or accepting ignored tests", () => {
+  const { root } = repo();
+  writeFileSync(join(root, "src/main.rs"), "fn main() {}\n#[test]\nfn binary_case() {}\n#[test]\n#[ignore]\nfn skipped_case() {}\n");
+  const args = ["lane", "test", join(root, "Cargo.toml")];
+  const good = orly(root, ...args, "binary_case", "--bin", "orly_provenance_probe");
+  expect(good.code).toBe(0);
+  expect(good.out).toContain("1 passed");
+  expect(orly(root, ...args, "skipped_case", "--bin", "orly_provenance_probe").code).not.toBe(0);
 }, 120000);
