@@ -826,7 +826,7 @@ export function endSession(sessionId: string): void {
   for (const f of [roundsPath(sessionId), join(tmpdir(), `orly-nokey-${sessionId}`)]) rmSync(f, { force: true });
 }
 
-export type GateInput = { cwd: string; sessionId: string; read: () => Promise<Turn | null>; answeringBlock?: boolean; flush?: boolean };
+export type GateInput = { cwd: string; sessionId: string; read: () => Promise<Turn | null>; answeringBlock?: boolean; flush?: boolean; transcriptPath?: string };
 export type GateOutcome = { block: boolean; reason?: string; message?: string; note?: string; judgment?: Judgment };
 
 /** Run the gate on one turn. Never throws; fails open, fails closed on bad specs. */
@@ -834,7 +834,10 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
   const { cwd, sessionId } = input;
   const specFile = loadSpecFile(cwd);
   const all = specFile?.specs ?? [];
-  const specs = all.filter((s) => !s.select); // row specs run through `orly rows` only
+  // A swarm sitter answers to its own seat's spec group and the ungrouped specs, never to another seat's.
+  const group = seatSpecGroup(cwd, input.transcriptPath);
+  const own = (id: string) => { const rel = specFile?.paths[id] ?? ""; return group === undefined || !rel.includes("/") || rel.split("/")[0] === group; };
+  const specs = all.filter((s) => !s.select && own(s.id)); // row specs run through `orly rows` only
   const orlyDir = findOrlyDir(cwd);
   const allow = (note?: string): GateOutcome => (note ? { block: false, note } : { block: false });
 
@@ -1116,19 +1119,28 @@ function sessionPid(): number {
 /** An exclusive lock file that holds its owner's pid, for the length of `fn`. A dead owner's lock is taken over.
  *  ponytail: two waiters that both find the owner dead can both take over; a real flock if that ever bites. */
 async function withLock<T>(path: string, fn: () => T | Promise<T>, yieldTo?: string): Promise<T> {
-  for (;;) {
+  return withAnyLock([path], () => fn(), yieldTo);
+}
+
+/** Take the first free lock of `paths` (a dead owner's is free), run `fn` with its index, release it. */
+async function withAnyLock<T>(paths: string[], fn: (i: number) => T | Promise<T>, yieldTo?: string): Promise<T> {
+  for (let i = 0; ; i = (i + 1) % paths.length) {
     if (yieldTo && existsSync(yieldTo)) {
       const first = Number(readFileSync(yieldTo, "utf8") || 0);
       if (first > 0 && alive(first)) { await Bun.sleep(20); continue; }
       rmSync(yieldTo, { force: true });
     }
-    try { writeFileSync(path, String(process.pid), { flag: "wx" }); break; } catch (e: any) { if (e?.code !== "EEXIST") throw e; }
-    let owner = 0;
-    try { owner = Number(readFileSync(path, "utf8")); } catch { continue; }
-    if (owner > 0 && !alive(owner)) rmSync(path, { force: true });
-    else await Bun.sleep(20); // owner 0: the file is being written
+    const path = paths[i];
+    try { writeFileSync(path, String(process.pid), { flag: "wx" }); } catch (e: any) {
+      if (e?.code !== "EEXIST") throw e;
+      let owner = 0;
+      try { owner = Number(readFileSync(path, "utf8")); } catch { continue; }
+      if (owner > 0 && !alive(owner)) rmSync(path, { force: true });
+      else if (i === paths.length - 1) await Bun.sleep(20); // owner 0: the file is being written
+      continue;
+    }
+    try { return await fn(i); } finally { rmSync(path, { force: true }); }
   }
-  try { return await fn(); } finally { rmSync(path, { force: true }); }
 }
 
 /** `.orly/swarm/` of the main tree, also when called from a lane's work dir: every lane shares one bus. */
@@ -1378,6 +1390,16 @@ export function swarmSeat(cwd: string, transcriptPath?: string): string | null {
   return holders.find((h) => h.name === agent)?.name ?? holders.find((h) => h.pid === me)?.name ?? null;
 }
 
+/** A seated sitter's spec group: its seat file's `specs:`, null when it names none; undefined outside a seat. */
+export function seatSpecGroup(cwd: string, transcriptPath?: string): string | null | undefined {
+  const name = swarmSeat(cwd, transcriptPath);
+  if (!name) return undefined;
+  const dir = findOrlyDir(cwd);
+  const path = dir && join(dir, "swarm", "seats", `${name.replace(/-\d+$/, "")}.md`);
+  const group = path && existsSync(path) ? frontmatter(readFileSync(path, "utf8")).fm.specs : null;
+  return typeof group === "string" && group ? group : null;
+}
+
 /** A sitter's cache, `data/cache/<me>.md`: a State it replaces and a Log it appends to (the last 256 kept). */
 async function writeCache(s: Swarm, me: string, change: { state?: string; log?: string }) {
   checkName("name", me);
@@ -1531,16 +1553,19 @@ function laneSync(s: Swarm, name: string): number {
 
 /** The gate on `rev`: every gate check in one export of the revision, one build at a time. Prints `<sha> name=0 …`
  *  and a red check's last lines; a green tree is remembered in data/green.
- *  ponytail: one export dir and one lock serialize every build; per-sitter export dirs if waits hurt. */
+ *  ponytail: a fixed pool of slots, not one per sitter: each slot's export costs its own build of the crate in target/. */
 async function laneGate(s: Swarm, rev: string, land = false): Promise<boolean> {
   const checks = gateChecks(s);
   const sha = gitOut(s.root, "rev-parse", "--short", "--verify", `${rev}^{commit}`) ?? refuse(`'${rev}' is not a commit`);
   // a land waits ahead of lane checks: checks yield while land.wanted names a live pid, so lands never starve
   const wanted = join(s.data, "land.wanted");
   if (land) writeFileSync(wanted, String(process.pid));
-  return withLock(join(s.data, "build.lock"), async () => {
+  // Each slot has its own export and check records; cargo's own target lock serializes only the compiles, so the
+  // test runs of up to ORLY_GATE_SLOTS gates overlap. Slot 0 keeps the old names and so its warm build.
+  const slots = Array.from({ length: Math.max(1, num("ORLY_GATE_SLOTS", 3)) }, (_, i) => i ? `-${i}` : "");
+  return withAnyLock(slots.map((x) => join(s.data, `build${x}.lock`)), async (slot) => {
     if (land) rmSync(wanted, { force: true });
-    const exportDir = join(s.data, "export");
+    const exportDir = join(s.data, `export${slots[slot]}`);
     const tmp = mkdtempSync(join(tmpdir(), "orly-export-"));
     mkdirSync(exportDir, { recursive: true });
     // rsync -c keeps the mtime of unchanged files, so an incremental build redoes only what the rev changed.
@@ -1550,7 +1575,7 @@ async function laneGate(s: Swarm, rev: string, land = false): Promise<boolean> {
     if (!exported.ok) refuse(`export of ${sha} failed: ${exported.err.trim()}`);
     // builds run without any model endpoint (`*_BASE_URL`), so a test cannot reach the agent's proxy
     for (const key of Object.keys(process.env)) if (key.endsWith("_BASE_URL")) delete process.env[key];
-    const runs = join(s.data, "checks");
+    const runs = join(s.data, `checks${slots[slot]}`);
     mkdirSync(runs, { recursive: true });
     let line = sha;
     let green = true;
@@ -1558,7 +1583,7 @@ async function laneGate(s: Swarm, rev: string, land = false): Promise<boolean> {
     const changed = base ? (gitOut(s.root, "diff", "--name-only", base, rev) ?? "").split("\n").filter(Boolean) : null;
     for (const [name, check] of Object.entries(checks)) {
       if (changed && gateSkips(check, changed)) { line += ` ${name}=skip`; continue; }
-      // build.lock is ours, so a check still recorded here belongs to a gate that died mid-run: kill it, run fresh
+      // the slot is ours, so a check still recorded here belongs to a gate that died mid-run: kill it, run fresh
       const stale = join(runs, `${Bun.hash(name)}.key`);
       const [, orphan] = existsSync(stale) ? readFileSync(stale, "utf8").split("\n") : [];
       if (Number(orphan) > 0) try { process.kill(-Number(orphan), "SIGKILL"); } catch { /* gone */ }

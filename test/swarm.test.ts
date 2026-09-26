@@ -229,3 +229,23 @@ test("the questions table loads .orly/swarm/questions/*.md for row specs", async
     .query("SELECT fm->>'status' AS status, body FROM questions").all();
   expect(rows).toEqual([{ status: "open", body: "Cut over now?\n" }]);
 });
+
+test("gates run side by side in their own slots, each with its own export", async () => {
+  const root = repo(), cfg = join(root, ".orly/config.json");
+  writeFileSync(cfg, JSON.stringify({ checks: { nobad: { command: "sleep 2; test ! -f bad.txt" } } }));
+  git(root, "commit", "-qam", "slow check");
+  const t0 = Date.now();
+  const gates = [0, 1].map(() => Bun.spawn(["bun", ORLY, "lane", "gate", "HEAD"], { cwd: root, env: { ...process.env, ...GIT, ORLY_GATE_SLOTS: "2" } }));
+  expect(await Promise.all(gates.map((g) => g.exited))).toEqual([0, 0]);
+  expect(Date.now() - t0).toBeLessThan(3900);
+  expect(existsIn(root, ".orly/swarm/data/export/a.txt") && existsIn(root, ".orly/swarm/data/export-1/a.txt")).toBe(true);
+});
+
+test("a seated sitter answers to its own seat's specs only; the host and a seat without specs as said", async () => {
+  const { seatSpecGroup } = await import("../orly.ts");
+  const root = repo(), host = livePid();
+  expect(names(root, host)).toEqual(["director", "work-1"]);
+  const as = (name: string) => { const t = join(root, `${name}.jsonl`); writeFileSync(t, JSON.stringify({ type: "user", agentName: name }) + "\n"); return t; };
+  expect(seatSpecGroup(root, as("work-1"))).toBe("work");
+  expect(seatSpecGroup(root)).toBeUndefined();
+});

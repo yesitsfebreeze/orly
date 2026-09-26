@@ -69,6 +69,7 @@ ENVIRONMENT
   ORLY_MODEL            judge model (jev-latest)
   ORLY_TIMEOUT_MS       judge request timeout (12000)
   ORLY_CHECK_BUDGET_MS  how long a stop waits on checks before leaving them to the next stop (8000)
+  ORLY_GATE_SLOTS       how many swarm lane gates run at once, each in its own export (3)
   ORLY_SESSION          session id for `orly gate` when --session is not given
   ORLY_PID              the session pid `orly swarm|bus` holds leases, names and claims under (default: the harness process)
   ORLY_HAZARD           probability at which a built-in hazard blocks (0.7)

@@ -78,6 +78,7 @@ const outcome = await gateTurn({
   cwd,
   sessionId,
   answeringBlock: input.stop_hook_active === true,
+  transcriptPath: input.transcript_path,
   read: async () => {
     try {
       const messages = messagesFrom(await Bun.file(input.transcript_path).text());
