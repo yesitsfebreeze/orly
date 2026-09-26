@@ -156,11 +156,14 @@ A repo with `.orly/swarm/` runs a swarm of agent sessions; a bare `/orly` joins 
 ```
 .orly/swarm/swarm.md        the director's brief; frontmatter main (branch), gate (check names from config.json)
 .orly/swarm/seats/<seat>.md  frontmatter filled (`always` or one SELECT over .orly/tables), specs; body the job
+.orly/swarm/questions/<slug>.md  tracked: the human's decisions; frontmatter status (open, answered), body question and options
 .orly/swarm/data/            never tracked: bus.jsonl, claims.jsonl, sitters.jsonl, lease.<role>, work/, green
 ```
 
 `director.md` is the singleton seat: the session holding `orly bus lease director` hosts it, and it
 alone lands lanes on the main branch. Every other session contributes one `<seat>-<n>` per filled
-seat. A lease or sitter name is held while its session's pid runs. `seat`, `bus`, `claims` and
-`sitters` are row-spec tables (see docs/specs.txt), so swarm health is written as row specs.
+seat. A lease or sitter name is held while its session's pid runs. No seat, the director included,
+may call AskUserQuestion: the PreToolUse hook denies it, and the seat writes `questions/<slug>.md`
+with `status: open` and posts `question <slug>` on the bus instead. `seat`, `questions`, `bus`,
+`claims` and `sitters` are row-spec tables (see docs/specs.txt), so swarm health is written as row specs.
 Needs `git`, `tar` and `rsync`. All of it lives in `orly.ts`; there are no scripts.

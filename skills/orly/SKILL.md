@@ -89,6 +89,12 @@ more workers; nothing else sets a count.
    `orly lane check <name>`, then post `land <slug> <sha>` to `director`. The director runs
    `orly lane land <name> <slug> <sha>`, which gates on swarm.md's `gate` checks, and posts
    `landed` or `bounced`. `orly bus pending` lists lands not yet answered.
+6. No seat blocks on the human, the director included: never call AskUserQuestion (the hook
+   denies it to every seat). A seat that needs a decision writes `.orly/swarm/questions/<slug>.md`
+   (frontmatter `status: open`; body the question and the options), posts `question <slug>` on the
+   bus and keeps working. The director's brief, added to its prompt: every turn read the questions
+   with `status: open`, send one `PushNotification` to the human for each new one, and keep landing;
+   the human's answer lands in that file verbatim.
 
 Stopping: `orly bus unlease director` if held; the sitters end with the session and their names
 free up.
