@@ -1554,7 +1554,7 @@ function laneSync(s: Swarm, name: string): number {
 /** The gate on `rev`: every gate check in one export of the revision, one build at a time. Prints `<sha> name=0 …`
  *  and a red check's last lines; a green tree is remembered in data/green.
  *  ponytail: a fixed pool of slots, not one per sitter: each slot's export costs its own build of the crate in target/. */
-async function laneGate(s: Swarm, rev: string, land = false): Promise<boolean> {
+async function laneGate(s: Swarm, rev: string, land = false, lane?: string): Promise<boolean> {
   const checks = gateChecks(s);
   const sha = gitOut(s.root, "rev-parse", "--short", "--verify", `${rev}^{commit}`) ?? refuse(`'${rev}' is not a commit`);
   // a land waits ahead of lane checks: checks yield while land.wanted names a live pid, so lands never starve
@@ -1575,6 +1575,8 @@ async function laneGate(s: Swarm, rev: string, land = false): Promise<boolean> {
     if (!exported.ok) refuse(`export of ${sha} failed: ${exported.err.trim()}`);
     // builds run without any model endpoint (`*_BASE_URL`), so a test cannot reach the agent's proxy
     for (const key of Object.keys(process.env)) if (key.endsWith("_BASE_URL")) delete process.env[key];
+    // a check may judge by seat (a refactor lane must not grow the code, a port lane may): name the lane and the rev
+    if (lane) Object.assign(process.env, { ORLY_LANE: lane, ORLY_SHA: gitOut(s.root, "rev-parse", "--verify", `${rev}^{commit}`) });
     const runs = join(s.data, `checks${slots[slot]}`);
     mkdirSync(runs, { recursive: true });
     let line = sha;
@@ -1637,7 +1639,7 @@ async function laneLand(s: Swarm, name: string, slug: string, at?: string) {
   const sha = gitOut(s.root, "rev-parse", "--short", landing)!;
   const tree = gitOut(s.root, "rev-parse", `${landing}^{tree}`)!;
   if (readLines(join(s.data, "green")).includes(tree)) console.log(`gate: tree of ${sha} already green`);
-  else if (!(await laneGate(s, landing, true))) refuse(`${name} at ${sha} is red; not landed`);
+  else if (!(await laneGate(s, landing, true, name))) refuse(`${name} at ${sha} is red; not landed`);
   const now = gitOut(s.root, "rev-parse", s.main)!;
   if (now !== main) refuse(`${s.main} moved from ${main.slice(0, 7)} to ${now.slice(0, 7)} while ${sha} was gated; only lane land writes ${s.main}; not landed`);
   const moved = git(s.root, "merge", "-q", "--ff-only", landing);
@@ -1752,7 +1754,7 @@ async function laneCommand(s: Swarm, [verb, ...a]: string[]): Promise<number> {
       return 0;
     }
     case "sync": need(1, "sync <name>"); console.log(laneSync(s, a[0])); return 0;
-    case "check": need(1, "check <name>"); laneOpen(s, a[0]); return (await laneGate(s, `lane/${a[0]}`)) ? 0 : 1;
+    case "check": need(1, "check <name>"); laneOpen(s, a[0]); return (await laneGate(s, `lane/${a[0]}`, false, a[0])) ? 0 : 1;
     case "gate": need(1, "gate <rev>"); return (await laneGate(s, a[0])) ? 0 : 1;
     case "land": need(2, "land <name> <slug> [<sha>]"); await laneLand(s, a[0], a[1], a[2]); return 0;
     case "ls": for (const l of laneList(s, a[0])) console.log(l); return 0;
