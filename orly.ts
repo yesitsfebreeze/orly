@@ -11,7 +11,8 @@ import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSyn
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
 
-export const MAX_RESULTS = 12, MAX_ACTIONS = 40;
+export const MAX_RESULTS = 12;
+export const MAX_ACTIONS = 40;
 
 export type Turn = {
   user_request: string;
@@ -58,26 +59,55 @@ export function selectResults(results: string[], max = MAX_RESULTS): string[] {
 const EVIDENCE = /\b(pass(?:e[sd]|ing)?|ok|green|succe\w+|exit|done|\d+ (?:tests?|specs?))\b|✓|✗/i;
 /** Results share one budget: short ones whole, each long one its head, its tail, and the lines between that carry evidence. */
 export function fitResults(results: string[], budget = MAX_RESULTS * 600): string[] {
-  let left = budget, n = results.length, cap = Infinity;
-  for (const len of results.map((r) => r.length).sort((a, b) => a - b)) if (len * n > left) { cap = Math.floor(left / n); break; } else (left -= len), n--;
+  let left = budget;
+  let n = results.length;
+  let cap = Infinity;
+  for (const len of results.map((r) => r.length).sort((a, b) => a - b)) {
+    if (len * n > left) { cap = Math.floor(left / n); break; }
+    left -= len;
+    n--;
+  }
   return results.map((r) => {
     if (r.length <= cap) return r;
-    const hits: [number, string][] = []; let at = cap >> 2, used = 0; // evidence takes up to half; head and tail get the rest
-    for (const l of r.slice(at, -at).split("\n")) { const c = clip(l.trim(), 200); if (used < cap / 2 && (FAILURE.test(l) || EVIDENCE.test(l))) hits.push([at, c]), (used += c.length + 1); at += l.length + 1; }
-    const q = Math.floor((cap - used) / 2), kept = hits.filter(([i]) => i >= q && i < r.length - q).map(([, c]) => c);
+    // evidence takes up to half; head and tail get the rest
+    const hits: [number, string][] = [];
+    let at = cap >> 2;
+    let used = 0;
+    for (const l of r.slice(at, -at).split("\n")) {
+      const c = clip(l.trim(), 200);
+      if (used < cap / 2 && (FAILURE.test(l) || EVIDENCE.test(l))) {
+        hits.push([at, c]);
+        used += c.length + 1;
+      }
+      at += l.length + 1;
+    }
+    const q = Math.floor((cap - used) / 2);
+    const kept = hits.filter(([i]) => i >= q && i < r.length - q).map(([, c]) => c);
     return `${r.slice(0, q)}…[cut: only lines carrying evidence kept]\n${kept.join("\n")}\n…${r.slice(-q)}`;
   });
 }
 
 /** Reduce one turn's messages, starting at the human request, to a `Turn`. */
 export function normalize(messages: Msg[]): Turn {
-  const said: string[] = [], actions: string[] = [], results: string[] = [], ids = new Map<string, number>(), answered = new Set<number>();
-  let lastActionAt = -1, lastTextAt = -1;
-  const act = (d: string, id: unknown, step: number) => (actions.push(`#${actions.length + 1} ${d}`), (lastActionAt = step), id && ids.set(String(id), actions.length));
+  const said: string[] = [];
+  const actions: string[] = [];
+  const results: string[] = [];
+  const ids = new Map<string, number>();
+  const answered = new Set<number>();
+  let lastActionAt = -1;
+  let lastTextAt = -1;
+  const act = (d: string, id: unknown, step: number) => {
+    actions.push(`#${actions.length + 1} ${d}`);
+    lastActionAt = step;
+    if (id) ids.set(String(id), actions.length);
+  };
   // Tagged with the action it answers: by tool_use_id where the transcript has one, else the first unanswered action.
   const result = (body: string, id: unknown, step: number) => {
-    let n = ids.get(String(id)) ?? 1; while (!ids.has(String(id)) && answered.has(n)) n++;
-    answered.add(n), (lastActionAt = step), results.push(`#${n} → ${body.trim().replace(/\n{3,}/g, "\n\n") || "(no output)"}`);
+    let n = ids.get(String(id)) ?? 1;
+    while (!ids.has(String(id)) && answered.has(n)) n++;
+    answered.add(n);
+    lastActionAt = step;
+    results.push(`#${n} → ${body.trim().replace(/\n{3,}/g, "\n\n") || "(no output)"}`);
   };
   messages.slice(1).forEach((m, step) => {
     if (m.role === "assistant") {
@@ -177,7 +207,9 @@ export type Goal = { group?: string; text: string };
 export type SpecFile = { goal: string; goals: Goal[]; specs: Spec[]; paths: Record<string, string>; maxRounds?: number };
 export type SpecResult = { spec: Spec; p: number; met: boolean; actual?: unknown };
 
-export const SPEC_PREFIX = "spec:", TREE = "specs", EXT = ".spec";
+export const SPEC_PREFIX = "spec:";
+export const TREE = "specs";
+export const EXT = ".spec";
 const OPS = ["equals", "lte", "gte", "present", "absent", "contains"];
 const KEYS = ["cut", "require", "evidence", "optional", "true", "false", "fitted", "rounds", "select"];
 
@@ -459,17 +491,30 @@ export function compose(answers: Record<string, any>, t: Thresholds = DEFAULTS, 
       ? `- check "${r.spec.id}" failed: ${q.path} ${q.op} ${String(q.value ?? "")} — found ${JSON.stringify(r.actual)}`
       : `- spec "${r.spec.id}" is not met (p=${r.p.toFixed(2)}): ${r.spec.instructions}`);
   }
-  let checks = results.length, failed = failing.length; const specFired = fired.length;
+  let checks = results.length;
+  let failed = failing.length;
+  const specFired = fired.length;
   for (const id of Object.keys(HAZARD_LABELS)) {
     const p = answers?.[id]?.noul;
     if (typeof p !== "number") continue;
     parts.push(`${id} ${p.toFixed(2)}`);
     if (p >= t.hazard) fired.push(`- ${HAZARD_LABELS[id]} (p=${p.toFixed(2)})`);
   }
-  if (Object.keys(HAZARD_LABELS).some((id) => typeof answers?.[id]?.noul === "number")) checks++, failed += +(fired.length > specFired);
-  const cov = answers?.coverage, score = typeof cov?.score === "number" ? cov.score : null, confidence = typeof cov?.confidence === "number" ? cov.confidence : 0;
-  if (score !== null) checks++, parts.push(`coverage ${score.toFixed(2)}/3 (conf ${confidence.toFixed(2)})`);
-  if (score !== null && score < t.minCoverage && confidence >= t.minCoverageConfidence) failed++, fired.push(`- the work does not yet cover the request (coverage ${score.toFixed(2)} of 3)`);
+  if (Object.keys(HAZARD_LABELS).some((id) => typeof answers?.[id]?.noul === "number")) {
+    checks++;
+    if (fired.length > specFired) failed++;
+  }
+  const cov = answers?.coverage;
+  const score = typeof cov?.score === "number" ? cov.score : null;
+  const confidence = typeof cov?.confidence === "number" ? cov.confidence : 0;
+  if (score !== null) {
+    checks++;
+    parts.push(`coverage ${score.toFixed(2)}/3 (conf ${confidence.toFixed(2)})`);
+  }
+  if (score !== null && score < t.minCoverage && confidence >= t.minCoverageConfidence) {
+    failed++;
+    fired.push(`- the work does not yet cover the request (coverage ${score.toFixed(2)} of 3)`);
+  }
   const pct = checks ? Math.round(((checks - failed) / checks) * 100) : null;
   const action = answers?.next_action;
   const actionP = action?.probabilities?.[action?.choice] ?? 0;
@@ -507,7 +552,8 @@ export async function ask(state: unknown, questions: Record<string, unknown>, o:
     signal: AbortSignal.timeout(o.timeoutMs ?? 12_000),
   });
   if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 300)}`);
-  const out = await res.json(), answers = out?.answers as Record<string, any>;
+  const out = await res.json();
+  const answers = out?.answers as Record<string, any>;
   if (!answers || typeof answers !== "object") throw new Error("response had no answers");
   if (!o.endpoint) try { const d = join(process.env.HOME || homedir(), ".jev", "log"); mkdirSync(d, { recursive: true }); appendFileSync(join(d, `${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify({ ts: Date.now(), client: "orly", model: o.model || "jev-latest", state, questions, answers }) + "\n"); } catch {}
   return { answers, usage: out.usage };
@@ -534,7 +580,15 @@ function treeKey(root: string): string | null {
   const status = raw("status", "--porcelain=v1", "-z", "--untracked-files=all");
   if (head === null || status === null) return null;
   // Content, not mtime: tools rewrite untracked files unchanged (openrig, every 30s). ponytail: files over 1 MB go by mtime.
-  const stat = (e: string) => { try { const p = join(head.split("\n")[0], e.slice(3)), s = lstatSync(p); return s.isFile() && s.size <= 1e6 ? Bun.hash(readFileSync(p)) : `${s.size}:${s.mtimeMs}`; } catch { return "-"; } };
+  const stat = (entry: string) => {
+    try {
+      const p = join(head.split("\n")[0], entry.slice(3));
+      const s = lstatSync(p);
+      return s.isFile() && s.size <= 1e6 ? Bun.hash(readFileSync(p)) : `${s.size}:${s.mtimeMs}`;
+    } catch {
+      return "-";
+    }
+  };
   return head + status + status.split("\0").map(stat).join();
 }
 
@@ -564,7 +618,8 @@ export function projectEvidence(opts: { cwd?: string; checks?: Record<string, Ch
     const wanted = specs.map((s) => s.require?.path.split(".")).filter((p) => p?.[0] === "checks").map((p) => p![1]);
     const names = Object.keys(checks).filter((n) => wanted.includes(n));
     if (!names.length) return out;
-    const dir = join(tmpdir(), `orly-checks-${Bun.hash(root)}`), tree = treeKey(root);
+    const dir = join(tmpdir(), `orly-checks-${Bun.hash(root)}`);
+    const tree = treeKey(root);
     mkdirSync(dir, { recursive: true });
     out.checks = Object.fromEntries(await Promise.all(names.map(async (n) => [n, await checkRecord(n, checks[n], root, dir, tree, opts.budgetMs)])));
     return out;
@@ -576,17 +631,21 @@ export function projectEvidence(opts: { cwd?: string; checks?: Record<string, Ch
  *  Past `budgetMs` it is `{pending: true}` and keeps running; the next stop reads its result. */
 async function checkRecord(n: string, spec: CheckSpec, root: string, dir: string, tree: string | null, budgetMs = Infinity): Promise<Record<string, unknown>> {
   const [keyPath, outPath, exitPath] = ["key", "out", "exit"].map((x) => join(dir, `${Bun.hash(n)}.${x}`));
-  const key = String(Bun.hash(`${spec.live || tree === null ? "live" : tree}\0${spec.command}`)), limit = spec.timeoutMs ?? 60_000;
+  const key = String(Bun.hash(`${spec.live || tree === null ? "live" : tree}\0${spec.command}`));
+  const limit = spec.timeoutMs ?? 60_000;
   let [k, pid, start] = (existsSync(keyPath) ? readFileSync(keyPath, "utf8") : "").split("\n");
   const alive = () => { try { return process.kill(-Number(pid), 0); } catch { return false; } };
   const kill = () => { try { process.kill(-Number(pid), "SIGKILL"); } catch { /* gone */ } };
   const killed = () => { kill(); rmSync(keyPath, { force: true }); return { exit: null, matches: null, out: "[check killed: timeout]" }; }; // rerun next stop
   if (k === key && !existsSync(exitPath) && (!alive() || Date.now() - Number(start) > limit)) return killed();
   if (k !== key) {
-    kill(); rmSync(exitPath, { force: true });
+    kill();
+    rmSync(exitPath, { force: true });
     const proc = Bun.spawn(["sh", "-c", '( eval "$ORLY_CMD" ) >"$ORLY_OUT" 2>&1; echo $? >"$ORLY_EXIT.t" && mv "$ORLY_EXIT.t" "$ORLY_EXIT"'], {
       cwd: root, detached: true, stdio: ["ignore", "ignore", "ignore"], env: { ...process.env, ORLY_CMD: spec.command, ORLY_OUT: outPath, ORLY_EXIT: exitPath } });
-    proc.unref(); [pid, start] = [String(proc.pid), String(Date.now())];
+    proc.unref();
+    pid = String(proc.pid);
+    start = String(Date.now());
     writeFileSync(keyPath, `${key}\n${pid}\n${start}`);
   }
   const until = Math.min(Date.now() + budgetMs, Number(start) + limit);
@@ -746,7 +805,8 @@ export type GateOutcome = { block: boolean; reason?: string; message?: string; n
 export async function gateTurn(input: GateInput): Promise<GateOutcome> {
   const { cwd, sessionId } = input;
   const specFile = loadSpecFile(cwd);
-  const all = specFile?.specs ?? [], specs = all.filter((s) => !s.select); // row specs run through `orly rows` only
+  const all = specFile?.specs ?? [];
+  const specs = all.filter((s) => !s.select); // row specs run through `orly rows` only
   const orlyDir = findOrlyDir(cwd);
   const allow = (note?: string): GateOutcome => (note ? { block: false, note } : { block: false });
 
@@ -847,7 +907,8 @@ export function frontmatter(text: string): { fm: Record<string, any>; body: stri
   const fm: Record<string, any> = {};
   let last: string | undefined;
   for (const line of m[1].split(/\r?\n/)) {
-    const kv = line.match(/^([A-Za-z_][\w-]*):(?:\s+(.*))?$/), item = line.match(/^\s*-\s+(.*)$/);
+    const kv = line.match(/^([A-Za-z_][\w-]*):(?:\s+(.*))?$/);
+    const item = line.match(/^\s*-\s+(.*)$/);
     if (kv) fm[(last = kv[1])] = kv[2]?.trim() ? scalar(kv[2].trim()) : null;
     else if (item && last && (fm[last] === null || Array.isArray(fm[last]))) (fm[last] ??= []).push(scalar(item[1].trim()));
   }
@@ -886,7 +947,8 @@ export function tablesFor(orlyDir: string): Record<string, string> {
 /** Files a glob names; the part before the first wildcard is the scan root, so dot folders match. */
 function files(glob: string, root: string): string[] {
   const abs = glob.startsWith("~/") ? join(homedir(), glob.slice(2)) : isAbsolute(glob) ? glob : join(root, glob);
-  const parts = abs.split("/"), i = parts.findIndex((p) => /[*?[{]/.test(p));
+  const parts = abs.split("/");
+  const i = parts.findIndex((p) => /[*?[{]/.test(p));
   if (i < 0) return existsSync(abs) ? [abs] : [];
   const cwd = parts.slice(0, i).join("/") || "/";
   if (!existsSync(cwd)) return [];
@@ -901,7 +963,9 @@ export function loadTables(tables: Record<string, string>, root: string): Databa
     const insert = db.prepare(`INSERT INTO "${name}" VALUES (?, ?, ?, ?, ?)`);
     db.transaction(() => {
       for (const path of files(glob, root)) {
-        const text = readFileSync(path, "utf8"), mtime = statSync(path).mtimeMs, dir = basename(dirname(path));
+        const text = readFileSync(path, "utf8");
+        const mtime = statSync(path).mtimeMs;
+        const dir = basename(dirname(path));
         const put = (fm: Record<string, any>, body: string | null) => insert.run(path, typeof fm.kind === "string" ? fm.kind : dir, JSON.stringify(fm), body, mtime);
         if (path.endsWith(".jsonl")) {
           for (const o of readJsonl(path)) if (o && typeof o === "object") put(normalizeKeys(o), null);
