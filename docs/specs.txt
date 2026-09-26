@@ -32,6 +32,7 @@ A file is optional `key: value` header lines, a blank line, then the question:
   true        what "met" looks like, replacing the default criterion
   false       what "not met" looks like
   fitted      a note on where the cut came from; not used by the gate
+  select      one SELECT or WITH statement over the tables in .orly/tables: a row spec (ROW SPECS)
 
 An unknown header, a cut outside (0, 1) or a file with no question becomes a spec that can
 never be met, so a typo blocks every turn instead of silently dropping a check. The same
@@ -136,6 +137,31 @@ and the next stop reads its result. timeoutMs still kills it.
 A `require` that cannot be decided (a missing path, a number compared with a string) is
 unmet, never met.
 
+
+ROW SPECS
+---------
+
+A spec with a `select:` header judges records instead of the turn, and never runs at Stop.
+.orly/tables maps a table name to a glob, relative to the project or absolute (~ allowed):
+
+  memo: .kern/memos/*/*.md
+  bus: .swarm/data/bus.jsonl
+
+Each .md file is a row {path, kind, fm, body, mtime}: fm is the frontmatter as JSON (query
+it with fm->>'status'), kind is fm.kind, else the parent folder. Each .jsonl line is a row
+with the object as fm and body null. Files are read, never written. Keys are normalized:
+targets -> target, asked_by -> askers, asked-at -> asked_at, and a value "883 → 900" also
+gives <key>_before and <key>_after as numbers.
+
+  select: SELECT path FROM memo WHERE fm->>'status' = 'claimed'
+  require: rows equals 0
+
+  Is any unit still claimed?
+
+`require: rows <op> N` decides by the row count alone, with no judge call. Without it each
+row is one yes/no question in one judge request, and the spec fails when any row's
+probability is above `cut` (default 0.70). More than 50 rows fail as too broad.
+`orly rows <spec-path-or-id>` prints the rows and answers.
 
 WHEN A SPEC MISFIRES
 --------------------

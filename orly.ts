@@ -9,8 +9,7 @@
 import { existsSync, mkdirSync, readdirSync, lstatSync, readFileSync, realpathSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { basename, dirname, join, parse, relative, resolve, sep } from "node:path"; import { homedir, tmpdir } from "node:os";
 
-export const MAX_RESULTS = 12;
-export const MAX_ACTIONS = 40;
+export const MAX_RESULTS = 12, MAX_ACTIONS = 40;
 
 export type Turn = {
   user_request: string;
@@ -132,17 +131,15 @@ export type Spec = {
   optional?: boolean;
   evidence?: string[];
   fitted?: string;
-  rank?: number;
+  rank?: number; select?: string; // select: a row spec (rows.ts, `orly rows`), never judged at Stop
 };
 export type Goal = { group?: string; text: string };
 export type SpecFile = { goal: string; goals: Goal[]; specs: Spec[]; paths: Record<string, string>; maxRounds?: number };
 export type SpecResult = { spec: Spec; p: number; met: boolean; actual?: unknown };
 
-export const SPEC_PREFIX = "spec:";
-export const TREE = "specs";
-export const EXT = ".spec";
+export const SPEC_PREFIX = "spec:", TREE = "specs", EXT = ".spec";
 const OPS = ["equals", "lte", "gte", "present", "absent", "contains"];
-const KEYS = ["cut", "require", "evidence", "optional", "true", "false", "fitted", "rounds"];
+const KEYS = ["cut", "require", "evidence", "optional", "true", "false", "fitted", "rounds", "select"];
 
 /** Evaluate a `require` against gathered evidence. Undecidable means unmet, never met. */
 export function evaluate(req: Require, evidence: unknown): { met: boolean; actual: unknown } {
@@ -171,6 +168,7 @@ export function validateSpecs(specs: Spec[]): Array<{ id: string; problem: strin
     const r = s.require as any;
     if (r?.op === "malformed") bad(s.instructions);
     else if (r !== undefined && (typeof r?.path !== "string" || !OPS.includes(r?.op))) bad(`require must be {path, op} with op one of ${OPS.join(", ")}`);
+    if (s.select !== undefined && (!/^\s*(select|with)\b/i.test(s.select) || /;\s*\S/.test(s.select) || (s.require && s.require.path !== "rows"))) bad("select must be one SELECT or WITH statement, and a row spec's require is on `rows`"); // ponytail: a `;` inside a string literal reads as a second statement
     if ((s.instructions ?? "").trim().length < 15) bad("instructions too short to judge");
     const vague = s.require ? null : (s.instructions ?? "").replace(/`[^`]*`/g, " ").match(UNCHECKABLE);
     if (vague) bad(`"${vague[0]}" is a judgement about taste, not about recorded evidence — say what would be visible in the actions or output instead`);
@@ -261,6 +259,7 @@ export function parseSpec(id: string, text: string): Spec {
   if (head.optional !== undefined) spec.optional = /^(yes|true)$/i.test(head.optional);
   if (head.true || head.false) spec.criteria = { true: head.true, false: head.false };
   if (head.fitted) spec.fitted = head.fitted;
+  if (head.select) spec.select = head.select;
   return spec;
 }
 
@@ -706,15 +705,15 @@ export type GateOutcome = { block: boolean; reason?: string; message?: string; n
 export async function gateTurn(input: GateInput): Promise<GateOutcome> {
   const { cwd, sessionId } = input;
   const specFile = loadSpecFile(cwd);
-  const specs = specFile?.specs ?? [];
+  const all = specFile?.specs ?? [], specs = all.filter((s) => !s.select); // row specs run through `orly rows` only
   const orlyDir = findOrlyDir(cwd);
   const allow = (note?: string): GateOutcome => (note ? { block: false, note } : { block: false });
 
-  if (orlyDir && specs.length) {
+  if (orlyDir && all.length) {
     const basePath = join(orlyDir, "baseline.json");
     let baseline: any = null;
     try { baseline = JSON.parse(readFileSync(basePath, "utf8")); } catch { /* first run: disk becomes baseline */ }
-    const { violations, nextBaseline } = checkBaseline(baseline, { goal: specFile!.goal, specs, checks: loadConfig(cwd).checks });
+    const { violations, nextBaseline } = checkBaseline(baseline, { goal: specFile!.goal, specs: all, checks: loadConfig(cwd).checks });
     if (violations.length) return { block: true, reason: refusal(violations) };
     write(basePath, JSON.stringify(nextBaseline, null, 2));
   }
@@ -764,7 +763,7 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
 export function sessionBrief(cwd: string, cli?: string): string | null {
   if (!findOrlyDir(cwd)) return null;
   const file = loadSpecFile(cwd);
-  const specs = [...(file?.specs ?? [])].sort(byRank);
+  const specs = (file?.specs ?? []).filter((s) => !s.select).sort(byRank);
   return [
     "# orly? — the completion gate is active",
     "",
@@ -789,6 +788,7 @@ orly gate          same input through the full gate a hook runs (baseline, round
 orly goal [group] "<text>"   append a goal to .orly/goal; specs under .orly/specs/<group>/ serve it
 orly tasks         the specs, most important goal first
 orly specs         validate every spec file; names each rejected one, exit 1 if any
+orly rows <spec>   run a row spec (select: over .orly/tables) and print its rows and answers; never gates
 
 env: TYPESAFE_API_KEY or keyCommand in .orly/config.json or ~/.orly/config.json (ORLY_KEY_TIMEOUT_MS), TYPESAFE_BASE_URL, ORLY_MODEL, ORLY_TIMEOUT_MS, ORLY_CHECK_BUDGET_MS,
      ORLY_HAZARD, ORLY_SPEC_MET, ORLY_MIN_COVERAGE, ORLY_MIN_CONFIDENCE, ORLY_MIN_ACTION_P`;
@@ -840,6 +840,7 @@ if (import.meta.main) {
     process.exit(problems.length ? 1 : 0);
   }
 
+  if (command === "rows") process.exit(await (await import("./rows.ts")).rowsCommand(args[0], cwd));
   if (command !== "judge" && command !== "gate") fail(`unknown command "${command}" — try: orly help`);
 
   let input: { messages?: any[]; turn?: Turn };

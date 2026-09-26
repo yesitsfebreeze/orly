@@ -120,6 +120,7 @@ orly gate --session my-session < turn.json
 | `orly goal [group] "<text>"` | appends a goal to `.orly/goal`, never overwrites |
 | `orly tasks` | the specs, most important goal first |
 | `orly specs` | validates every spec file and check name; exit 1 if any is rejected |
+| `orly rows <spec>` | runs a row spec (`select:` over `.orly/tables`) and prints its rows and answers; never gates |
 | `orly help` | the command list and environment variables |
 
 Exit codes for `judge` and `gate`: `0` the turn may end, `2` it may not, `1` orly could not
