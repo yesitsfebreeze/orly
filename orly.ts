@@ -1636,23 +1636,24 @@ function freshRust(s: Swarm, source: string) {
   return env;
 }
 
-async function laneTest(s: Swarm, manifestArg: string, exact: string, bin?: string): Promise<number> {
+async function laneTest(s: Swarm, manifestArg: string, exact: string, bin?: string, filter = false): Promise<number> {
   const manifest = resolve(s.root, manifestArg);
   if (basename(manifest) !== "Cargo.toml" || !existsSync(manifest)) refuse(`not a Cargo manifest: ${manifest}`);
-  if (!exact || exact.startsWith("-")) refuse("name one exact Rust test");
+  if (!exact || exact.startsWith("-")) refuse(filter ? "name a Rust test filter" : "name one exact Rust test");
   const source = dirname(manifest);
   const wanted = join(s.data, "land.wanted");
   return withLock(join(s.data, "cargo-provenance.lock"), async () => {
     const env = freshRust(s, source);
-    const args = ["cargo", "test", "--manifest-path", manifest, ...(bin ? ["--bin", bin] : ["--lib"]), exact, "--", "--exact"];
+    const args = ["cargo", "test", "--manifest-path", manifest, ...(bin ? ["--bin", bin] : ["--lib"]), exact, "--", ...(filter ? [] : ["--exact"])];
     console.error(`targeted test: ${manifest} ${exact}; target=${env.CARGO_TARGET_DIR}`);
     const child = Bun.spawn(args, { cwd: source, env, stdout: "pipe", stderr: "pipe" });
     const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     process.stdout.write(out);
     process.stderr.write(err);
     if (code) return code;
-    if (!/^test result: ok\. 1 passed; 0 failed; 0 ignored;/m.test(out)) {
-      console.error(`refused: expected one executed test: ${exact}`);
+    const summary = out.match(/^test result: ok\. ([0-9]+) passed; 0 failed; 0 ignored;/m);
+    if (!summary || (filter ? Number(summary[1]) < 1 : Number(summary[1]) !== 1)) {
+      console.error(`refused: expected ${filter ? "nonzero executed tests without failures or ignores" : "one executed test"}: ${exact}`);
       return 1;
     }
     return 0;
@@ -1760,7 +1761,7 @@ orly lane get <name> <path...>             copy lane/<name>'s version of each pa
 orly lane put <name> -m <msg> [<path...>]  commit those copies onto lane/<name>
 orly lane sync <name>                      merge main into lane/<name>
 orly lane check <name> | gate <rev>        the gate (swarm.md's gate checks) on lane/<name> or <rev>
-orly lane test <manifest> <exact-test> [--bin <name>]  targeted test with shared source provenance
+orly lane test <manifest> <test> [--filter] [--bin <name>]  targeted test with shared source provenance
 orly lane snapshot <manifest> <destination> --bin <name>  build and copy under source lock
 orly lane land <name> <slug> [<sha>]       one land at a time: merge, gate, move main, push
 orly lane ls [<name>]                      every lane with ahead/behind main, or one lane's commits
@@ -1837,8 +1838,15 @@ async function laneCommand(s: Swarm, [verb, ...a]: string[]): Promise<number> {
       return laneSnapshot(s, a[0], a[1], a[3]);
     }
     case "test": {
-      if (a.length !== 2 && !(a.length === 4 && a[2] === "--bin")) usage("orly lane test <manifest> <exact-test> [--bin <name>]");
-      return laneTest(s, a[0], a[1], a[3]);
+      const help = "orly lane test <manifest> <test> [--filter] [--bin <name>]";
+      if (a.length < 2) usage(help);
+      let filter = false, bin: string | undefined;
+      for (let i = 2; i < a.length; i++) {
+        if (a[i] === "--filter" && !filter) filter = true;
+        else if (a[i] === "--bin" && bin === undefined && a[i + 1] && !a[i + 1].startsWith("-")) bin = a[++i];
+        else usage(help);
+      }
+      return laneTest(s, a[0], a[1], bin, filter);
     }
     case "land": need(2, "land <name> <slug> [<sha>]"); await withLock(join(s.data, "land.lock"), () => laneLand(s, a[0], a[1], a[2])); return 0;
     case "ls": for (const l of laneList(s, a[0])) console.log(l); return 0;

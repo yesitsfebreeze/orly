@@ -107,3 +107,32 @@ test("a build snapshot copies the specified executable with revision and hash an
   expect(again.err).toContain("already exists");
   expect(orly(root, "lane", "snapshot", join(root, "Cargo.toml"), destination + "-bad", "--bin", "missing").code).not.toBe(0);
 }, 120000);
+
+test("targeted filters execute the entire module and reject empty ignored or failing selections", () => {
+  const { root } = repo();
+  const source = join(root, "src/lib.rs");
+  const goodSource = "mod memory { #[test] fn first() {} #[test] fn second() {} }\n";
+  writeFileSync(source, goodSource);
+  const args = ["lane", "test", join(root, "Cargo.toml")];
+  const good = orly(root, ...args, "memory", "--filter");
+  expect(good.code).toBe(0);
+  expect(good.out).toContain("2 passed; 0 failed; 0 ignored;");
+  expect(orly(root, ...args, "memory").code).not.toBe(0);
+  expect(orly(root, ...args, "absent", "--filter").code).not.toBe(0);
+  writeFileSync(source, "mod memory { #[test] fn first() {} #[test] #[ignore] fn second() {} }\n");
+  expect(orly(root, ...args, "memory", "--filter").code).not.toBe(0);
+  writeFileSync(source, "mod memory { #[test] fn first() {} #[test] fn second() { panic!(\"negative control\"); } }\n");
+  expect(orly(root, ...args, "memory", "--filter").code).not.toBe(0);
+  writeFileSync(source, goodSource);
+  utimesSync(source, new Date(0), new Date(0));
+  const restored = orly(root, ...args, "memory", "--filter");
+  expect(restored.code).toBe(0);
+  expect(restored.out).toContain("2 passed; 0 failed; 0 ignored;");
+  writeFileSync(join(root, "src/main.rs"), "fn main() {} mod memory { #[test] fn first() {} #[test] fn second() {} }\n");
+  const binary = orly(root, ...args, "memory", "--filter", "--bin", "orly_provenance_probe");
+  expect(binary.code).toBe(0);
+  expect(binary.out).toContain("2 passed; 0 failed; 0 ignored;");
+  expect(orly(root, ...args, "memory", "--bin", "orly_provenance_probe", "--filter").code).toBe(0);
+  expect(orly(root, ...args, "memory", "--filter", "--filter").code).not.toBe(0);
+  expect(orly(root, ...args, "memory", "--unknown").code).not.toBe(0);
+}, 120000);
