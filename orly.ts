@@ -595,7 +595,11 @@ export async function judge(turn: Turn, opts: JudgeOptions): Promise<Judgment> {
 }
 
 // ---------------------------------------------------------------- evidence the agent does not control
-export type CheckSpec = { command: string; countPattern?: string; timeoutMs?: number; live?: boolean };
+export type CheckSpec = { command: string; countPattern?: string; timeoutMs?: number; live?: boolean; skipOnly?: string };
+
+/** A lane gate skips a check whose `skipOnly` regex matches every path the rev changes against main (a memo-only lane builds nothing). */
+export const gateSkips = (spec: CheckSpec, changed: string[]): boolean =>
+  !!spec.skipOnly && changed.every((path) => new RegExp(spec.skipOnly!).test(path));
 
 /** HEAD, `git status`, and each listed file's content hash; null outside git or before the first commit. */
 function treeKey(root: string): string | null {
@@ -1368,6 +1372,8 @@ export function swarmSeat(cwd: string, transcriptPath?: string): string | null {
       if (agent) break;
     }
   } catch { /* no transcript */ }
+  // No agentName: the host session, which reserves its teammates' names under its own pid and asks the human for them.
+  if (!agent) return null;
   const me = sessionPid();
   return holders.find((h) => h.name === agent)?.name ?? holders.find((h) => h.pid === me)?.name ?? null;
 }
@@ -1548,7 +1554,15 @@ async function laneGate(s: Swarm, rev: string, land = false): Promise<boolean> {
     mkdirSync(runs, { recursive: true });
     let line = sha;
     let green = true;
+    const base = gitOut(s.root, "merge-base", s.main, rev);
+    const changed = base ? (gitOut(s.root, "diff", "--name-only", base, rev) ?? "").split("\n").filter(Boolean) : null;
     for (const [name, check] of Object.entries(checks)) {
+      if (changed && gateSkips(check, changed)) { line += ` ${name}=skip`; continue; }
+      // build.lock is ours, so a check still recorded here belongs to a gate that died mid-run: kill it, run fresh
+      const stale = join(runs, `${Bun.hash(name)}.key`);
+      const [, orphan] = existsSync(stale) ? readFileSync(stale, "utf8").split("\n") : [];
+      if (Number(orphan) > 0) try { process.kill(-Number(orphan), "SIGKILL"); } catch { /* gone */ }
+      rmSync(stale, { force: true });
       const record = await checkRecord(name, { ...check, timeoutMs: check.timeoutMs ?? 600_000 }, exportDir, runs, null);
       const ok = record.exit === 0;
       if (!ok) {

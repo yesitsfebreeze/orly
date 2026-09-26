@@ -134,6 +134,25 @@ test("lane: open, put, sync, a land through the gate, and a bounce on a red gate
   expect(lane("ls").out).toMatch(/work-2\s+ahead 1 behind 0/);
 });
 
+test("lane gate: a check with skipOnly is skipped when every changed path matches, run otherwise", () => {
+  const root = repo(), lane = (...a: string[]) => orly(root, ["lane", ...a]);
+  writeFileSync(join(root, ".orly/config.json"), JSON.stringify({ checks: { nobad: { command: "test ! -f bad.txt" }, build: { command: "false", skipOnly: "^memos/" } } }));
+  writeFileSync(join(root, ".orly/swarm/swarm.md"), "---\nmain: main\ngate: [nobad, build]\n---\n");
+  git(root, "commit", "-qam", "build check");
+  const m = lane("open", "memo-1").out;
+  mkdirSync(join(m, "memos"), { recursive: true });
+  writeFileSync(join(m, "memos/b.md"), "---\nstatus: done\n---\n");
+  lane("put", "memo-1", "-m", "memo only", "memos/b.md");
+  const memo = lane("check", "memo-1");
+  expect(memo.out).toContain("nobad=0 build=skip");
+  expect(memo.code).toBe(0);
+  writeFileSync(join(lane("open", "code-1").out, "a.txt"), "changed\n");
+  lane("put", "code-1", "-m", "code", "a.txt");
+  const code = lane("check", "code-1");
+  expect(code.out).toContain("build=1");
+  expect(code.code).toBe(1);
+});
+
 test("a gate name with no check in config.json is refused", () => {
   const root = repo();
   writeFileSync(join(root, ".orly/swarm/swarm.md"), "---\ngate: [nobad, missing]\n---\n");
@@ -166,16 +185,18 @@ function askGate(root: string, pid: number, transcript?: string) {
   return out ? JSON.parse(out).hookSpecificOutput : null;
 }
 
-test("ask gate: every swarm seat is denied AskUserQuestion, a session outside the swarm is not", () => {
+test("ask gate: every swarm seat is denied AskUserQuestion, the host and a session outside the swarm are not", () => {
   const root = repo(), host = livePid(), stranger = livePid();
   expect(names(root, host)).toEqual(["director", "work-1"]);
-  const denied = askGate(root, host);
-  expect(denied.permissionDecision).toBe("deny");
-  expect(denied.permissionDecisionReason).toContain("questions/<slug>.md");
+  // The host reserves its teammates' names under its own pid, but it is the one that asks the human.
+  expect(askGate(root, host)).toBeNull();
   // A teammate is known by its transcript's agentName, whatever pid the hook resolves.
   const transcript = join(root, "t.jsonl");
   writeFileSync(transcript, JSON.stringify({ type: "user", agentName: "work-1" }) + "\n");
-  expect(askGate(root, stranger, transcript)?.permissionDecisionReason).toStartWith("work-1: ");
+  const denied = askGate(root, stranger, transcript);
+  expect(denied.permissionDecision).toBe("deny");
+  expect(denied.permissionDecisionReason).toContain("questions/<slug>.md");
+  expect(denied.permissionDecisionReason).toStartWith("work-1: ");
   expect(askGate(root, stranger)).toBeNull();
   expect(askGate(tmpdir(), host)).toBeNull();
 });

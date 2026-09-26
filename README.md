@@ -80,6 +80,18 @@ Point Stop, SessionStart, SessionEnd and PreToolUse at the adapter:
 Codex edits files through `apply_patch`, which the pre-edit guard cannot read; the gate's
 baseline check catches a weakened spec at the end of the turn instead.
 
+Codex reads the same open Agent Skills format as Claude Code, from `.agents/skills/`
+(`~/.agents/skills/` for every project, `.codex/skills/` on older builds) instead of a
+plugin manifest. Symlink the shipped skill in:
+
+```sh
+mkdir -p ~/.agents/skills && ln -s ~/orly/skills/orly ~/.agents/skills/orly
+```
+
+*Setting a goal* and *When something went wrong* run as written. *Joining the swarm* calls
+Claude Code's own tools (`Agent`, `ListAgents`, `PushNotification`) to seat teammates, so it
+does not apply under Codex.
+
 ### Cursor
 
 Copy `install/cursor/hooks.json` to `.cursor/hooks.json` (or `~/.cursor/hooks.json`). A block
