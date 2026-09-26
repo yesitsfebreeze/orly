@@ -153,6 +153,25 @@ test("lane gate: a check with skipOnly is skipped when every changed path matche
   expect(code.code).toBe(1);
 });
 
+test("lane land refuses when main moved while the gate ran, and when main diverged from origin/main", () => {
+  const root = repo(), lane = (...a: string[]) => orly(root, ["lane", ...a]);
+  const sneak = "git update-ref refs/heads/main $(git commit-tree -p refs/heads/main -m sneak 'refs/heads/main^{tree}')";
+  writeFileSync(join(root, ".orly/config.json"), JSON.stringify({ checks: { nobad: { command: sneak } } }));
+  git(root, "commit", "-qam", "sneaky gate");
+  writeFileSync(join(lane("open", "work-1").out, "b.txt"), "two\n");
+  lane("put", "work-1", "-m", "add b", "b.txt");
+  const before = git(root, "rev-parse", "--short", "main");
+  const moved = lane("land", "work-1", "s1");
+  expect(moved.code).toBe(1);
+  expect(moved.err).toContain(`main moved from ${before}`);
+  expect(git(root, "log", "-1", "--format=%s", "main")).toBe("sneak");
+  git(root, "reset", "-q", "--hard", "main");
+  git(root, "update-ref", "refs/remotes/origin/main", git(root, "commit-tree", "-p", "main~1", "-m", "elsewhere", "main^{tree}"));
+  const split = lane("land", "work-1", "s1");
+  expect(split.code).toBe(1);
+  expect(split.err).toContain("main has diverged from origin/main");
+});
+
 test("a gate name with no check in config.json is refused", () => {
   const root = repo();
   writeFileSync(join(root, ".orly/swarm/swarm.md"), "---\ngate: [nobad, missing]\n---\n");

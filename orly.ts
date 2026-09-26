@@ -1592,6 +1592,9 @@ async function laneLand(s: Swarm, name: string, slug: string, at?: string) {
   if (!git(s.root, "diff", "--quiet", "HEAD", "--").ok) refuse("the main tree has uncommitted changes; commit them first");
   if (existsSync(join(workDir(s, name), ".merge"))) refuse(`${name} has an unfinished sync merge; not landed`);
   const main = gitOut(s.root, "rev-parse", s.main)!;
+  // a rebasing pull flattens land merges and splits main from what was published; landing on it only fails the push
+  const published = gitOut(s.root, "rev-parse", "--verify", "-q", `origin/${s.main}`);
+  if (published && !git(s.root, "merge-base", "--is-ancestor", published, main).ok) refuse(`${s.main} has diverged from origin/${s.main}; merge origin/${s.main} into it (never rebase, never force); not landed`);
   let lane = gitOut(s.root, "rev-parse", "--verify", "-q", laneRef(name)) ?? refuse(`no lane/${name}`);
   // the sha the land request named: commits the sitter put after it stay on the lane for its next land
   if (at) {
@@ -1610,6 +1613,8 @@ async function laneLand(s: Swarm, name: string, slug: string, at?: string) {
   const tree = gitOut(s.root, "rev-parse", `${landing}^{tree}`)!;
   if (readLines(join(s.data, "green")).includes(tree)) console.log(`gate: tree of ${sha} already green`);
   else if (!(await laneGate(s, landing, true))) refuse(`${name} at ${sha} is red; not landed`);
+  const now = gitOut(s.root, "rev-parse", s.main)!;
+  if (now !== main) refuse(`${s.main} moved from ${main.slice(0, 7)} to ${now.slice(0, 7)} while ${sha} was gated; only lane land writes ${s.main}; not landed`);
   const moved = git(s.root, "merge", "-q", "--ff-only", landing);
   if (!moved.ok) refuse(moved.err.trim());
   git(s.root, "tag", "-f", "approved", sha);
