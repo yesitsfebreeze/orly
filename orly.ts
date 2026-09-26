@@ -7,7 +7,7 @@
  * Everything fails open; bad specs fail closed.
  */
 import { Database } from "bun:sqlite";
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
 
@@ -1553,7 +1553,13 @@ async function laneGate(s: Swarm, rev: string, land = false): Promise<boolean> {
       const ok = record.exit === 0;
       if (!ok) {
         green = false;
-        for (const l of String(record.out ?? "").trimEnd().split("\n").slice(-6)) console.log(`${name}: ${l}`);
+        // the next gate reuses this check's output file, so a red run keeps its own copy and names what failed
+        const out = join(runs, `${Bun.hash(name)}.out`), log = join(runs, `${sha}-${name}.log`);
+        if (existsSync(out)) copyFileSync(out, log);
+        const text = existsSync(log) ? readFileSync(log, "utf8") : String(record.out ?? "");
+        const failed = text.split("\n").filter((l) => /panicked at|^test .* FAILED$|^error(\[|:)/.test(l)).slice(0, 10);
+        for (const l of [...failed, ...text.trimEnd().split("\n").slice(-6)]) console.log(`${name}: ${l}`);
+        if (existsSync(log)) console.log(`${name}: full output ${log}`);
       }
       line += ` ${name}=${ok ? 0 : 1}`;
     }
