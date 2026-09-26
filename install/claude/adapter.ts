@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 /** Claude Code hook, dispatched on `hook_event_name`: Stop -> gate, SessionStart -> brief,
- * PreToolUse -> edit guard, SessionEnd -> temp cleanup. Fails open: every error lets the agent stop. */
+ * PreToolUse -> edit guard and the swarm's ask gate, SessionEnd -> temp cleanup. Fails open: every error lets the agent stop. */
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { DEFAULT_MAX_ROUNDS, DEFAULTS, endSession, gateTurn, guardEdit, loadSpecFile, messagesFrom, normalizeLastTurn, plannedEdit, readRounds, sessionBrief, unmet, type Judgment } from "../../orly.ts";
+import { ASK_GATE_REASON, DEFAULT_MAX_ROUNDS, DEFAULTS, endSession, gateTurn, guardEdit, loadSpecFile, messagesFrom, normalizeLastTurn, plannedEdit, readRounds, sessionBrief, swarmSeat, unmet, type Judgment } from "../../orly.ts";
 
 const emit = (json?: unknown): never => {
   if (json) console.log(JSON.stringify(json));
@@ -56,11 +56,20 @@ if (event === "SessionStart") {
   emit(brief && { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: brief } });
 }
 
+const deny = (reason: string | null) =>
+  emit(reason && { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
+
+// No swarm seat blocks on the human, the director included (orchi CONTRACT §10).
+if (event === "PreToolUse" && input.tool_name === "AskUserQuestion") {
+  const seat = swarmSeat(cwd, input.transcript_path);
+  deny(seat && `${seat}: ${ASK_GATE_REASON}`);
+}
+
 if (event === "PreToolUse") {
   const edit = plannedEdit(String(input.tool_name ?? ""), input.tool_input);
   const target = input.tool_input?.file_path;
   const reason = edit && typeof target === "string" ? guardEdit(cwd, target, edit) : null;
-  emit(reason && { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
+  deny(reason);
 }
 
 if (event !== "Stop" && event !== "SubagentStop") emit();

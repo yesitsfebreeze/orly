@@ -936,12 +936,12 @@ export function parseTables(text: string): Record<string, string> {
   return out;
 }
 
-/** .orly/tables, over the swarm's own tables when .orly/swarm exists (seat, bus, claims, sitters); .orly/tables wins. */
+/** .orly/tables, over the swarm's own tables when .orly/swarm exists (seat, questions, bus, claims, sitters); .orly/tables wins. */
 export function tablesFor(orlyDir: string): Record<string, string> {
   const own = existsSync(join(orlyDir, "tables")) ? parseTables(readFileSync(join(orlyDir, "tables"), "utf8")) : {};
   if (!existsSync(join(orlyDir, "swarm"))) return own;
   const d = ".orly/swarm/data";
-  return { seat: ".orly/swarm/seats/*.md", bus: `${d}/bus.jsonl`, claims: `${d}/claims.jsonl`, sitters: `${d}/sitters.jsonl`, ...own };
+  return { seat: ".orly/swarm/seats/*.md", questions: ".orly/swarm/questions/*.md", bus: `${d}/bus.jsonl`, claims: `${d}/claims.jsonl`, sitters: `${d}/sitters.jsonl`, ...own };
 }
 
 /** Files a glob names; the part before the first wildcard is the scan root, so dot folders match. */
@@ -1058,7 +1058,7 @@ type Claim = { ts: string; owner: string; slug: string; pid: number; files: stri
 type SitterName = { ts: string; name: string; seat: string; pid: number };
 export type Sitter = { name: string; seat: string; path: string; specs?: string; rows: number };
 
-const VERBS = ["claimed", "released", "land", "landed", "bounced", "seated", "ask", "answered", "finding"];
+const VERBS = ["claimed", "released", "land", "landed", "bounced", "seated", "ask", "answered", "finding", "question"];
 const NAME = /^[a-z0-9][a-z0-9-]*$/;
 const HELPERS = new Set(["sh", "bash", "zsh", "dash", "fish", "nu", "just", "env", "timeout", "perl", "sudo", "bun"]);
 const LEASE_HEARTBEAT_S = 120;
@@ -1315,6 +1315,32 @@ export async function seatingPlan(s: Swarm): Promise<Sitter[]> {
     if (rows) plan.push({ name: await sit(s, seat), seat, path, specs: fm.specs, rows });
   }
   return plan;
+}
+
+/** Why a swarm seat may not call AskUserQuestion; the hook's deny reason. */
+export const ASK_GATE_REASON = "swarm seats never block on the human: write .orly/swarm/questions/<slug>.md (question, options, status: open), post `question <slug>` on the bus, keep working";
+
+/** The swarm seat this session sits in, or null outside any swarm. A seat is named by the transcript's
+ *  agentName (a teammate) or by this session's pid, when either holds the director lease or a sitter name. */
+export function swarmSeat(cwd: string, transcriptPath?: string): string | null {
+  const common = gitOut(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  const root = common ? dirname(common) : projectRoot(cwd);
+  const data = root && join(root, ".orly", "swarm", "data");
+  if (!data || !existsSync(data)) return null;
+  const holders = readJsonl<SitterName>(join(data, "sitters.jsonl")).filter((r) => alive(r.pid));
+  try {
+    const director = JSON.parse(readFileSync(join(data, "lease.director"), "utf8"));
+    if (alive(director.pid)) holders.push({ ts: "", name: "director", seat: "director", pid: director.pid });
+  } catch { /* no director */ }
+  let agent: string | undefined;
+  try {
+    for (const line of readFileSync(transcriptPath ?? "", "utf8").split("\n").slice(0, 50)) {
+      try { agent = JSON.parse(line).agentName; } catch { /* a torn line */ }
+      if (agent) break;
+    }
+  } catch { /* no transcript */ }
+  const me = sessionPid();
+  return holders.find((h) => h.name === agent)?.name ?? holders.find((h) => h.pid === me)?.name ?? null;
 }
 
 /** A sitter's cache, `data/cache/<me>.md`: a State it replaces and a Log it appends to (the last 256 kept). */

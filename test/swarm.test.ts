@@ -129,3 +129,37 @@ test("a gate name with no check in config.json is refused", () => {
 });
 
 function existsIn(root: string, p: string) { return Bun.file(join(root, p)).size > 0; }
+
+/** The claude adapter's PreToolUse on AskUserQuestion, as session `pid`; its JSON reply, or null for allow. */
+function askGate(root: string, pid: number, transcript?: string) {
+  const r = Bun.spawnSync(["bun", join(import.meta.dir, "..", "install", "claude", "adapter.ts")], {
+    cwd: root, env: { ...process.env, ORLY_PID: String(pid) },
+    stdin: Buffer.from(JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "AskUserQuestion", cwd: root, session_id: "t", transcript_path: transcript })),
+  });
+  const out = r.stdout.toString().trim();
+  return out ? JSON.parse(out).hookSpecificOutput : null;
+}
+
+test("ask gate: every swarm seat is denied AskUserQuestion, a session outside the swarm is not", () => {
+  const root = repo(), host = livePid(), stranger = livePid();
+  expect(names(root, host)).toEqual(["director", "work-1"]);
+  const denied = askGate(root, host);
+  expect(denied.permissionDecision).toBe("deny");
+  expect(denied.permissionDecisionReason).toContain("questions/<slug>.md");
+  // A teammate is known by its transcript's agentName, whatever pid the hook resolves.
+  const transcript = join(root, "t.jsonl");
+  writeFileSync(transcript, JSON.stringify({ type: "user", agentName: "work-1" }) + "\n");
+  expect(askGate(root, stranger, transcript)?.permissionDecisionReason).toStartWith("work-1: ");
+  expect(askGate(root, stranger)).toBeNull();
+  expect(askGate(tmpdir(), host)).toBeNull();
+});
+
+test("the questions table loads .orly/swarm/questions/*.md for row specs", async () => {
+  const { loadTables, tablesFor } = await import("../orly.ts");
+  const root = repo();
+  mkdirSync(join(root, ".orly/swarm/questions"));
+  writeFileSync(join(root, ".orly/swarm/questions/merge-cut.md"), "---\nstatus: open\noptions: [now, later]\n---\nCut over now?\n");
+  const rows = loadTables(tablesFor(join(root, ".orly")), root)
+    .query("SELECT fm->>'status' AS status, body FROM questions").all();
+  expect(rows).toEqual([{ status: "open", body: "Cut over now?\n" }]);
+});
