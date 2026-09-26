@@ -57,6 +57,17 @@ test("select must be one read-only statement", async () => {
   }
 });
 
+test("select: a `;` in a literal or comment, or a trailing one, is still one statement", async () => {
+  const dir = project();
+  for (const ok of ["SELECT path FROM memo WHERE body LIKE '%a;b%' AND 'it''s;' <> \"x;y\"", "SELECT path FROM memo;  ", "SELECT path FROM memo /* a; b */ -- c; d"]) {
+    const r = await runRows(spec(`select: ${ok}\nrequire: rows equals 0`), dir, never);
+    expect(r.reason ?? "").not.toContain("select must be");
+  }
+  for (const bad of ["SELECT 1; SELECT 2", "SELECT 1; DROP TABLE x", "SELECT ';'; DROP TABLE x"]) {
+    expect((await runRows(spec(`select: ${bad}`), dir, never)).reason).toContain("select must be");
+  }
+});
+
 test("require: rows decides by count alone, without the judge", async () => {
   const dir = project();
   expect((await runRows(spec("select: SELECT path FROM memo WHERE fm->>'status' = 'claimed'\nrequire: rows equals 0"), dir, never)).met).toBe(false);

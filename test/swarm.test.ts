@@ -61,6 +61,20 @@ test("a filled query that is not one SELECT fails the plan", () => {
   expect(r.err).toContain("seat idle: filled must be");
 });
 
+test("filled: a `;` in a literal or comment, or a trailing one, is one SELECT; two statements are refused", () => {
+  const root = repo(), seat = join(root, ".orly/swarm/seats/idle.md");
+  for (const ok of ["SELECT path FROM memo WHERE path LIKE '%a;b%'", "SELECT path FROM memo WHERE 0;  ", "SELECT path FROM memo WHERE 0 /* a; b */ -- c; d"]) {
+    writeFileSync(seat, `---\nfilled: ${ok}\n---\n`);
+    expect(orly(root, ["swarm"]).code).toBe(0);
+  }
+  for (const bad of ["SELECT 1; SELECT 2", "SELECT 1; DROP TABLE x"]) {
+    writeFileSync(seat, `---\nfilled: ${bad}\n---\n`);
+    const r = orly(root, ["swarm"]);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("seat idle: filled must be");
+  }
+});
+
 test("bus: typed lines, a claim conflict, pending lands, and reaping a gone session's claims", () => {
   const root = repo(), gone = deadPid(), sha = git(root, "rev-parse", "--short", "HEAD");
   expect(orly(root, ["bus", "claim", "work-1", "s1", "a.txt"]).code).toBe(0);

@@ -228,6 +228,30 @@ export function evaluate(req: Require, evidence: unknown): { met: boolean; actua
 
 const UNCHECKABLE = /\b(clean|elegant|readable|maintainable|idiomatic|well[- ](structured|designed|written)|good|nice|proper|appropriate|robust|scalable|performant|secure enough|best practice)\b/i;
 
+/** True when `sql` is one SELECT or WITH statement: a `;` inside a '…' or "…" literal
+ *  (doubled quotes escape) or a -- or block comment is text, and only whitespace or comments may follow a top-level `;`. */
+export function oneSelect(sql: string): boolean {
+  if (!/^\s*(select|with)\b/i.test(sql)) return false;
+  let ended = false;
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i];
+    if (c === "'" || c === '"') {
+      for (i++; i < sql.length && !(sql[i] === c && sql[i + 1] !== c); i++) if (sql[i] === c) i++;
+    } else if (c === "-" && sql[i + 1] === "-") {
+      while (i < sql.length && sql[i] !== "\n") i++;
+      continue;
+    } else if (c === "/" && sql[i + 1] === "*") {
+      i = sql.indexOf("*/", i + 2);
+      if (i < 0) return !ended;
+      i++;
+      continue;
+    } else if (c === ";") { ended = true; continue; }
+    else if (/\s/.test(c)) continue;
+    if (ended) return false;
+  }
+  return true;
+}
+
 /** Reject specs that cannot be judged before they start returning numbers. */
 export function validateSpecs(specs: Spec[]): Array<{ id: string; problem: string }> {
   const out: Array<{ id: string; problem: string }> = [];
@@ -240,7 +264,7 @@ export function validateSpecs(specs: Spec[]): Array<{ id: string; problem: strin
     const r = s.require as any;
     if (r?.op === "malformed") bad(s.instructions);
     else if (r !== undefined && (typeof r?.path !== "string" || !OPS.includes(r?.op))) bad(`require must be {path, op} with op one of ${OPS.join(", ")}`);
-    if (s.select !== undefined && (!/^\s*(select|with)\b/i.test(s.select) || /;\s*\S/.test(s.select) || (s.require && s.require.path !== "rows"))) bad("select must be one SELECT or WITH statement, and a row spec's require is on `rows`"); // ponytail: a `;` inside a string literal reads as a second statement
+    if (s.select !== undefined && (!oneSelect(s.select) || (s.require && s.require.path !== "rows"))) bad("select must be one SELECT or WITH statement, and a row spec's require is on `rows`");
     if ((s.instructions ?? "").trim().length < 15) bad("instructions too short to judge");
     const vague = s.require ? null : (s.instructions ?? "").replace(/`[^`]*`/g, " ").match(UNCHECKABLE);
     if (vague) bad(`"${vague[0]}" is a judgement about taste, not about recorded evidence — say what would be visible in the actions or output instead`);
@@ -1294,7 +1318,7 @@ async function sit(s: Swarm, seat: string): Promise<string> {
 /** How many rows a seat's `filled` returns: `always` is one; anything but one SELECT or WITH is an error. */
 function filledRows(db: Database, seat: string, filled: unknown): number {
   if (filled === "always") return 1;
-  if (typeof filled !== "string" || !/^\s*(select|with)\b/i.test(filled) || /;\s*\S/.test(filled)) refuse(`seat ${seat}: filled must be \`always\` or one SELECT`);
+  if (typeof filled !== "string" || !oneSelect(filled)) refuse(`seat ${seat}: filled must be \`always\` or one SELECT`);
   try { return db.query(filled as string).all().length; } catch (e: any) { return refuse(`seat ${seat}: filled failed: ${e?.message ?? e}`); }
 }
 
