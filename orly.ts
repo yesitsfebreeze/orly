@@ -1111,8 +1111,13 @@ function sessionPid(): number {
 
 /** An exclusive lock file that holds its owner's pid, for the length of `fn`. A dead owner's lock is taken over.
  *  ponytail: two waiters that both find the owner dead can both take over; a real flock if that ever bites. */
-async function withLock<T>(path: string, fn: () => T | Promise<T>): Promise<T> {
+async function withLock<T>(path: string, fn: () => T | Promise<T>, yieldTo?: string): Promise<T> {
   for (;;) {
+    if (yieldTo && existsSync(yieldTo)) {
+      const first = Number(readFileSync(yieldTo, "utf8") || 0);
+      if (first > 0 && alive(first)) { await Bun.sleep(20); continue; }
+      rmSync(yieldTo, { force: true });
+    }
     try { writeFileSync(path, String(process.pid), { flag: "wx" }); break; } catch (e: any) { if (e?.code !== "EEXIST") throw e; }
     let owner = 0;
     try { owner = Number(readFileSync(path, "utf8")); } catch { continue; }
@@ -1521,10 +1526,14 @@ function laneSync(s: Swarm, name: string): number {
 /** The gate on `rev`: every gate check in one export of the revision, one build at a time. Prints `<sha> name=0 …`
  *  and a red check's last lines; a green tree is remembered in data/green.
  *  ponytail: one export dir and one lock serialize every build; per-sitter export dirs if waits hurt. */
-async function laneGate(s: Swarm, rev: string): Promise<boolean> {
+async function laneGate(s: Swarm, rev: string, land = false): Promise<boolean> {
   const checks = gateChecks(s);
   const sha = gitOut(s.root, "rev-parse", "--short", "--verify", `${rev}^{commit}`) ?? refuse(`'${rev}' is not a commit`);
+  // a land waits ahead of lane checks: checks yield while land.wanted names a live pid, so lands never starve
+  const wanted = join(s.data, "land.wanted");
+  if (land) writeFileSync(wanted, String(process.pid));
   return withLock(join(s.data, "build.lock"), async () => {
+    if (land) rmSync(wanted, { force: true });
     const exportDir = join(s.data, "export");
     const tmp = mkdtempSync(join(tmpdir(), "orly-export-"));
     mkdirSync(exportDir, { recursive: true });
@@ -1551,7 +1560,7 @@ async function laneGate(s: Swarm, rev: string): Promise<boolean> {
     console.log(line);
     if (green) appendFileSync(join(s.data, "green"), `${gitOut(s.root, "rev-parse", `${rev}^{tree}`)}\n`);
     return green;
-  });
+  }, land ? undefined : wanted);
 }
 
 /** Director only: merge lane/<name> (or its commit `at`) into main, gate it, move main, push. */
@@ -1580,7 +1589,7 @@ async function laneLand(s: Swarm, name: string, slug: string, at?: string) {
   const sha = gitOut(s.root, "rev-parse", "--short", landing)!;
   const tree = gitOut(s.root, "rev-parse", `${landing}^{tree}`)!;
   if (readLines(join(s.data, "green")).includes(tree)) console.log(`gate: tree of ${sha} already green`);
-  else if (!(await laneGate(s, landing))) refuse(`${name} at ${sha} is red; not landed`);
+  else if (!(await laneGate(s, landing, true))) refuse(`${name} at ${sha} is red; not landed`);
   const moved = git(s.root, "merge", "-q", "--ff-only", landing);
   if (!moved.ok) refuse(moved.err.trim());
   git(s.root, "tag", "-f", "approved", sha);

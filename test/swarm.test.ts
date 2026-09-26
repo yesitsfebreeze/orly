@@ -142,6 +142,18 @@ test("a gate name with no check in config.json is refused", () => {
   expect(r.err).toContain("missing");
 });
 
+test("a lane gate yields the build lock to a waiting land, and takes it once that land is gone", async () => {
+  const root = repo(), data = join(root, ".orly/swarm/data"), holder = livePid();
+  mkdirSync(data, { recursive: true });
+  writeFileSync(join(data, "land.wanted"), String(holder));
+  const gate = Bun.spawn(["bun", ORLY, "lane", "gate", "HEAD"], { cwd: root, env: { ...process.env, ...GIT } });
+  await Bun.sleep(1500);
+  expect(gate.exitCode).toBeNull();
+  writeFileSync(join(data, "land.wanted"), String(deadPid()));
+  expect(await gate.exited).toBe(0);
+  expect(existsIn(root, ".orly/swarm/data/land.wanted")).toBe(false);
+});
+
 function existsIn(root: string, p: string) { return Bun.file(join(root, p)).size > 0; }
 
 /** The claude adapter's PreToolUse on AskUserQuestion, as session `pid`; its JSON reply, or null for allow. */
