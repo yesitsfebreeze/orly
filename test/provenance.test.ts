@@ -90,3 +90,20 @@ test("targeted lane tests support bin tests without selecting lib or accepting i
   expect(good.out).toContain("1 passed");
   expect(orly(root, ...args, "skipped_case", "--bin", "orly_provenance_probe").code).not.toBe(0);
 }, 120000);
+
+test("a build snapshot copies the specified executable with revision and hash and refuses replacement", () => {
+  const { root } = repo();
+  writeFileSync(join(root, "src/main.rs"), 'fn main() { println!("snapshot_a"); }\n');
+  git(root, "add", "src/main.rs"); git(root, "commit", "-qm", "binary");
+  const destination = join(root, "saved-binary");
+  const built = orly(root, "lane", "snapshot", join(root, "Cargo.toml"), destination, "--bin", "orly_provenance_probe");
+  expect(built.code).toBe(0);
+  const receipt = JSON.parse(built.out.trim());
+  expect(receipt.revision).toBe(git(root, "rev-parse", "HEAD"));
+  expect(receipt.sha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(run(root, destination).out.trim()).toBe("snapshot_a");
+  const again = orly(root, "lane", "snapshot", join(root, "Cargo.toml"), destination, "--bin", "orly_provenance_probe");
+  expect(again.code).not.toBe(0);
+  expect(again.err).toContain("already exists");
+  expect(orly(root, "lane", "snapshot", join(root, "Cargo.toml"), destination + "-bad", "--bin", "missing").code).not.toBe(0);
+}, 120000);

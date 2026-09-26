@@ -7,7 +7,7 @@
  * Everything fails open; bad specs fail closed.
  */
 import { Database } from "bun:sqlite";
-import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
 
@@ -1628,6 +1628,14 @@ async function laneGate(s: Swarm, rev: string, land = false, lane?: string): Pro
   }, land ? undefined : wanted);
 }
 
+function freshRust(s: Swarm, source: string) {
+  const fresh = run(["find", source, "-type", "d", "(", "-name", "target", "-o", "-name", ".git", "-o", "-name", ".orly", ")", "-prune", "-o", "-type", "f", "-exec", "touch", "{}", "+"], s.root);
+  if (!fresh.ok) refuse(`cannot freshen Rust source: ${fresh.err.trim()}`);
+  const env = { ...process.env, CARGO_TARGET_DIR: join(s.root, "target") };
+  for (const key of Object.keys(env)) if (key.endsWith("_BASE_URL")) delete env[key];
+  return env;
+}
+
 async function laneTest(s: Swarm, manifestArg: string, exact: string, bin?: string): Promise<number> {
   const manifest = resolve(s.root, manifestArg);
   if (basename(manifest) !== "Cargo.toml" || !existsSync(manifest)) refuse(`not a Cargo manifest: ${manifest}`);
@@ -1635,10 +1643,7 @@ async function laneTest(s: Swarm, manifestArg: string, exact: string, bin?: stri
   const source = dirname(manifest);
   const wanted = join(s.data, "land.wanted");
   return withLock(join(s.data, "cargo-provenance.lock"), async () => {
-    const fresh = run(["find", source, "-type", "d", "(", "-name", "target", "-o", "-name", ".git", "-o", "-name", ".orly", ")", "-prune", "-o", "-type", "f", "-exec", "touch", "{}", "+"], s.root);
-    if (!fresh.ok) refuse(`cannot freshen Rust source: ${fresh.err.trim()}`);
-    const env = { ...process.env, CARGO_TARGET_DIR: join(s.root, "target") };
-    for (const key of Object.keys(env)) if (key.endsWith("_BASE_URL")) delete env[key];
+    const env = freshRust(s, source);
     const args = ["cargo", "test", "--manifest-path", manifest, ...(bin ? ["--bin", bin] : ["--lib"]), exact, "--", "--exact"];
     console.error(`targeted test: ${manifest} ${exact}; target=${env.CARGO_TARGET_DIR}`);
     const child = Bun.spawn(args, { cwd: source, env, stdout: "pipe", stderr: "pipe" });
@@ -1652,6 +1657,31 @@ async function laneTest(s: Swarm, manifestArg: string, exact: string, bin?: stri
     }
     return 0;
   }, wanted);
+}
+
+async function laneSnapshot(s: Swarm, manifestArg: string, destinationArg: string, bin: string): Promise<number> {
+  const manifest = resolve(s.root, manifestArg), destination = resolve(s.root, destinationArg);
+  if (basename(manifest) !== "Cargo.toml" || !existsSync(manifest)) refuse(`not a Cargo manifest: ${manifest}`);
+  const source = dirname(manifest);
+  return withLock(join(s.data, "land.lock"), () => withLock(join(s.data, "cargo-provenance.lock"), async () => {
+    if (existsSync(destination)) refuse(`snapshot already exists: ${destination}`);
+    const root = gitOut(source, "rev-parse", "--show-toplevel");
+    const revision = root && realpathSync(root) === realpathSync(source) && git(source, "diff", "--quiet", "HEAD", "--").ok && !gitOut(source, "status", "--porcelain", "--", "src", "Cargo.toml", "Cargo.lock", "build.rs", ".cargo") ? gitOut(source, "rev-parse", "HEAD") : "uncommitted-export";
+    const env = freshRust(s, source);
+    const child = Bun.spawn(["cargo", "build", "--manifest-path", manifest, "--bin", bin, "--message-format=json"], { cwd: source, env, stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    process.stderr.write(err);
+    if (code) return code;
+    const messages = out.split("\n").flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
+    const artifact = messages.findLast((m) => m.reason === "compiler-artifact" && m.target?.name === bin && m.executable);
+    if (!artifact) refuse(`Cargo reported no executable for ${bin}`);
+    mkdirSync(dirname(destination), { recursive: true });
+    copyFileSync(artifact.executable, destination, constants.COPYFILE_EXCL);
+    chmodSync(destination, statSync(artifact.executable).mode);
+    const sha256 = new Bun.CryptoHasher("sha256").update(readFileSync(destination)).digest("hex");
+    console.log(JSON.stringify({ manifest, revision, binary: destination, sha256 }));
+    return 0;
+  }));
 }
 
 /** Director only: merge lane/<name> (or its commit `at`) into main, gate it, move main, push. */
@@ -1731,6 +1761,7 @@ orly lane put <name> -m <msg> [<path...>]  commit those copies onto lane/<name>
 orly lane sync <name>                      merge main into lane/<name>
 orly lane check <name> | gate <rev>        the gate (swarm.md's gate checks) on lane/<name> or <rev>
 orly lane test <manifest> <exact-test> [--bin <name>]  targeted test with shared source provenance
+orly lane snapshot <manifest> <destination> --bin <name>  build and copy under source lock
 orly lane land <name> <slug> [<sha>]       one land at a time: merge, gate, move main, push
 orly lane ls [<name>]                      every lane with ahead/behind main, or one lane's commits
 orly lane log seat <seat> [<slug>] | log sitter <name>   main's history by Sitter trailer`;
@@ -1801,6 +1832,10 @@ async function laneCommand(s: Swarm, [verb, ...a]: string[]): Promise<number> {
     case "sync": need(1, "sync <name>"); console.log(laneSync(s, a[0])); return 0;
     case "check": need(1, "check <name>"); laneOpen(s, a[0]); return (await laneGate(s, `lane/${a[0]}`, false, a[0])) ? 0 : 1;
     case "gate": need(1, "gate <rev>"); return (await laneGate(s, a[0])) ? 0 : 1;
+    case "snapshot": {
+      if (a.length !== 4 || a[2] !== "--bin") usage("orly lane snapshot <manifest> <destination> --bin <name>");
+      return laneSnapshot(s, a[0], a[1], a[3]);
+    }
     case "test": {
       if (a.length !== 2 && !(a.length === 4 && a[2] === "--bin")) usage("orly lane test <manifest> <exact-test> [--bin <name>]");
       return laneTest(s, a[0], a[1], a[3]);
