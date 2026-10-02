@@ -32,7 +32,6 @@ A file is optional `key: value` header lines, a blank line, then the question:
   true        what "met" looks like, replacing the default criterion
   false       what "not met" looks like
   fitted      a note on where the cut came from; not used by the gate
-  select      one SELECT or WITH statement over the tables in .orly/tables: a row spec (ROW SPECS)
 
 An unknown header, a cut outside (0, 1) or a file with no question becomes a spec that can
 never be met, so a typo blocks every turn instead of silently dropping a check. The same
@@ -68,6 +67,9 @@ gate may block one session (default 6). The gate also stops blocking once no add
 spec has been met for more than 2 rounds, so a stuck agent is handed back to the user
 instead of looping. Unmet specs are listed in goal order in the block message.
 
+One stop is blocked at most once: the turn that answers a block is allowed without being
+judged again (a weakened gate still blocks it). The next stop after new work is judged as usual.
+
 `orly goal` refuses to append to a goal file that does not parse, rather than drop the
 goals already in it.
 
@@ -96,15 +98,40 @@ and orly reads it at judging time into `project.files`:
   Look at the `duration.js` entry under `project.files`, which is the file's real
   current content. Is the `throw new Error("not implemented")` stub gone?
 
-Paths are relative to the project root (the folder holding .orly). Limits:
+Paths are relative to the project root (the folder holding .orly). An entry is one of:
 
-  - 8 files per turn across all specs; the rest are recorded as not read, which the judge
-    must treat as unknown, not absent
-  - 12000 characters per file; a longer file is cut and says so
-  - a missing file is recorded as "[file does not exist]"
+  - a file:        evidence: src/duration.js
+  - a folder:      evidence: crates/memory/src        every file below it
+  - a glob:        evidence: crates/**/Cargo.toml     `**` crosses folders, `*` stays in one
+  - a tree:        evidence: tree:crates/memory/**    the matching paths only, no content;
+                   use it for questions about what exists ("is there still a config folder?")
+
+Folders, globs and trees range over the files git knows: tracked, plus untracked and not
+ignored. Outside git the project folder is walked. Limits:
+
+  - 40 files per turn across all specs (ORLY_EVIDENCE_FILES). When a folder or glob matches
+    more, the files carrying the words of the spec questions are read first; the rest share
+    one "[not read]" line with their count, and a named file past the limit is recorded as
+    not read. The judge must treat both as unknown, not absent
+  - 80000 characters per turn across all files and trees (ORLY_EVIDENCE_CHARS). Small files
+    go whole; larger ones split what is left evenly. A file over its share keeps the lines
+    carrying the words of the spec questions, with two lines of context, then its head;
+    every gap is marked with its line range. Name what you ask about in the question
+    (a function, a setting), because those words choose the lines
+  - a request the judge still refuses as too large is cut to 60% the same way and sent
+    again, three times at most
+  - a missing file is recorded as "[file does not exist]", a glob or tree with no match as
+    "[no file matches]", a binary file as "[binary file: not read]"
   - a path or symlink that resolves outside the project is not read, because evidence is
     sent to the judge
 
+To put one question to the judge outside a turn:
+
+  orly ask "Is there a folder named config under crates/memory/src?" tree:crates/memory/**
+  orly ask "Does any Cargo.toml depend on candle-core?" "crates/*/Cargo.toml"
+
+With no path it asks over the list of every file. It prints the judge's answer and what it
+read, and never gates.
 
 CHECKS: FACTS DECIDED IN CODE
 -----------------------------
@@ -137,31 +164,6 @@ and the next stop reads its result. timeoutMs still kills it.
 A `require` that cannot be decided (a missing path, a number compared with a string) is
 unmet, never met.
 
-
-ROW SPECS
----------
-
-A spec with a `select:` header judges records instead of the turn, and never runs at Stop.
-.orly/tables maps a table name to a glob, relative to the project or absolute (~ allowed):
-
-  memo: .kern/memos/*/*.md
-  bus: .swarm/data/bus.jsonl
-
-Each .md file is a row {path, kind, fm, body, mtime}: fm is the frontmatter as JSON (query
-it with fm->>'status'), kind is fm.kind, else the parent folder. Each .jsonl line is a row
-with the object as fm and body null. Files are read, never written. Keys are normalized:
-targets -> target, asked_by -> askers, asked-at -> asked_at, and a value "883 → 900" also
-gives <key>_before and <key>_after as numbers.
-
-  select: SELECT path FROM memo WHERE fm->>'status' = 'claimed'
-  require: rows equals 0
-
-  Is any unit still claimed?
-
-`require: rows <op> N` decides by the row count alone, with no judge call. Without it each
-row is one yes/no question in one judge request, and the spec fails when any row's
-probability is above `cut` (default 0.70). More than 50 rows fail as too broad.
-`orly rows <spec-path-or-id>` prints the rows and answers.
 
 WHEN A SPEC MISFIRES
 --------------------

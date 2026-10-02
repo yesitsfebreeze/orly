@@ -4,10 +4,10 @@
  * a weakened baseline blocks before the key is read.
  */
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { gateTurn, normalizeLastTurn } from "../orly.ts";
+import { endSession, gateTurn, normalizeLastTurn, setOff } from "../orly.ts";
 import OrlyPlugin, { toAnthropic as opencodeMessages } from "../install/opencode/plugin.ts";
 import piExtension, { toAnthropic as piMessages } from "../install/pi/extension.ts";
 import { codexMessages } from "../install/codex/adapter.ts";
@@ -62,19 +62,36 @@ test("OpenCode: a weakening edit throws, and a blocked turn re-prompts the sessi
   }
 });
 
-test("Pi: a weakening edit is blocked, and a blocked turn sends a follow-up", async () => {
+test("Pi: a weakening edit is blocked and a blocked turn sends a follow-up once the session is armed", async () => {
   const p = await project();
   const was = process.cwd();
   try {
     process.chdir(p.dir);
     const on: Record<string, Function> = {};
     const sent: string[] = [];
-    piExtension({ on: (name: string, f: Function) => { on[name] = f; }, sendUserMessage: (t: string) => sent.push(t), sendMessage: () => {} });
-    expect(await on.tool_call({ toolName: "edit", input: { path: p.spec, oldText: "cut: 0.9", newText: "cut: 0.3" } })).toMatchObject({ block: true });
-    expect(await on.tool_call({ toolName: "edit", input: { path: p.spec, oldText: "cut: 0.9", newText: "cut: 0.95" } })).toBeUndefined();
+    const commands: Record<string, any> = {};
+    piExtension({ on: (name: string, f: Function) => { on[name] = f; }, registerCommand: (name: string, c: any) => { commands[name] = c; }, sendUserMessage: (t: string) => sent.push(t), sendMessage: () => {} });
+    const ctx = { ui: { notify: () => {} } };
+
+    // Inert until /orly: no brief at session start, nothing judged, no edit blocked.
+    expect(on.session_start).toBeUndefined();
+    expect(await on.tool_call({ toolName: "edit", input: { path: p.spec, edits: [{ oldText: "cut: 0.9", newText: "cut: 0.3" }] } })).toBeUndefined();
     p.weaken();
-    await on.agent_end({ messages: [{ role: "user", content: "go" }, { role: "assistant", content: [{ type: "text", text: "done" }] }] }, {});
+    await on.agent_end({ messages: [{ role: "user", content: "go" }, { role: "assistant", content: [{ type: "text", text: "done" }] }] }, ctx);
+    expect(sent.join("")).toBe("");
+
+    // `/orly` arms it: the real Pi edit shape (path + edits[].oldText/newText) is refused, and the
+    // blocked turn follows up. A tightening edit of the same spec is allowed through.
+    expect(commands.orly).toBeDefined();
+    await commands.orly.handler("", ctx);
+    const blocked = await on.tool_call({ toolName: "edit", input: { path: p.spec, edits: [{ oldText: "cut: 0.3", newText: "cut: 0.2" }] } });
+    expect(blocked?.block).toBe(true);
+    expect(blocked?.reason).toContain("refuses this edit");
+    expect(await on.tool_call({ toolName: "edit", input: { path: p.spec, edits: [{ oldText: "cut: 0.3", newText: "cut: 0.95" }] } })).toBeUndefined();
+    await on.agent_end({ messages: [{ role: "user", content: "go" }, { role: "assistant", content: [{ type: "text", text: "done" }] }] }, ctx);
     expect(sent.join("")).toContain("refuses this edit");
+    await commands.orly.handler("off", ctx);
+    expect(await on.tool_call({ toolName: "edit", input: { path: p.spec, edits: [{ oldText: "cut: 0.3", newText: "cut: 0.2" }] } })).toBeUndefined();
   } finally {
     process.chdir(was);
     p.done();
@@ -162,6 +179,55 @@ test("Codex: the hook fails open, and blocks a weakened gate with the transcript
   }
 });
 
+test("Claude Code: a pass prints nothing; a failed turn exits 2 with a message for the model on stderr", async () => {
+  const p = await project(), sid = `claude-${Math.random()}`;
+  try {
+    const hook = () => Bun.spawnSync(["bun", join(import.meta.dir, "..", "install", "claude", "adapter.ts")], {
+      cwd: p.dir, stdin: Buffer.from(JSON.stringify({ hook_event_name: "Stop", cwd: p.dir, session_id: sid, transcript_path: join(p.dir, "none.jsonl") })),
+      env: { ...process.env, TYPESAFE_API_KEY: "test-key-never-used" }, stdout: "pipe", stderr: "pipe",
+    });
+    const pass = hook();
+    expect(pass.exitCode).toBe(0);
+    expect(pass.stdout.toString()).toBe("");
+    p.weaken();
+    const r = hook();
+    expect(r.exitCode).toBe(2);
+    expect(r.stdout.toString()).toBe("");
+    expect(r.stderr.toString()).toContain("does not think it is finished");
+    const hooks = JSON.parse(readFileSync(join(import.meta.dir, "..", "install", "claude", "hooks.json"), "utf8")).hooks;
+    expect(hooks.Stop[0].hooks[0]).toMatchObject({ asyncRewake: true });
+    expect(JSON.stringify(hooks)).not.toContain("statusMessage");
+  } finally {
+    for (const ext of ["json", "verdict.md", "flagged"]) rmSync(join(homedir(), ".orly", "status", `${sid}.${ext}`), { force: true });
+    p.done();
+  }
+});
+
+test("Claude Code: a session turned off passes every hook, a weakened gate included", async () => {
+  const p = await project(), sid = `claude-off-${Math.random()}`;
+  try {
+    const hook = (payload: object) => Bun.spawnSync(["bun", join(import.meta.dir, "..", "install", "claude", "adapter.ts")], {
+      cwd: p.dir, stdin: Buffer.from(JSON.stringify({ cwd: p.dir, session_id: sid, transcript_path: join(p.dir, "none.jsonl"), ...payload })),
+      env: { ...process.env, TYPESAFE_API_KEY: "test-key-never-used" }, stdout: "pipe", stderr: "pipe",
+    });
+    setOff(sid, true);
+    p.weaken();
+    const stop = hook({ hook_event_name: "Stop" });
+    expect(stop.exitCode).toBe(0);
+    expect(stop.stdout.toString()).toBe("");
+    expect(stop.stderr.toString()).toBe("");
+    const edit = hook({ hook_event_name: "PreToolUse", tool_name: "Write", tool_input: { file_path: join(p.dir, ".orly", "specs", "g", "one.spec"), content: "cut: 0.1\n\nis it done?\n" } });
+    expect(edit.stdout.toString()).toBe("");
+    expect(hook({ hook_event_name: "SessionStart" }).stdout.toString()).toBe("");
+    setOff(sid, false);
+    expect(hook({ hook_event_name: "Stop" }).exitCode).toBe(2);
+  } finally {
+    endSession(sid);
+    for (const ext of ["json", "verdict.md", "flagged"]) rmSync(join(homedir(), ".orly", "status", `${sid}.${ext}`), { force: true });
+    p.done();
+  }
+});
+
 test("Cursor: preToolUse denies a weakening edit, and stop blocks a weakened gate as a follow-up", async () => {
   const p = await project();
   try {
@@ -180,5 +246,45 @@ test("Cursor: preToolUse denies a weakening edit, and stop blocks a weakened gat
     expect(JSON.parse(r.stdout.toString()).followup_message).toContain("refuses this edit");
   } finally {
     p.done();
+  }
+});
+
+test("Codex loads the plugin's own hooks file: only the keys it parses, the Codex adapter, versions in step", async () => {
+  const root = join(import.meta.dir, "..");
+  const codex = await Bun.file(join(root, ".codex-plugin/plugin.json")).json();
+  const claude = await Bun.file(join(root, ".claude-plugin/plugin.json")).json();
+  // Codex appends its documented cachebuster without changing the release version.
+  expect(codex.version.replace(/\+codex\.[0-9A-Za-z.-]+$/, "")).toBe(claude.version);
+  const hooks = await Bun.file(join(root, codex.hooks)).json();
+  expect(Object.keys(hooks).every(k => k === "hooks" || k === "description")).toBe(true); // `modules` broke Codex
+  for (const groups of Object.values<any[]>(hooks.hooks))
+    for (const h of groups.flatMap(g => g.hooks)) {
+      expect(h.command).toContain("${PLUGIN_ROOT}/install/codex/adapter.ts");
+      expect(h.timeout).toBeLessThanOrEqual(35);
+    }
+});
+
+test("Codex: wrapped Orly stop feedback preserves the human request and failed command evidence", () => {
+  for (const prefix of ['', 'Warning: truncated output (original token count: 2756)\nTotal output lines: 20\n\n']) {
+    const lines = [
+      item({type:'message',role:'user',content:[{type:'input_text',text:'Fix the checks that are open'}]}),
+      item({type:'function_call',call_id:'failed-check',name:'shell',arguments:JSON.stringify({command:'bun test'})}),
+      item({type:'function_call_output',call_id:'failed-check',output:'1 fail; exit code 1'}),
+      item({type:'message',role:'user',content:[{type:'input_text',text:`<hook_prompt hook_run_id="stop:3:/plugins/orly/install/codex/hooks.json">${prefix}orly (an independent TypeSafe/Jev judgment on this turn) is not satisfied\nRun the check.</hook_prompt>`}]}),
+      item({type:'message',role:'assistant',content:[{type:'output_text',text:'The failing check remains unresolved.'}]}),
+    ];
+    const turn=normalizeLastTurn(codexMessages(lines.join('\n')));
+    expect(turn.user_request).toBe('Fix the checks that are open');
+    expect(turn.actions_taken).toEqual(['#1 shell: bun test']);
+    expect(turn.command_results).toEqual(['#1 → 1 fail; exit code 1']);
+    const steered=normalizeLastTurn(codexMessages([...lines,item({type:'message',role:'user',content:[{type:'input_text',text:'Now check the editor instead'}]})].join('\n')));
+    expect(steered.user_request).toBe('Now check the editor instead');
+  }
+});
+
+test("Codex: quoted hook text and unrelated hook messages are not discarded", () => {
+  for(const body of ['Please explain <hook_prompt>orly (an independent judge)</hook_prompt>', '<hook_prompt hook_run_id="stop:3:other">Another checker requests verification.</hook_prompt>']){
+    const turn=normalizeLastTurn(codexMessages(item({type:'message',role:'user',content:[{type:'input_text',text:body}]})));
+    expect(turn.user_request).toBe(body);
   }
 });

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Codex CLI hook (~/.codex/hooks.json or .codex/hooks.json), dispatched on `hook_event_name`.
+ * Codex CLI hook (the plugin's install/codex/hooks.json), dispatched on `hook_event_name`.
  * Codex speaks Claude Code's hook dialect: the same stdin fields, `{decision: "block", reason}`
  * on Stop, `hookSpecificOutput` for context and permissions. What differs is the transcript:
  * a rollout JSONL under ~/.codex/sessions, found by session id when `transcript_path` is null.
@@ -9,10 +9,16 @@
  */
 import { Glob } from "bun";
 import { join } from "node:path";
-import { endSession, gateTurn, guardEdit, normalizeLastTurn, plannedEdit, sessionBrief, type Msg } from "../../orly.ts";
+import { endSession, gateTurn, guardEdit, isOff, normalizeLastTurn, plannedEdit, sessionBrief, type Msg } from "../../orly.ts";
 
 /** Context Codex injects as user messages; none of it is the request. */
 const INJECTED = /^\s*(<(environment_context|user_instructions|turn_aborted|permissions|skill|app-context|codex_internal_context)\b|# AGENTS\.md instructions)/i;
+// Codex wraps Stop feedback in a user-role envelope, sometimes preceded by a
+// truncation notice. It is feedback on the current task, not a new human task.
+const orlyStopFeedback = (body: string): boolean => {
+  const wrapped = body.trim().match(/^<hook_prompt\b[^>]*\bhook_run_id=["']stop:[^"']+["'][^>]*>([\s\S]*)<\/hook_prompt>$/);
+  return !!wrapped && /(?:^|\n)orly(?: \(an independent|\? refuses|\? —)/.test(wrapped[1]);
+};
 const text = (v: unknown): string =>
   typeof v === "string" ? v : Array.isArray(v) ? v.map((c: any) => (typeof c?.text === "string" ? c.text : "")).filter(Boolean).join("\n") : "";
 
@@ -24,7 +30,7 @@ export function codexMessages(jsonl: string): Msg[] {
     try { const e = JSON.parse(line); if (e?.type !== "response_item") continue; p = e.payload ?? {}; } catch { continue; }
     if (p.type === "message" && (p.role === "user" || p.role === "assistant")) {
       const body = text(p.content);
-      if (p.role === "user" && INJECTED.test(body)) continue;
+      if (p.role === "user" && (INJECTED.test(body) || orlyStopFeedback(body))) continue;
       out.push({ role: p.role, content: [{ type: "text", text: body }] });
     } else if (/^(function|custom_tool|local_shell)_call$/.test(p.type)) {
       const name = p.name ?? (p.type === "local_shell_call" ? "shell" : "tool");
@@ -54,6 +60,7 @@ if (import.meta.main) {
   const event = String(input.hook_event_name ?? "Stop");
 
   if (event === "SessionEnd") emit(endSession(sessionId));
+  if (isOff(sessionId)) emit(); // `orly off` for this session: inert until `orly on`
   if (event === "SessionStart") {
     const brief = sessionBrief(cwd, process.env.ORLY_CLI);
     emit(brief && { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: brief } });
@@ -72,7 +79,6 @@ if (import.meta.main) {
   const outcome = await gateTurn({
     cwd,
     sessionId,
-    transcriptPath,
     answeringBlock: input.stop_hook_active === true,
     read: async () => {
       try {

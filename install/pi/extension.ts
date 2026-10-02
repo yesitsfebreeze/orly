@@ -2,11 +2,13 @@
  * Pi coding agent extension. Load it from .pi/extensions/ with a one-line shim:
  * `export { default } from "<orly>/install/pi/extension.ts";`, or as a package via the `pi`
  * field in package.json.
- * `agent_end` gates the turn and, on a block, sends the reason as a follow-up user message;
- * `session_start` sends the brief; `tool_call` blocks spec edits that weaken the gate.
+ * The gate is inert until the session arms it: nothing is injected and nothing is judged at
+ * session start. `/orly` arms this session, `/orly off` disarms it, `/orly status` reports.
+ * Once armed, `agent_end` gates the turn and, on a block, sends the reason as a follow-up user
+ * message, and `tool_call` blocks spec edits that weaken the gate.
  * Everything fails open.
  */
-import { guardEdit, gateTurn, normalizeLastTurn, plannedEdit, sessionBrief, type Msg } from "../../orly.ts";
+import { armCommand, guardEdit, gateTurn, normalizeLastTurn, plannedEdit, sessionBrief, type Msg } from "../../orly.ts";
 
 /** Pi's message shape: user, assistant with text/toolCall blocks, toolResult messages. */
 export const toAnthropic = (msgs: any[]): Msg[] => {
@@ -30,24 +32,51 @@ export const toAnthropic = (msgs: any[]): Msg[] => {
   return out;
 };
 
-const cwd = () => process.cwd();
+const cwdOf = (ctx: any): string => { try { return String(ctx?.cwd || process.cwd()); } catch { return process.cwd(); } };
+const cwd = (): string => process.cwd();
 const sessionId = (ctx: any): string => {
   try { return String(ctx?.sessionManager?.getSessionId?.() ?? ctx?.sessionManager?.getSessionFile?.() ?? "pi"); } catch { return "pi"; }
 };
 const editTarget = (input: any) => (typeof input?.file_path === "string" ? input.file_path : typeof input?.path === "string" ? input.path : undefined);
 
 export default function orly(pi: any) {
-  pi.on("session_start", async (_event: any, ctx: any) => {
-    const brief = sessionBrief(cwd(), process.env.ORLY_CLI);
-    if (!brief) return;
-    try { pi.sendMessage({ customType: "orly-brief", content: brief, display: false }, { triggerTurn: false }); } catch { ctx?.ui?.notify?.("orly? is active", "info"); }
+  let armed = false;
+  let briefSent = false;
+  const note = (ctx: any, text: string, level: string) => { try { ctx?.ui?.notify?.(text, level); } catch { /* no UI: silence */ } };
+
+  /** Send the brief once, the first time this session arms. */
+  const brief = (ctx: any): boolean => {
+    if (briefSent) return true;
+    const text = sessionBrief(cwdOf(ctx), process.env.ORLY_CLI);
+    if (!text) { note(ctx, "orly: no .orly/ tree here or above — nothing to gate", "warning"); return false; }
+    pi.sendMessage({ customType: "orly-brief", content: text, display: false }, { triggerTurn: false });
+    briefSent = true;
+    return true;
+  };
+
+  pi.registerCommand("orly", {
+    description: "Arm the completion gate for this session (/orly, /orly off, /orly status)",
+    getArgumentCompletions: (prefix: string) => ["on", "off", "status"].filter((v) => v.startsWith(prefix)).map((value) => ({ value, label: value })),
+    handler: async (args: string, ctx: any) => {
+      const action = armCommand(String(args ?? ""));
+      if (!action) { note(ctx, "orly: unknown argument — use /orly, /orly off or /orly status", "warning"); return; }
+      if (action === "status") {
+        note(ctx, `orly: ${armed ? "armed" : "inert"} for this session — the gate runs at the end of every turn only while armed`, "info");
+        return;
+      }
+      if (action === "off") { armed = false; note(ctx, "orly: disarmed for this session", "info"); return; }
+      armed = true;
+      const ok = brief(ctx);
+      note(ctx, ok ? "orly: armed — the completion gate runs at the end of every turn" : "orly: armed, but there is no .orly/ tree to gate", ok ? "info" : "warning");
+    },
   });
 
   pi.on("tool_call", async (event: any) => {
+    if (!armed) return;
     const tool = String(event?.toolName ?? "");
     const input = event?.input ?? {};
     if (tool !== "write" && tool !== "edit") return;
-    const edit = tool === "write" ? plannedEdit("Write", input) : { kind: "edit", edits: [{ old_string: input.oldText, new_string: input.newText }] };
+    const edit = plannedEdit(tool, input);
     const target = editTarget(input);
     if (!edit || !target) return;
     const reason = guardEdit(cwd(), target, edit);
@@ -55,9 +84,10 @@ export default function orly(pi: any) {
   });
 
   pi.on("agent_end", async (event: any, ctx: any) => {
+    if (!armed) return;
     const messages = toAnthropic(event?.messages ?? []);
     if (!messages.length) return;
-    const outcome = await gateTurn({ cwd: cwd(), sessionId: sessionId(ctx), read: async () => normalizeLastTurn(messages), flush: false });
+    const outcome = await gateTurn({ cwd: cwdOf(ctx), sessionId: sessionId(ctx), read: async () => normalizeLastTurn(messages), flush: false });
     if (outcome.note) console.error(`orly: ${outcome.note}`);
     if (!outcome.block) return;
     try { pi.sendUserMessage(outcome.reason, { deliverAs: "followUp" }); } catch (e: any) { console.error(`orly: could not follow up (${e?.message ?? e})`); }

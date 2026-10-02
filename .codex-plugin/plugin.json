@@ -1,6 +1,6 @@
 {
   "name": "orly",
-  "version": "0.6.6",
+  "version": "0.6.6+codex.20260930",
   "description": "A turn-end gate for coding agents: checks each turn against the project's specs and refuses the stop until they hold.",
   "author": {
     "name": "Stefan Hoevelmanns"
@@ -14,6 +14,6 @@
     "specs",
     "verification"
   ],
-  "hooks": "./install/claude/hooks.json",
+  "hooks": "./install/codex/hooks.json",
   "skills": "./skills/"
 }

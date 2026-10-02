@@ -6,10 +6,77 @@
  * deterministic checks, and the edit guard refuses spec changes that ease the gate.
  * Everything fails open; bad specs fail closed.
  */
-import { Database } from "bun:sqlite";
-import { appendFileSync, chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
+import { createRequire } from "node:module";
+
+// Dual runtime: bun runs this file natively. Under node (the pi extension loads it
+// in-process), a compat layer provides the small Bun surface used here:
+// spawn, hash, glob, sleep, file and stdin. Cache keys from the node hash differ
+// from Bun.hash, so cached entries recompute per runtime instead of being shared.
+const nodeRequire = createRequire(import.meta.url);
+{
+  const { spawnSync: nodeSpawnSync, spawn: nodeSpawn } = nodeRequire("node:child_process");
+  const { createHash } = nodeRequire("node:crypto");
+  if (typeof (globalThis as any).Bun === "undefined") {
+    const globRegex = (pattern: string) =>
+      new RegExp("^" + pattern.split("/").map((segment) => segment
+        .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+        .replace(/\*\*/g, "\u0000")
+        .replace(/\*/g, "[^/]*")
+        .replace(/\?/g, "[^/]")
+        .replace(/\u0000/g, ".*")).join("/") + "$");
+    const walk = (dir: string, out: string[] = []): string[] => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const abs = join(dir, entry.name);
+        if (entry.isDirectory()) walk(abs, out); else out.push(abs);
+      }
+      return out;
+    };
+    (globalThis as any).Bun = {
+      spawnSync: (cmd: string[], opts: any) => {
+        const input = opts?.stdin === undefined || opts?.stdin === "ignore" ? undefined : opts.stdin;
+        const r = nodeSpawnSync(cmd[0], cmd.slice(1), {
+          cwd: opts?.cwd, env: opts?.env, input,
+          stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+        });
+        return { stdout: r.stdout ?? Buffer.alloc(0), stderr: r.stderr ?? Buffer.alloc(0), exitCode: r.status, success: r.status === 0 };
+      },
+      spawn: (cmd: string[], opts: any) => {
+        const stdio = opts?.stdio ?? ["ignore", opts?.stdout === "pipe" ? "pipe" : "ignore", opts?.stderr === "pipe" ? "pipe" : "ignore"];
+        const child = nodeSpawn(cmd[0], cmd.slice(1), { cwd: opts?.cwd, env: opts?.env, detached: opts?.detached, stdio });
+        return {
+          stdout: child.stdout, stderr: child.stderr, pid: child.pid,
+          unref: () => child.unref(),
+          exited: new Promise<number>((resolveExit) => child.on("exit", (code) => resolveExit(code))),
+        };
+      },
+      hash: (value: string) => {
+        const hex = createHash("sha256").update(String(value)).digest("hex").slice(0, 13);
+        return Number.parseInt(hex, 16);
+      },
+      file: (path: string) => ({ text: async () => readFileSync(path, "utf8") }),
+      sleep: (ms: number) => new Promise<void>((wake) => setTimeout(wake, ms)),
+      Glob: class {
+        constructor(private pattern: string) {}
+        scanSync(options: { cwd: string; absolute?: boolean; dot?: boolean }) {
+          const regex = globRegex(this.pattern);
+          const hits = walk(options.cwd).filter((abs) =>
+            regex.test(relative(options.cwd, abs).split(sep).join("/")));
+          return (options.absolute ? hits : hits.map((abs) => relative(options.cwd, abs))).sort();
+        }
+      },
+      CryptoHasher: class {
+        private digestOf = createHash("sha256");
+        constructor(algorithm: string) { this.digestOf = createHash(algorithm); }
+        update(data: any) { this.digestOf.update(data); return this; }
+        digest(encoding: string) { return this.digestOf.digest(encoding as any); }
+      },
+      stdin: { stream: () => process.stdin },
+    };
+  }
+}
 
 export const MAX_RESULTS = 12;
 export const MAX_ACTIONS = 40;
@@ -164,31 +231,12 @@ function run(cmd: string[], cwd: string, opts: { input?: string; env?: Record<st
 
 const git = (cwd: string, ...args: string[]) => run(["git", ...args], cwd);
 
-/** git's trimmed stdout, or null when it failed. */
-function gitOut(cwd: string, ...args: string[]): string | null {
-  const r = git(cwd, ...args);
-  return r.ok ? r.out.trim() : null;
-}
-
 /** Write through a temp file and a rename, so a reader never sees half a file. */
 function writeAtomic(path: string, text: string) {
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, text);
   renameSync(tmp, path);
 }
-
-/** Every JSON line of a file; a torn or blank line is skipped, a missing file is empty. */
-function readJsonl<T = any>(path: string): T[] {
-  if (!existsSync(path)) return [];
-  const out: T[] = [];
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    try { out.push(JSON.parse(line)); } catch { /* a torn line */ }
-  }
-  return out;
-}
-
-const writeJsonl = (path: string, rows: unknown[]) => writeAtomic(path, rows.map((r) => JSON.stringify(r) + "\n").join(""));
 
 // ---------------------------------------------------------------- specs, where they live
 export type Require = { path: string; op: "equals" | "lte" | "gte" | "present" | "absent" | "contains"; value?: unknown };
@@ -201,7 +249,7 @@ export type Spec = {
   optional?: boolean;
   evidence?: string[];
   fitted?: string;
-  rank?: number; select?: string; // select: a row spec (`orly rows`), never judged at Stop
+  rank?: number;
 };
 export type Goal = { group?: string; text: string };
 export type SpecFile = { goal: string; goals: Goal[]; specs: Spec[]; paths: Record<string, string>; maxRounds?: number };
@@ -211,7 +259,7 @@ export const SPEC_PREFIX = "spec:";
 export const TREE = "specs";
 export const EXT = ".spec";
 const OPS = ["equals", "lte", "gte", "present", "absent", "contains"];
-const KEYS = ["cut", "require", "evidence", "optional", "true", "false", "fitted", "rounds", "select"];
+const KEYS = ["cut", "require", "evidence", "optional", "true", "false", "fitted", "rounds"];
 
 /** Evaluate a `require` against gathered evidence. Undecidable means unmet, never met. */
 export function evaluate(req: Require, evidence: unknown): { met: boolean; actual: unknown } {
@@ -228,30 +276,6 @@ export function evaluate(req: Require, evidence: unknown): { met: boolean; actua
 
 const UNCHECKABLE = /\b(clean|elegant|readable|maintainable|idiomatic|well[- ](structured|designed|written)|good|nice|proper|appropriate|robust|scalable|performant|secure enough|best practice)\b/i;
 
-/** True when `sql` is one SELECT or WITH statement: a `;` inside a '…' or "…" literal
- *  (doubled quotes escape) or a -- or block comment is text, and only whitespace or comments may follow a top-level `;`. */
-export function oneSelect(sql: string): boolean {
-  if (!/^\s*(select|with)\b/i.test(sql)) return false;
-  let ended = false;
-  for (let i = 0; i < sql.length; i++) {
-    const c = sql[i];
-    if (c === "'" || c === '"') {
-      for (i++; i < sql.length && !(sql[i] === c && sql[i + 1] !== c); i++) if (sql[i] === c) i++;
-    } else if (c === "-" && sql[i + 1] === "-") {
-      while (i < sql.length && sql[i] !== "\n") i++;
-      continue;
-    } else if (c === "/" && sql[i + 1] === "*") {
-      i = sql.indexOf("*/", i + 2);
-      if (i < 0) return !ended;
-      i++;
-      continue;
-    } else if (c === ";") { ended = true; continue; }
-    else if (/\s/.test(c)) continue;
-    if (ended) return false;
-  }
-  return true;
-}
-
 /** Reject specs that cannot be judged before they start returning numbers. */
 export function validateSpecs(specs: Spec[]): Array<{ id: string; problem: string }> {
   const out: Array<{ id: string; problem: string }> = [];
@@ -264,7 +288,6 @@ export function validateSpecs(specs: Spec[]): Array<{ id: string; problem: strin
     const r = s.require as any;
     if (r?.op === "malformed") bad(s.instructions);
     else if (r !== undefined && (typeof r?.path !== "string" || !OPS.includes(r?.op))) bad(`require must be {path, op} with op one of ${OPS.join(", ")}`);
-    if (s.select !== undefined && (!oneSelect(s.select) || (s.require && s.require.path !== "rows"))) bad("select must be one SELECT or WITH statement, and a row spec's require is on `rows`");
     if ((s.instructions ?? "").trim().length < 15) bad("instructions too short to judge");
     const vague = s.require ? null : (s.instructions ?? "").replace(/`[^`]*`/g, " ").match(UNCHECKABLE);
     if (vague) bad(`"${vague[0]}" is a judgement about taste, not about recorded evidence — say what would be visible in the actions or output instead`);
@@ -355,7 +378,6 @@ export function parseSpec(id: string, text: string): Spec {
   if (head.optional !== undefined) spec.optional = /^(yes|true)$/i.test(head.optional);
   if (head.true || head.false) spec.criteria = { true: head.true, false: head.false };
   if (head.fitted) spec.fitted = head.fitted;
-  if (head.select) spec.select = head.select;
   return spec;
 }
 
@@ -499,7 +521,7 @@ const ACTION_LEAD: Record<string, string> = {
   report_the_blocker: "You are blocked. Tell the user plainly what you could not do and exactly what you need from them.",
 };
 
-export type Verdict = { block: boolean; reason: string; line: string; results: SpecResult[]; pct?: number | null }; // pct: share of the checks compose runs that pass (orchi CONTRACT §2)
+export type Verdict = { block: boolean; reason: string; line: string; results: SpecResult[]; pct?: number | null }; // pct: share of the checks compose runs that pass
 
 /** Policy, in code: answers plus thresholds to a verdict. A reworded question invalidates its thresholds. */
 export function compose(answers: Record<string, any>, t: Thresholds = DEFAULTS, specs: Spec[] = [], evidence?: unknown): Verdict {
@@ -567,15 +589,23 @@ export type JudgeOptions = {
 };
 export type Judgment = { verdict: Verdict; answers: Record<string, any>; usage?: { input_tokens: number; output_tokens: number } };
 
-/** POST every question over one state. Throws unless the judge answers; Jev's answers also go to ~/.jev/log (orchi CONTRACT §8). */
+/** POST every question over one state. Throws unless the judge answers; Jev's answers also go to ~/.jev/log. */
 export async function ask(state: unknown, questions: Record<string, unknown>, o: Omit<JudgeOptions, "specs">) {
-  const res = await fetch(o.endpoint || "https://api.typesafe.ai/v1/systemone", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${o.apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ state, model: o.model || "jev-latest", questions }),
-    signal: AbortSignal.timeout(o.timeoutMs ?? 12_000),
-  });
-  if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 300)}`);
+  let res: Response;
+  for (let tries = 0; ; tries++) {
+    res = await fetch(o.endpoint || "https://api.typesafe.ai/v1/systemone", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${o.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ state, model: o.model || "jev-latest", questions }),
+      signal: AbortSignal.timeout(o.timeoutMs ?? 12_000),
+    });
+    if (res.ok) break;
+    const error = await res.text(), project = (state as any)?.project;
+    // Too large for the judge: cut every file to 60% around the questions' words and ask again, three times at most.
+    if (res.status !== 400 || !error.includes("max_tokens_exceeded") || !project?.files || tries >= 3) throw new Error(`${res.status} ${error.slice(0, 300)}`);
+    const terms = termsOf(Object.values(questions).map((q: any) => q?.instructions ?? "").join(" "));
+    state = { ...(state as any), project: { ...project, files: Object.fromEntries(Object.entries(project.files).map(([path, body]) => [path, excerpt(String(body), Math.max(2000, Math.floor(String(body).length * 0.6)), terms)])) } };
+  }
   const out = await res.json();
   const answers = out?.answers as Record<string, any>;
   if (!answers || typeof answers !== "object") throw new Error("response had no answers");
@@ -595,11 +625,7 @@ export async function judge(turn: Turn, opts: JudgeOptions): Promise<Judgment> {
 }
 
 // ---------------------------------------------------------------- evidence the agent does not control
-export type CheckSpec = { command: string; countPattern?: string; timeoutMs?: number; live?: boolean; skipOnly?: string };
-
-/** A lane gate skips a check whose `skipOnly` regex matches every path the rev changes against main (a memo-only lane builds nothing). */
-export const gateSkips = (spec: CheckSpec, changed: string[]): boolean =>
-  !!spec.skipOnly && changed.length > 0 && changed.every((path) => new RegExp(spec.skipOnly!).test(path));
+export type CheckSpec = { command: string; countPattern?: string; timeoutMs?: number; live?: boolean };
 
 /** HEAD, `git status`, and each listed file's content hash; null outside git or before the first commit. */
 function treeKey(root: string): string | null {
@@ -620,29 +646,110 @@ function treeKey(root: string): string | null {
   return head + status + status.split("\0").map(stat).join();
 }
 
-/** `{files, checks}` for these specs. Only what some spec names is gathered. */
+/** Every file of the project as git sees it (tracked, plus untracked and not ignored), else a walk; relative, sorted. */
+function projectFiles(root: string): string[] {
+  const listed = git(root, "ls-files", "-co", "--exclude-standard");
+  if (listed.ok) return listed.out.split("\n").filter(Boolean).sort();
+  if (!existsSync(root)) return [];
+  return [...new Bun.Glob("**").scanSync({ cwd: root, dot: true })].filter((path) => !path.startsWith(".git/")).sort();
+}
+
+const GLOB = /[*?[{]/;
+/** A path glob as a regex: `**` crosses folders, `*` and `?` stay inside one. */
+export const globMatcher = (glob: string) =>
+  new RegExp("^" + glob.replace(/[.+^${}()|\]\\]/g, "\\$&").replace(/\*\*\/?/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]")
+    .replace(/\u0000/g, (_, at: number, all: string) => (all[at - 1] === "/" || at === 0 ? "(?:.*/)?" : ".*")).replace(/\(\?:\.\*\/\)\?$/, ".*") + "$");
+
+const STOP = new Set("this that with from have does into only when what which where there their then than them they were been will would should could about every each also file files project code line lines true false shown judging current real".split(" "));
+/** The words of a question worth looking for in a file: words and identifiers of four characters or more. */
+export const termsOf = (text: string) => [...new Set((text.toLowerCase().match(/[a-z_][\w-]{3,}/g) ?? []).filter((w) => !STOP.has(w)))];
+
+/** `body` within about `n` characters: whole when it fits, else the lines carrying the question's words (best
+ *  first, two lines of context each), then the head. Every gap is marked, so a cut is never read as absence. */
+export function excerpt(body: string, n: number, terms: string[]): string {
+  if (body.length <= n) return body;
+  const lines = body.split("\n"), keep = new Set<number>(), budget = n * 0.9; // the rest pays for the gap marks
+  let used = 0;
+  const take = (i: number) => {
+    if (i < 0 || i >= lines.length || keep.has(i)) return true;
+    if (used + lines[i].length + 1 > budget) return false;
+    keep.add(i); used += lines[i].length + 1;
+    return true;
+  };
+  const hits = lines.map((l, i) => { const low = l.toLowerCase(); return [terms.filter((t) => low.includes(t)).length, i]; })
+    .filter(([score]) => score > 0).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+  for (const [, i] of hits) for (const d of [0, -1, 1, -2, 2]) take(i + d);
+  for (let i = 0; i < lines.length && take(i); i++);
+  if (!keep.size) return `${body.slice(0, n)}\n…[TRUNCATED: ${body.length - n} more chars not shown — do not treat anything below as absent]`;
+  const out = [`[excerpt: ${keep.size} of ${lines.length} lines, chosen by the question's words — a line not shown is unknown, not absent]`];
+  let last = -1;
+  for (const i of [...keep].sort((a, b) => a - b)) {
+    if (i > last + 1) out.push(`…[lines ${last + 2}-${i} not shown]`);
+    out.push(lines[i]); last = i;
+  }
+  if (last < lines.length - 1) out.push(`…[lines ${last + 2}-${lines.length} not shown]`);
+  return out.join("\n");
+}
+
+/** `{files, checks}` for these specs. Only what some spec names is gathered: an `evidence:` entry is a file, a folder,
+ *  a glob over the project's files, or `tree:<glob>` for the matching paths alone. */
 export function projectEvidence(opts: { cwd?: string; checks?: Record<string, CheckSpec>; budgetMs?: number } = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const root = projectRoot(cwd) ?? cwd;
   const checks: Record<string, CheckSpec> = opts.checks ?? loadConfig(cwd).checks ?? {};
   return async (_turn: Turn, specs: Spec[]) => {
     const out: Record<string, any> = {};
-    const paths = [...new Set(specs.flatMap((s) => s.evidence ?? []))];
-    if (paths.length) out.files = {};
+    const entries = [...new Set(specs.flatMap((s) => s.evidence ?? []))];
+    if (entries.length) out.files = {};
     const base = canonical(root);
-    for (const [i, path] of paths.entries()) {
-      if (i >= 8) { out.files[path] = "[not read: over the 8-file evidence limit — unknown, not absent]"; continue; }
-      const abs = canonical(resolve(base, path));
-      if (!abs.startsWith(base + sep)) { out.files[path] = "[outside the project: not read]"; continue; } // evidence goes to a third party
-      try {
-        const body = await Bun.file(abs).text();
-        out.files[path] = body.length > 12_000
-          ? `${body.slice(0, 12_000)}\n…[TRUNCATED: ${body.length - 12_000} more chars not shown — do not treat anything below as absent]`
-          : body;
-      } catch {
-        out.files[path] = "[file does not exist]"; // absence is evidence
-      }
+    const terms = termsOf(specs.map((s) => s.instructions ?? "").join(" "));
+    let listed: string[] | undefined;
+    const matching = (glob: string) => { const re = globMatcher(glob); return (listed ??= projectFiles(base)).filter((path) => re.test(path)); };
+    const isFolder = (path: string) => { try { return lstatSync(resolve(base, path)).isDirectory(); } catch { return false; } };
+    const paths: string[] = [], named = new Set<string>(), bodies = new Map<string, string>();
+    for (const entry of entries) {
+      if (entry.startsWith("tree:")) {
+        const hits = matching(entry.slice(5).trim() || "**");
+        if (hits.length) bodies.set(entry, hits.join("\n")); else out.files[entry] = "[no file matches]"; // absence is evidence
+      } else if (GLOB.test(entry) || isFolder(entry)) {
+        const hits = matching(GLOB.test(entry) ? entry : `${entry.replace(/\/+$/, "")}/**`);
+        if (!hits.length) out.files[entry] = "[no file matches]";
+        paths.push(...hits);
+      } else { paths.push(entry); named.add(entry); }
     }
+    // The judge reads one request: a count and a size budget bound it. The default size leaves room for the turn and
+    // the questions under Jev's request limit (100000 characters of file passed, 120000 did not).
+    const maxFiles = num("ORLY_EVIDENCE_FILES", 40), maxChars = num("ORLY_EVIDENCE_CHARS", 80_000);
+    const text = (path: string): string | null => {
+      const abs = canonical(resolve(base, path));
+      if (!abs.startsWith(base + sep)) return "[outside the project: not read]"; // evidence goes to a third party
+      try { const body = readFileSync(abs, "utf8"); return body.includes("\0") ? "[binary file: not read]" : (bodies.set(path, body), null); }
+      catch { return "[file does not exist]"; } // absence is evidence
+    };
+    let order = [...new Set(paths)];
+    // More matches than fit: the files carrying the question's words go first. ponytail: reads every match once;
+    // past 5000 matches the order stays alphabetical — name a narrower glob.
+    if (order.length > maxFiles && order.length <= 5000 && terms.length) {
+      const score = new Map(order.map((path) => {
+        if (named.has(path)) return [path, Infinity];
+        let body = ""; try { const abs = resolve(base, path); if (lstatSync(abs).size <= 1e6) body = readFileSync(abs, "utf8").toLowerCase(); } catch { /* scores 0 */ }
+        return [path, terms.filter((t) => body.includes(t) || path.toLowerCase().includes(t)).length];
+      }));
+      order = order.sort((a, b) => score.get(b)! - score.get(a)!); // stable: ties stay alphabetical
+    }
+    let unread = 0;
+    for (const [i, path] of order.entries()) {
+      if (i < maxFiles) { const mark = text(path); if (mark) out.files[path] = mark; }
+      else if (named.has(path)) out.files[path] = `[not read: over the evidence limit of ${maxFiles} files — unknown, not absent]`;
+      else unread++;
+    }
+    // Small bodies go whole; the larger ones split what is left evenly and keep their most relevant lines.
+    let left = maxChars, n = bodies.size, cap = Infinity;
+    for (const size of [...bodies.values()].map((b) => b.length).sort((a, b) => a - b)) {
+      if (size * n <= left) { left -= size; n--; } else { cap = Math.floor(left / n); break; }
+    }
+    for (const [path, body] of bodies) out.files[path] = excerpt(body, cap, terms);
+    if (unread) out.files["[not read]"] = `${unread} more matching files over the evidence limit of ${maxFiles} files — unknown, not absent`;
     const wanted = specs.map((s) => s.require?.path.split(".")).filter((p) => p?.[0] === "checks").map((p) => p![1]);
     const names = Object.keys(checks).filter((n) => wanted.includes(n));
     if (!names.length) return out;
@@ -738,14 +845,25 @@ export const refusal = (violations: Violation[]) => [
 
 export type PlannedEdit = { kind: "write"; content: string } | { kind: "edit"; edits: Array<{ old_string: string; new_string: string; replace_all?: boolean }> };
 
+/** One replacement in any spelling a host uses; null when it is not a replacement at all. */
+function plannedReplacement(e: any): { old_string: string; new_string: string; replace_all?: boolean } | null {
+  const oldString = e?.old_string ?? e?.oldString ?? e?.oldText ?? e?.old_text;
+  const newString = e?.new_string ?? e?.newString ?? e?.newText ?? e?.new_text;
+  if (typeof oldString !== "string" || typeof newString !== "string") return null;
+  const replaceAll = e?.replace_all ?? e?.replaceAll;
+  return replaceAll === undefined ? { old_string: oldString, new_string: newString } : { old_string: oldString, new_string: newString, replace_all: replaceAll };
+}
+
 /** Any host's edit tool input as a PlannedEdit. Lowercase names and camelCase fields map to Claude Code's shape. */
 export function plannedEdit(tool: string, ti: any = {}): PlannedEdit | null {
   const t = tool.toLowerCase();
   if (t === "write") return typeof ti?.content === "string" ? { kind: "write", content: ti.content } : null;
-  if (t === "multiedit") return Array.isArray(ti?.edits) ? { kind: "edit", edits: ti.edits } : null;
-  if (t === "edit" || t === "notebookedit")
-    return { kind: "edit", edits: [{ old_string: ti?.old_string ?? ti?.oldString, new_string: ti?.new_string ?? ti?.newString, replace_all: ti?.replace_all ?? ti?.replaceAll }] };
-  return null;
+  // `edits` is the modern shape: an array (Pi, Claude, Codex) or one entry. Cursor, Codex and the
+  // older Pi schema also send the two strings at the top level. Every spelling becomes one shape,
+  // so a host that renames a field is guarded rather than silently unguarded.
+  const raw = Array.isArray(ti?.edits) ? ti.edits : ti?.edits && typeof ti.edits === "object" ? [ti.edits] : [ti];
+  const edits = raw.map(plannedReplacement).filter((e): e is NonNullable<typeof e> => e !== null);
+  return edits.length ? { kind: "edit", edits } : null;
 }
 
 /** The file the edit would produce; null when it cannot be told. */
@@ -821,36 +939,42 @@ export function readRounds(sessionId: string): RoundState | null {
 }
 const write = (path: string, text: string) => { try { writeAtomic(path, text); } catch { /* temp state is a convenience */ } };
 
-/** Delete the session's temp files; macOS does not reliably clean $TMPDIR. */
-export function endSession(sessionId: string): void {
-  for (const f of [roundsPath(sessionId), join(tmpdir(), `orly-nokey-${sessionId}`)]) rmSync(f, { force: true });
+/** `orly off` for one session: a marker the gate and the host hooks read; `orly on` removes it. */
+export const offPath = (sessionId: string) => join(tmpdir(), `orly-off-${sessionId}`);
+export const isOff = (sessionId: string): boolean => existsSync(offPath(sessionId));
+export function setOff(sessionId: string, off: boolean): void {
+  if (off) write(offPath(sessionId), "");
+  else rmSync(offPath(sessionId), { force: true });
 }
 
-export type GateInput = { cwd: string; sessionId: string; read: () => Promise<Turn | null>; answeringBlock?: boolean; flush?: boolean; transcriptPath?: string };
+/** Delete the session's temp files; macOS does not reliably clean $TMPDIR. */
+export function endSession(sessionId: string): void {
+  for (const f of [roundsPath(sessionId), offPath(sessionId), join(tmpdir(), `orly-nokey-${sessionId}`)]) rmSync(f, { force: true });
+}
+
+export type GateInput = { cwd: string; sessionId: string; read: () => Promise<Turn | null>; answeringBlock?: boolean; flush?: boolean };
 export type GateOutcome = { block: boolean; reason?: string; message?: string; note?: string; judgment?: Judgment };
 
 /** Run the gate on one turn. Never throws; fails open, fails closed on bad specs. */
 export async function gateTurn(input: GateInput): Promise<GateOutcome> {
   const { cwd, sessionId } = input;
   const specFile = loadSpecFile(cwd);
-  const all = specFile?.specs ?? [];
-  // A swarm sitter answers to its own seat's spec group and the ungrouped specs, never to another seat's.
-  const group = seatSpecGroup(cwd, input.transcriptPath);
-  const own = (id: string) => { const rel = specFile?.paths[id] ?? ""; return group === undefined || !rel.includes("/") || rel.split("/")[0] === group; };
-  const specs = all.filter((s) => !s.select && own(s.id)); // row specs run through `orly rows` only
+  const specs = specFile?.specs ?? [];
   const orlyDir = findOrlyDir(cwd);
   const allow = (note?: string): GateOutcome => (note ? { block: false, note } : { block: false });
+  if (isOff(sessionId)) return allow("off for this session (`orly on` turns it back on)");
 
-  if (orlyDir && all.length) {
+  if (orlyDir && specs.length) {
     const basePath = join(orlyDir, "baseline.json");
     let baseline: any = null;
     try { baseline = JSON.parse(readFileSync(basePath, "utf8")); } catch { /* first run: disk becomes baseline */ }
-    const { violations, nextBaseline } = checkBaseline(baseline, { goal: specFile!.goal, specs: all, checks: loadConfig(cwd).checks });
+    const { violations, nextBaseline } = checkBaseline(baseline, { goal: specFile!.goal, specs, checks: loadConfig(cwd).checks });
     if (violations.length) return { block: true, reason: refusal(violations) };
     write(basePath, JSON.stringify(nextBaseline, null, 2));
   }
 
-  if (input.answeringBlock && !specs.length) return allow();
+  // One block per stop: the reply to a block is never judged again. A weakened gate (above) still blocks it.
+  if (input.answeringBlock) return allow(specs.length ? "answering a block: not judged again" : undefined);
 
   const marker = join(tmpdir(), `orly-nokey-${sessionId}`);
   const noKey = (): GateOutcome => (existsSync(marker) ? allow() : (write(marker, ""), { block: false, message: NO_KEY_MESSAGE }));
@@ -891,11 +1015,11 @@ export async function gateTurn(input: GateInput): Promise<GateOutcome> {
   return verdict.block ? { block: true, reason: verdict.reason, judgment: result } : { block: false, judgment: result, ...(later && { note: later }) };
 }
 
-/** What the agent is told when a session starts: the goals, the specs, and the one rule. */
+/** What the agent is told once the session arms the gate: the goals, the specs, and the one rule. */
 export function sessionBrief(cwd: string, cli?: string): string | null {
   if (!findOrlyDir(cwd)) return null;
   const file = loadSpecFile(cwd);
-  const specs = (file?.specs ?? []).filter((s) => !s.select).sort(byRank);
+  const specs = (file?.specs ?? []).sort(byRank);
   return [
     "# orly? — the completion gate is active",
     "",
@@ -913,960 +1037,14 @@ export function sessionBrief(cwd: string, cli?: string): string | null {
   ].join("\n");
 }
 
-// ---------------------------------------------------------------- row specs (orchi CONTRACT §9)
-// `.orly/tables` maps a table name to a glob of markdown or JSONL files, loaded read-only into an in-memory
-// SQLite DB; a spec's `select:` picks rows, `require: rows <op> N` decides by count alone, otherwise Jev
-// answers one noul per row in one request. Never part of the Stop gate.
-export const MAX_ROWS = 50;
-/** One name per concept; the source files stay as they are. */
-const ALIAS: Record<string, string> = { targets: "target", asked_by: "askers", "asked-at": "asked_at" };
-const ARROW = /^\s*(-?\d+(?:\.\d+)?)\s*(?:→|->)\s*(-?\d+(?:\.\d+)?)\s*$/;
-
-function scalar(v: string): unknown {
-  if (/^\[.*\]$/.test(v)) return v.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean).map(scalar); // ponytail: commas inside quoted list items split
-  if (/^".*"$/.test(v)) try { return JSON.parse(v); } catch { return v.slice(1, -1); }
-  if (/^'.*'$/.test(v)) return v.slice(1, -1).replace(/''/g, "'");
-  if (/^-?\d+(?:\.\d+)?$/.test(v)) return Number(v);
-  return v === "true" ? true : v === "false" ? false : v;
-}
-
-/** The frontmatter these files use: `key: scalar`, quoted strings, `[a, b]`, and `- item` block lists.
- *  Not YAML: a third of kern2's memos start values with a backtick, which YAML refuses. Nested maps are skipped. */
-export function frontmatter(text: string): { fm: Record<string, any>; body: string } {
-  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
-  if (!m) return { fm: {}, body: text };
-  const fm: Record<string, any> = {};
-  let last: string | undefined;
-  for (const line of m[1].split(/\r?\n/)) {
-    const kv = line.match(/^([A-Za-z_][\w-]*):(?:\s+(.*))?$/);
-    const item = line.match(/^\s*-\s+(.*)$/);
-    if (kv) fm[(last = kv[1])] = kv[2]?.trim() ? scalar(kv[2].trim()) : null;
-    else if (item && last && (fm[last] === null || Array.isArray(fm[last]))) (fm[last] ??= []).push(scalar(item[1].trim()));
-  }
-  return { fm: normalizeKeys(fm), body: text.slice(m[0].length) };
-}
-
-export function normalizeKeys(fm: Record<string, any>): Record<string, any> {
-  const out: Record<string, any> = {};
-  for (const [k, v] of Object.entries(fm)) {
-    const key = ALIAS[k] ?? k;
-    out[key] = v;
-    const a = typeof v === "string" && v.match(ARROW);
-    if (a) { out[`${key}_before`] = Number(a[1]); out[`${key}_after`] = Number(a[2]); }
-  }
-  return out;
-}
-
-/** `name: glob` per line, relative to the project or absolute (`~` allowed). */
-export function parseTables(text: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const line of text.split("\n")) {
-    const m = line.trim().match(/^([A-Za-z_]\w*):\s*(\S.*)$/);
-    if (m) out[m[1]] = m[2].trim();
-  }
-  return out;
-}
-
-/** .orly/tables, over the swarm's own tables when .orly/swarm exists (seat, questions, bus, claims, sitters); .orly/tables wins. */
-export function tablesFor(orlyDir: string): Record<string, string> {
-  const own = existsSync(join(orlyDir, "tables")) ? parseTables(readFileSync(join(orlyDir, "tables"), "utf8")) : {};
-  if (!existsSync(join(orlyDir, "swarm"))) return own;
-  const d = ".orly/swarm/data";
-  return { seat: ".orly/swarm/seats/*.md", questions: ".orly/swarm/questions/*.md", bus: `${d}/bus.jsonl`, claims: `${d}/claims.jsonl`, sitters: `${d}/sitters.jsonl`, ...own };
-}
-
-/** Files a glob names; the part before the first wildcard is the scan root, so dot folders match. */
-function files(glob: string, root: string): string[] {
-  const abs = glob.startsWith("~/") ? join(homedir(), glob.slice(2)) : isAbsolute(glob) ? glob : join(root, glob);
-  const parts = abs.split("/");
-  const i = parts.findIndex((p) => /[*?[{]/.test(p));
-  if (i < 0) return existsSync(abs) ? [abs] : [];
-  const cwd = parts.slice(0, i).join("/") || "/";
-  if (!existsSync(cwd)) return [];
-  return [...new Bun.Glob(parts.slice(i).join("/")).scanSync({ cwd, absolute: true, dot: true })].sort();
-}
-
-/** Every table into one in-memory DB, read-only once loaded. */
-export function loadTables(tables: Record<string, string>, root: string): Database {
-  const db = new Database(":memory:");
-  for (const [name, glob] of Object.entries(tables)) {
-    db.run(`CREATE TABLE "${name}" (path TEXT, kind TEXT, fm TEXT, body TEXT, mtime REAL)`);
-    const insert = db.prepare(`INSERT INTO "${name}" VALUES (?, ?, ?, ?, ?)`);
-    db.transaction(() => {
-      for (const path of files(glob, root)) {
-        const text = readFileSync(path, "utf8");
-        const mtime = statSync(path).mtimeMs;
-        const dir = basename(dirname(path));
-        const put = (fm: Record<string, any>, body: string | null) => insert.run(path, typeof fm.kind === "string" ? fm.kind : dir, JSON.stringify(fm), body, mtime);
-        if (path.endsWith(".jsonl")) {
-          for (const o of readJsonl(path)) if (o && typeof o === "object") put(normalizeKeys(o), null);
-        } else {
-          const { fm, body } = frontmatter(text);
-          put(fm, body);
-        }
-      }
-    })();
-  }
-  db.run("PRAGMA query_only = ON");
-  return db;
-}
-
-export type RowAnswer = { row: Record<string, unknown>; p?: number; failed: boolean };
-export type RowsResult = { met: boolean; reason: string; rows: RowAnswer[] };
-type Ask = (state: unknown, questions: Record<string, unknown>) => Promise<{ answers: Record<string, any> }>;
-
-/** Run one row spec against a project whose `.orly` sits in `orlyDir`. */
-export async function runRows(spec: Spec, orlyDir: string, askFn?: Ask): Promise<RowsResult> {
-  const fail = (reason: string): RowsResult => ({ met: false, reason, rows: [] });
-  if (!spec.select) return fail("not a row spec: no select header");
-  const bad = validateSpecs([spec]);
-  if (bad.length) return fail(bad.map((b) => b.problem).join("; "));
-  const tables = tablesFor(orlyDir);
-  if (!Object.keys(tables).length) return fail(`no ${join(orlyDir, "tables")}`);
-  let found: Record<string, unknown>[];
-  try { found = loadTables(tables, dirname(orlyDir)).query(spec.select).all() as any[]; } catch (e: any) { return fail(`select failed: ${e?.message ?? e}`); }
-  const rows = found.map((r) => { try { return typeof r.fm === "string" ? { ...r, fm: JSON.parse(r.fm) } : r; } catch { return r; } });
-  if (spec.require) {
-    const { met } = evaluate(spec.require, { rows: rows.length });
-    return { met, reason: `rows ${rows.length}, require rows ${spec.require.op} ${spec.require.value ?? ""}`.trim(), rows: rows.slice(0, MAX_ROWS).map((row) => ({ row, failed: false })) };
-  }
-  if (rows.length > MAX_ROWS) return fail(`too broad: ${rows.length} rows, the cap is ${MAX_ROWS}; narrow the select`);
-  if (!rows.length) return { met: true, reason: "no rows", rows: [] };
-  const questions: Record<string, unknown> = {};
-  rows.forEach((row, n) => {
-    questions[`row:${n}`] = {
-      type: "noul",
-      instructions: `Judge only \`rows[${n}]\`${typeof row.path === "string" ? ` (path ${row.path})` : ""}; call it \`row\`. ${spec.instructions}`,
-      criteria: { true: spec.criteria?.true ?? "The row shows this is so.", false: spec.criteria?.false ?? "The row does not show this, or shows the opposite." },
-    };
-  });
-  const { answers } = await (askFn ?? (await defaultAsk(orlyDir)))({ rows }, questions);
-  const cut = spec.cut ?? 0.7;
-  const out = rows.map((row, n) => { const p = answers?.[`row:${n}`]?.noul; return { row, p, failed: typeof p === "number" && p > cut }; });
-  const failed = out.filter((r) => r.failed).length;
-  return { met: !failed, reason: `${failed} of ${rows.length} rows above cut ${cut}`, rows: out };
-}
-
-async function defaultAsk(orlyDir: string): Promise<Ask> {
-  const apiKey = await resolveKey(dirname(orlyDir));
-  if (!apiKey) throw new Error("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json or ~/.orly/config.json");
-  return (state, questions) => ask(state, questions, { apiKey, endpoint: process.env.TYPESAFE_BASE_URL, model: process.env.ORLY_MODEL, timeoutMs: Number(process.env.ORLY_TIMEOUT_MS) || 30_000 });
-}
-
-/** `orly rows <spec-path-or-id>`: rows and answers, never a gate. Exit 1 only when it could not run. */
-export async function rowsCommand(arg: string | undefined, cwd: string): Promise<number> {
-  if (!arg) { console.error("orly: usage: orly rows <spec-path-or-id>"); return 1; }
-  const path = resolve(cwd, arg);
-  const orlyDir = findOrlyDir(existsSync(path) ? dirname(path) : cwd);
-  if (!orlyDir) { console.error("orly: no .orly here or above"); return 1; }
-  const spec = existsSync(path) ? parseSpec(basename(path, EXT), readFileSync(path, "utf8")) : loadSpecFile(cwd)?.specs.find((s) => s.id === arg);
-  if (!spec) { console.error(`orly: no spec "${arg}"`); return 1; }
-  const t0 = performance.now();
-  let result: RowsResult;
-  try { result = await runRows(spec, orlyDir); } catch (e: any) { console.error(`orly: ${e?.message ?? e}`); return 1; }
-  const show = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === "string" && x.length > 160 ? `${x.slice(0, 160)}…` : x));
-  for (const r of result.rows) console.log(`${r.p === undefined ? "" : `${r.failed ? "✗" : "✓"} ${r.p.toFixed(2)}  `}${show(r.row)}`);
-  console.log(`${result.met ? "met" : "unmet"} · ${spec.id}: ${result.reason} · ${Math.round(performance.now() - t0)} ms`);
-  return 0;
-}
-
-// ---------------------------------------------------------------- the swarm (orchi CONTRACT §10)
-// `.orly/swarm/swarm.md` (frontmatter: main, gate) and `.orly/swarm/seats/<seat>.md` (frontmatter: filled, specs).
-// Every session that runs `/orly` joins the repo's one swarm: `orly swarm` seats the director while its lease is
-// free, then one `<seat>-<n>` per worker seat whose `filled` query returns rows. The bus, the claims and the lanes'
-// work dirs live in `.orly/swarm/data/` (never tracked). Session ownership combines the harness pid (or ORLY_PID) and CODEX_THREAD_ID when present.
-
-/** A failure the CLI prints as `orly: <message>`; `exit` 2 is a usage error, 1 a refusal. */
-class SwarmError extends Error {
-  constructor(message: string, readonly exit = 1) { super(message); }
-}
-const usage = (text: string): never => { throw new SwarmError(`usage: ${text}`, 2); };
-const refuse = (text: string): never => { throw new SwarmError(text); };
-
-type Swarm = { root: string; data: string; main: string; gate: string[] };
-type BusLine = { seq: number; ts: string; head: string; from: string; to: string; verb: string | null; slug: string | null; sha: string | null; reply_to: number | null; text: string };
-type Claim = { ts: string; owner: string; slug: string; pid: number; files: string[] };
-type SessionOwner = { pid: number; thread?: string };
-type SitterName = SessionOwner & { ts: string; name: string; seat: string };
-export type Sitter = { name: string; seat: string; path: string; specs?: string; rows: number };
-
-const VERBS = ["claimed", "released", "land", "landed", "bounced", "seated", "ask", "answered", "finding", "question"];
-const NAME = /^[a-z0-9][a-z0-9-]*$/;
-const HELPERS = new Set(["sh", "bash", "zsh", "dash", "fish", "nu", "just", "env", "timeout", "perl", "sudo", "bun"]);
-const LEASE_HEARTBEAT_S = 120;
-const CACHE_LOG_LINES = 256;
-
-const isoNow = () => new Date().toISOString().replace(/\.\d+Z$/, "Z");
-const checkName = (what: string, name: string) => { if (!NAME.test(name)) refuse(`'${name}' is not a ${what}`); };
-
-/** Whether a pid runs. A pid we may not signal still runs. */
-function alive(pid: number): boolean {
-  if (!(pid > 0)) return false;
-  try { process.kill(pid, 0); return true; } catch (e: any) { return e?.code === "EPERM"; }
-}
-
-/** The agent process this call runs under: the first ancestor that is not a shell or helper. */
-function sessionPid(): number {
-  if (process.env.ORLY_PID) return Number(process.env.ORLY_PID);
-  for (let pid = process.ppid; pid > 1; ) {
-    const m = run(["ps", "-o", "ppid=,comm=", "-p", String(pid)], "/").out.trim().match(/^(\d+)\s+(.*)$/);
-    if (!m) break;
-    if (!HELPERS.has(basename(m[2]).replace(/^-/, ""))) return pid;
-    pid = Number(m[1]);
-  }
-  return 0;
-}
-
-function sessionOwner(): SessionOwner {
-  const thread = process.env.CODEX_THREAD_ID;
-  return { pid: sessionPid(), ...(thread ? { thread } : {}) };
-}
-
-function sameSession(a: SessionOwner, b: SessionOwner): boolean {
-  return a.pid === b.pid && a.thread === b.thread;
-}
-
-/** An exclusive lock file that holds its owner's pid, for the length of `fn`. A dead owner's lock is taken over.
- *  ponytail: two waiters that both find the owner dead can both take over; a real flock if that ever bites. */
-async function withLock<T>(path: string, fn: () => T | Promise<T>, yieldTo?: string): Promise<T> {
-  return withAnyLock([path], () => fn(), yieldTo);
-}
-
-/** Take the first free lock of `paths` (a dead owner's is free), run `fn` with its index, release it. */
-async function withAnyLock<T>(paths: string[], fn: (i: number) => T | Promise<T>, yieldTo?: string): Promise<T> {
-  for (let i = 0; ; i = (i + 1) % paths.length) {
-    if (yieldTo && existsSync(yieldTo)) {
-      const first = Number(readFileSync(yieldTo, "utf8") || 0);
-      if (first > 0 && alive(first)) { await Bun.sleep(20); continue; }
-      rmSync(yieldTo, { force: true });
-    }
-    const path = paths[i];
-    try { writeFileSync(path, String(process.pid), { flag: "wx" }); } catch (e: any) {
-      if (e?.code !== "EEXIST") throw e;
-      let owner = 0;
-      try { owner = Number(readFileSync(path, "utf8")); } catch { continue; }
-      if (owner > 0 && !alive(owner)) rmSync(path, { force: true });
-      else if (i === paths.length - 1) await Bun.sleep(20); // owner 0: the file is being written
-      continue;
-    }
-    try { return await fn(i); } finally { rmSync(path, { force: true }); }
-  }
-}
-
-/** `.orly/swarm/` of the main tree, also when called from a lane's work dir: every lane shares one bus. */
-function swarmAt(cwd: string): Swarm {
-  const common = gitOut(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir");
-  const root = common ? dirname(common) : projectRoot(cwd);
-  if (!root || !existsSync(join(root, ".orly", "swarm"))) refuse("no .orly/swarm/ here or above");
-  const path = join(root!, ".orly", "swarm", "swarm.md");
-  const fm = existsSync(path) ? frontmatter(readFileSync(path, "utf8")).fm : {};
-  const gate = Array.isArray(fm.gate) ? fm.gate.map(String) : fm.gate ? [String(fm.gate)] : [];
-  const data = join(root!, ".orly", "swarm", "data");
-  mkdirSync(data, { recursive: true });
-  if (!existsSync(join(data, ".gitignore"))) writeFileSync(join(data, ".gitignore"), "*\n");
-  return { root: root!, data, main: typeof fm.main === "string" ? fm.main : "main", gate };
-}
-
-/** The gate: each name in swarm.md's `gate` with its check from config.json; a name with no check is refused. */
-function gateChecks(s: Swarm): Record<string, CheckSpec> {
-  const checks: Record<string, CheckSpec> = loadConfig(s.root).checks ?? {};
-  if (!s.gate.length) refuse("no gate: list check names under `gate` in .orly/swarm/swarm.md");
-  const missing = s.gate.filter((name) => !checks[name]);
-  if (missing.length) refuse(`swarm.md gate names no check in .orly/config.json: ${missing.join(", ")}`);
-  return Object.fromEntries(s.gate.map((name) => [name, checks[name]]));
-}
-
-// ---- the bus: .orly/swarm/data/bus.jsonl, one typed line per message, never trimmed
-
-const busPath = (s: Swarm) => join(s.data, "bus.jsonl");
-const busLock = (s: Swarm) => join(s.data, "bus.lock");
-
-/** Every bus line, with a seq for any line appended by hand (written back so the seqs stay). Call under the bus lock. */
-function stampedBus(s: Swarm): BusLine[] {
-  const lines = readJsonl<BusLine>(busPath(s));
-  let last = 0;
-  let stamped = false;
-  for (const line of lines) {
-    if (typeof line.seq !== "number") { line.seq = last + 1; stamped = true; }
-    last = Math.max(last, line.seq);
-  }
-  if (stamped) writeJsonl(busPath(s), lines);
-  return lines;
-}
-
-/** One line, typed from its text: verb (its first word, from the closed list), slug (the word after), sha (the first
- *  word naming a commit), reply_to (N of `re N` or `took N`). Call under the bus lock. */
-function appendBus(s: Swarm, from: string, to: string, text: string): BusLine {
-  const words = text.split(" ");
-  const verb = VERBS.includes(words[0]) ? words[0] : null;
-  let sha: string | null = null;
-  for (const word of text.match(/[0-9a-f]{7,40}/g) ?? []) {
-    sha = gitOut(s.root, "rev-parse", "-q", "--short", "--verify", `${word}^{commit}`);
-    if (sha) break;
-  }
-  const reply = text.match(/^(re|took) (\d+)\b/);
-  const line: BusLine = {
-    seq: (stampedBus(s).at(-1)?.seq ?? 0) + 1,
-    ts: isoNow(),
-    head: gitOut(s.root, "rev-parse", "--short", s.main) ?? "none",
-    from,
-    to,
-    verb,
-    slug: verb && words[1] ? words[1].replace(/:$/, "") : null,
-    sha,
-    reply_to: reply ? Number(reply[2]) : null,
-    text,
-  };
-  appendFileSync(busPath(s), JSON.stringify(line) + "\n");
-  return line;
-}
-
-async function busPost(s: Swarm, from: string, to: string, text: string): Promise<BusLine> {
-  checkName("name; the slug goes in the text", from);
-  checkName("name; the slug goes in the text", to);
-  return withLock(busLock(s), () => appendBus(s, from, to, text));
-}
-
-/** Lines to `me`, its seat (`me` without `-N`), `all` or a tag, never its own; `*` is every line. */
-function addressedTo(me: string, tags: string[]) {
-  const to = new Set([me, me.replace(/-\d+$/, ""), "all", ...tags]);
-  return (line: BusLine) => line.from !== me && (to.has("*") || to.has(line.to));
-}
-
-/** New lines since `me`'s read mark that pass `keep`, printed; the mark moves past every line read. */
-async function busSince(s: Swarm, me: string, keep: (line: BusLine) => boolean) {
-  checkName("name", me);
-  const readToPath = join(s.data, `read.${me}`);
-  const readTo = existsSync(readToPath) ? Number(readFileSync(readToPath, "utf8")) || 0 : 0;
-  const lines = await withLock(busLock(s), () => stampedBus(s));
-  for (const line of lines) if (line.seq > readTo && keep(line)) console.log(JSON.stringify(line));
-  const last = lines.at(-1)?.seq ?? 0;
-  if (last > readTo) writeFileSync(readToPath, String(last));
-}
-
-/** Take line `seq` as yours to act on; refused when someone took it first. */
-async function busTake(s: Swarm, me: string, seq: number): Promise<BusLine> {
-  checkName("name", me);
-  return withLock(busLock(s), () => {
-    const lines = stampedBus(s);
-    const line = lines.find((l) => l.seq === seq) ?? refuse(`no line ${seq}`);
-    const took = lines.find((l) => l.text === `took ${seq}`);
-    if (took) refuse(`refused: ${took.from} took ${seq}`);
-    appendBus(s, me, line.from, `took ${seq}`);
-    return line;
-  });
-}
-
-/** `land` lines not yet answered by `landed` or `bounced` for their slug. */
-function busPending(s: Swarm): BusLine[] {
-  const open = new Map<string, BusLine>();
-  for (const line of readJsonl<BusLine>(busPath(s))) {
-    if (!line.slug) continue;
-    if (line.verb === "land") open.set(line.slug, line);
-    else if (line.verb === "landed" || line.verb === "bounced") open.delete(line.slug);
-  }
-  return [...open.values()];
-}
-
-// ---- claims, leases and sitter names: who holds what, by session pid
-
-const claimsPath = (s: Swarm) => join(s.data, "claims.jsonl");
-
-async function claim(s: Swarm, me: string, slug: string, files: string[]) {
-  checkName("name", me);
-  await withLock(busLock(s), () => {
-    const claims = readJsonl<Claim>(claimsPath(s));
-    const others = claims.filter((c) => c.owner !== me || c.slug !== slug);
-    const taken = others.flatMap((c) => files.filter((f) => c.files.includes(f)).map((f) => `${f} is ${c.owner}'s (${c.slug})`));
-    if (taken.length) refuse(`refused: ${taken.join(", ")}`);
-    const had = claims.filter((c) => c.owner === me && c.slug === slug).flatMap((c) => c.files);
-    const mine: Claim = { ts: isoNow(), owner: me, slug, pid: sessionPid(), files: [...new Set([...had, ...files])].sort() };
-    writeJsonl(claimsPath(s), [...others, mine]);
-    appendBus(s, me, "all", `claimed ${slug}: ${files.join(" ")}`);
-  });
-}
-
-async function release(s: Swarm, me: string, slug: string) {
-  await withLock(busLock(s), () => writeJsonl(claimsPath(s), readJsonl<Claim>(claimsPath(s)).filter((c) => c.owner !== me || c.slug !== slug)));
-}
-
-/** The director's sweep: every claim whose session pid is gone is released, one `released` line each. */
-async function reap(s: Swarm): Promise<Claim[]> {
-  return withLock(busLock(s), () => {
-    const claims = readJsonl<Claim>(claimsPath(s));
-    const gone = claims.filter((c) => !alive(c.pid));
-    writeJsonl(claimsPath(s), claims.filter((c) => alive(c.pid)));
-    for (const c of gone) appendBus(s, c.owner, "all", `released ${c.slug}: session pid ${c.pid} is gone`);
-    return gone;
-  });
-}
-
-/** Hold or renew the singleton `role` for this session. Held by another session while its pid runs; a lease
- *  with no pid is held while its heartbeat is under two minutes old. Returns false when another session holds it. */
-async function lease(s: Swarm, role: string): Promise<boolean> {
-  checkName("name", role);
-  const path = join(s.data, `lease.${role}`);
-  const me = sessionOwner();
-  return withLock(busLock(s), () => {
-    const now = Math.floor(Date.now() / 1000);
-    let held: (SessionOwner & { at: number }) | null = null;
-    try { held = JSON.parse(readFileSync(path, "utf8")); } catch { /* free */ }
-    if (held && !sameSession(held, me)) {
-      const live = held.pid ? alive(held.pid) : now - held.at < LEASE_HEARTBEAT_S;
-      if (live) return false;
-    }
-    writeAtomic(path, JSON.stringify({ role, at: now, ...me }));
-    return true;
-  });
-}
-
-async function unlease(s: Swarm, role: string) {
-  const path = join(s.data, `lease.${role}`);
-  await withLock(busLock(s), () => {
-    try { if (sameSession(JSON.parse(readFileSync(path, "utf8")), sessionOwner())) rmSync(path); } catch { /* not held */ }
-  });
-}
-
-/** This session's sitter name for `seat`: the one it holds, else `<seat>-<n>` by the next n no live session holds. */
-async function sit(s: Swarm, seat: string): Promise<string> {
-  checkName("name", seat);
-  const path = join(s.data, "sitters.jsonl");
-  const me = sessionOwner();
-  return withLock(busLock(s), () => {
-    const live = readJsonl<SitterName>(path).filter((r) => sameSession(r, me) || alive(r.pid)); // a gone session's names are free
-    let name = live.find((r) => r.seat === seat && sameSession(r, me))?.name;
-    if (!name) {
-      let n = 1;
-      while (live.some((r) => r.name === `${seat}-${n}`)) n++;
-      name = `${seat}-${n}`;
-      live.push({ ts: isoNow(), name, seat, ...me });
-    }
-    writeJsonl(path, live);
-    return name;
-  });
-}
-
-/** How many rows a seat's `filled` returns: `always` is one; anything but one SELECT or WITH is an error. */
-function filledRows(db: Database, seat: string, filled: unknown): number {
-  if (filled === "always") return 1;
-  if (typeof filled !== "string" || !oneSelect(filled)) refuse(`seat ${seat}: filled must be \`always\` or one SELECT`);
-  try { return db.query(filled as string).all().length; } catch (e: any) { return refuse(`seat ${seat}: filled failed: ${e?.message ?? e}`); }
-}
-
-/** This session's seating plan. Names are reserved per session identity, so rejoining returns the same plan. */
-export async function seatingPlan(s: Swarm): Promise<Sitter[]> {
-  const orlyDir = join(s.root, ".orly");
-  if (!existsSync(join(orlyDir, "swarm", "seats"))) refuse("no .orly/swarm/seats/ here");
-  const db = loadTables(tablesFor(orlyDir), s.root);
-  const seats = (db.query("SELECT path, fm FROM seat ORDER BY path").all() as Array<{ path: string; fm: string }>)
-    .map((r) => ({ path: r.path, seat: basename(r.path, ".md"), fm: JSON.parse(r.fm) }));
-  const plan: Sitter[] = [];
-  for (const { path, seat, fm } of seats) {
-    const rows = filledRows(db, seat, fm.filled);
-    if (seat === "director") {
-      if (await lease(s, "director")) plan.unshift({ name: "director", seat, path, specs: fm.specs, rows });
-      continue;
-    }
-    if (rows) plan.push({ name: await sit(s, seat), seat, path, specs: fm.specs, rows });
-  }
-  return plan;
-}
-
-/** Why a swarm seat may not call AskUserQuestion; the hook's deny reason. */
-export const ASK_GATE_REASON = "swarm seats never block on the human: write .orly/swarm/questions/<slug>.md (question, options, status: open), post `question <slug>` on the bus, keep working";
-
-/** The swarm seat this session sits in, or null outside any swarm. A seat is named by the transcript's
- *  agentName (a teammate) or by this session's pid, when either holds the director lease or a sitter name. */
-export function swarmSeat(cwd: string, transcriptPath?: string): string | null {
-  const common = gitOut(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir");
-  const root = common ? dirname(common) : projectRoot(cwd);
-  const data = root && join(root, ".orly", "swarm", "data");
-  if (!data || !existsSync(data)) return null;
-  const holders = readJsonl<SitterName>(join(data, "sitters.jsonl")).filter((r) => alive(r.pid));
-  try {
-    const director = JSON.parse(readFileSync(join(data, "lease.director"), "utf8"));
-    if (alive(director.pid)) holders.push({ ts: "", name: "director", seat: "director", pid: director.pid, thread: director.thread });
-  } catch { /* no director */ }
-  let agent: string | undefined;
-  try {
-    for (const line of readFileSync(transcriptPath ?? "", "utf8").split("\n").slice(0, 50)) {
-      // Claude Code names a teammate `agentName`; Codex names a spawned agent by the last segment of its agent_path
-      try { const e = JSON.parse(line); agent = e.agentName ?? e.payload?.source?.subagent?.thread_spawn?.agent_path?.split("/").pop()?.replaceAll("_", "-"); } catch { /* a torn line */ }
-      if (agent) break;
-    }
-  } catch { /* no transcript */ }
-  // No agentName: the host session, which reserves its teammates' names under its own pid and asks the human for them.
-  if (!agent) return null;
-  const me = sessionOwner();
-  return holders.find((h) => h.name === agent)?.name ?? holders.find((h) => sameSession(h, me))?.name ?? null;
-}
-
-// why: Human-approved host routing keeps seat-specific gates on sitters and swarm gates on hosts.
-export function seatSpecGroup(cwd: string, transcriptPath?: string): string | null | undefined {
-  const name = swarmSeat(cwd, transcriptPath);
-  const dir = findOrlyDir(cwd);
-  if (!name) return dir && existsSync(join(dir, "swarm")) ? "swarm" : undefined;
-  const path = dir && join(dir, "swarm", "seats", `${name.replace(/-\d+$/, "")}.md`);
-  const group = path && existsSync(path) ? frontmatter(readFileSync(path, "utf8")).fm.specs : null;
-  return typeof group === "string" && group ? group : null;
-}
-
-/** A sitter's cache, `data/cache/<me>.md`: a State it replaces and a Log it appends to (the last 256 kept). */
-async function writeCache(s: Swarm, me: string, change: { state?: string; log?: string }) {
-  checkName("name", me);
-  const dir = join(s.data, "cache");
-  mkdirSync(dir, { recursive: true });
-  const path = join(dir, `${me}.md`);
-  await withLock(busLock(s), () => {
-    const text = existsSync(path) ? readFileSync(path, "utf8") : "";
-    const oldState = text.match(/## State\n\n([\s\S]*?)\n*## Log/)?.[1].trim() || "(none yet)";
-    const logs = (text.split("## Log\n")[1] ?? "").split("\n").filter((l) => l.startsWith("- "));
-    if (change.log) logs.push(change.log);
-    writeAtomic(path, `# ${me}\n\n## State\n\n${change.state ?? oldState}\n\n## Log\n\n${logs.slice(-CACHE_LOG_LINES).map((l) => l + "\n").join("")}`);
-  });
-}
-
-// ---- lanes: one sitter's branch lane/<name>, written with git plumbing and never checked out. The sitter edits
-// copies of only the files it touches in data/work/<name>/<path>; main's tree is untouched. Lands run one at a time.
-
-const laneRef = (name: string) => `refs/heads/lane/${name}`;
-const workDir = (s: Swarm, name: string) => join(s.data, "work", name);
-const readLines = (path: string) => (existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean) : []);
-const signed = (msg: string, name: string) => (/^Sitter: /m.test(msg) ? `${msg}\n` : `${msg}\n\nSitter: ${name}\n`);
-
-function checkPath(path: string) {
-  if (`/${path}/`.includes("/../") || path.startsWith("/")) refuse(`'${path}' is not a repo path`);
-}
-
-/** Make lane/<name> off main when new; the work dir. */
-function laneOpen(s: Swarm, name: string): string {
-  checkName("sitter name", name);
-  if (!git(s.root, "show-ref", "-q", "--verify", laneRef(name)).ok) {
-    const made = git(s.root, "branch", "-q", `lane/${name}`, s.main);
-    if (!made.ok) refuse(made.err.trim());
-  }
-  mkdirSync(workDir(s, name), { recursive: true });
-  return workDir(s, name);
-}
-
-/** Copy lane/<name>'s version of each path into the work dir, remembering the blob it came from. */
-function laneGet(s: Swarm, name: string, paths: string[]) {
-  const work = laneOpen(s, name);
-  for (const p of paths) {
-    checkPath(p);
-    const blob = gitOut(s.root, "rev-parse", "-q", "--verify", `lane/${name}:${p}`);
-    if (!blob) { console.error(`orly: ${p} is not on lane/${name}; write ${join(work, p)} to add it`); continue; }
-    mkdirSync(dirname(join(work, p)), { recursive: true });
-    writeFileSync(join(work, p), run(["git", "cat-file", "blob", blob], s.root).bytes);
-    appendFileSync(join(work, ".got"), `${p}\n`);
-    appendFileSync(join(work, ".base"), `${blob} ${p}\n`);
-    if (gitOut(s.root, "ls-tree", `lane/${name}`, "--", p)?.startsWith("100755")) chmodSync(join(work, p), 0o755);
-  }
-}
-
-/** Commit the work dir's copies of `paths` onto lane/<name>; a missing copy it got deletes the path, and no path
- *  makes an empty commit (a checkpoint). After a sync that stopped on a conflict this is the merge commit. */
-function lanePut(s: Swarm, name: string, msg: string, paths: string[]): string {
-  const work = laneOpen(s, name);
-  const old = gitOut(s.root, "rev-parse", laneRef(name))!;
-  const merge = existsSync(join(work, ".merge")) ? readFileSync(join(work, ".merge"), "utf8").trim() : null;
-  const mergeFiles = readLines(join(work, ".merge-files"));
-  const base = merge ? readFileSync(join(work, ".merge-tree"), "utf8").trim() : old;
-  const parents = merge ? ["-p", old, "-p", merge] : ["-p", old];
-  for (const p of mergeFiles) {
-    if (existsSync(join(work, p)) && /^<<<<<<< /m.test(readFileSync(join(work, p), "utf8"))) refuse(`${p} still has conflict markers`);
-    if (!paths.includes(p)) paths.push(p);
-  }
-  const index = join(s.data, `index.${name}`);
-  const env = { ...process.env, GIT_INDEX_FILE: index };
-  const gitIndexed = (...args: string[]) => run(["git", ...args], s.root, { env });
-  rmSync(index, { force: true });
-  try {
-    gitIndexed("read-tree", `${base}^{tree}`);
-    const got = readLines(join(work, ".got"));
-    const gotBlob = new Map(readLines(join(work, ".base")).map((l) => [l.slice(l.indexOf(" ") + 1), l.slice(0, l.indexOf(" "))]));
-    const puts: string[] = [];
-    for (const p of paths) {
-      checkPath(p);
-      const file = join(work, p);
-      if (existsSync(file)) {
-        // a copy got before a sync moved the lane would write the old file back whole
-        const was = gotBlob.get(p);
-        const now = gitOut(s.root, "rev-parse", "-q", "--verify", `${base}:${p}`);
-        const blob = gitOut(s.root, "hash-object", "-w", file)!;
-        if (was && now && was !== now && blob !== now && !mergeFiles.includes(p))
-          refuse(`${p} changed on lane/${name} since you got it; keep your edit aside, lane get ${name} ${p}, redo it, put again`);
-        const mode = statSync(file).mode & 0o111 ? "100755" : "100644";
-        gitIndexed("update-index", "--add", "--cacheinfo", `${mode},${blob},${p}`);
-        puts.push(`${blob} ${p}`);
-      } else {
-        if (!got.includes(p) && !mergeFiles.includes(p)) refuse(`${p} has no copy in ${work} and was never got; get it, or it would be deleted`);
-        gitIndexed("update-index", "--force-remove", "--", p);
-      }
-    }
-    const tree = gitIndexed("write-tree").out.trim();
-    const commit = run(["git", "commit-tree", tree, ...parents], s.root, { input: signed(msg, name) }).out.trim();
-    if (!git(s.root, "update-ref", laneRef(name), commit, old).ok) refuse(`lane/${name} moved under you; put again`);
-    for (const p of paths) if (existsSync(join(work, p)) && !got.includes(p)) appendFileSync(join(work, ".got"), `${p}\n`);
-    if (puts.length) appendFileSync(join(work, ".base"), puts.map((l) => l + "\n").join(""));
-    for (const f of [".merge", ".merge-tree", ".merge-files"]) rmSync(join(work, f), { force: true });
-    const short = gitOut(s.root, "rev-parse", "--short", commit)!;
-    console.error(`[lane/${name} ${short}] ${msg.split("\n")[0]}`);
-    return short;
-  } finally {
-    rmSync(index, { force: true });
-  }
-}
-
-/** `git merge-tree --write-tree`: the tree, and the conflicted files when it could not merge cleanly. */
-function mergeTree(s: Swarm, ours: string, theirs: string): { tree: string; conflicts: string[] | null } {
-  const r = git(s.root, "merge-tree", "--write-tree", "--name-only", ours, theirs);
-  const [tree, ...rest] = r.out.split("\n");
-  if (r.ok) return { tree: tree.trim(), conflicts: null };
-  if (!/^[0-9a-f]{40}$/.test(tree.trim())) refuse(r.err.trim() || "merge-tree failed");
-  const end = rest.indexOf("");
-  return { tree: tree.trim(), conflicts: rest.slice(0, end < 0 ? undefined : end) };
-}
-
-/** Merge main into lane/<name> (a merge, never a rebase: the lane's shas stay the ones posted on the bus). On a
- *  conflict the files, with markers, land in the work dir and `put` finishes the merge. Returns commits ahead. */
-function laneSync(s: Swarm, name: string): number {
-  const work = laneOpen(s, name);
-  if (existsSync(join(work, ".merge"))) refuse(`${name} has a merge waiting; resolve ${readLines(join(work, ".merge-files")).join(" ")} and put`);
-  const main = gitOut(s.root, "rev-parse", s.main)!;
-  const old = gitOut(s.root, "rev-parse", laneRef(name))!;
-  if (!git(s.root, "merge-base", "--is-ancestor", main, old).ok) {
-    const { tree, conflicts } = mergeTree(s, old, main);
-    if (!conflicts) {
-      const commit = run(["git", "commit-tree", tree, "-p", old, "-p", main], s.root, { input: signed(`sync: merge ${s.main} into lane/${name}`, name) }).out.trim();
-      git(s.root, "update-ref", laneRef(name), commit, old);
-    } else {
-      for (const p of conflicts) {
-        // never overwrite a copy the sitter changed and has not put
-        const file = join(work, p);
-        const onLane = run(["git", "cat-file", "blob", `${old}:${p}`], s.root);
-        if (existsSync(file) && (!onLane.ok || !onLane.bytes.equals(readFileSync(file)))) refuse(`${file} differs from lane/${name}; put or remove it, then sync`);
-      }
-      for (const p of conflicts) {
-        const merged = run(["git", "cat-file", "blob", `${tree}:${p}`], s.root);
-        mkdirSync(dirname(join(work, p)), { recursive: true });
-        if (merged.ok) writeFileSync(join(work, p), merged.bytes);
-        else rmSync(join(work, p), { force: true });
-      }
-      writeFileSync(join(work, ".merge"), `${main}\n`);
-      writeFileSync(join(work, ".merge-tree"), `${tree}\n`);
-      writeFileSync(join(work, ".merge-files"), conflicts.map((p) => p + "\n").join(""));
-      refuse(`${name} conflicts with ${s.main} in: ${conflicts.join(", ")}; resolve them in ${work} (a missing file is deleted), then orly lane put ${name} -m 'sync: merge ${s.main}'`);
-    }
-  }
-  return Number(gitOut(s.root, "rev-list", "--count", `${s.main}..lane/${name}`));
-}
-
-/** The gate on `rev`: every gate check in one export of the revision, one build at a time. Prints `<sha> name=0 …`
- *  and a red check's last lines; a green tree is remembered in data/green-provenance-v2.
- *  ponytail: a fixed pool of slots, not one per sitter: each slot's export costs its own build of the crate in target/. */
-async function laneGate(s: Swarm, rev: string, land = false, lane?: string): Promise<boolean> {
-  const checks = gateChecks(s);
-  const sha = gitOut(s.root, "rev-parse", "--short", "--verify", `${rev}^{commit}`) ?? refuse(`'${rev}' is not a commit`);
-  // a land waits ahead of lane checks: checks yield while land.wanted names a live pid, so lands never starve
-  const wanted = join(s.data, "land.wanted");
-  if (land) writeFileSync(wanted, String(process.pid));
-  // why: non-Rust checks may overlap; Rust exports hold cargo-provenance.lock through all checks because shared artifacts use relative source fingerprints.
-  const slots = Array.from({ length: Math.max(1, num("ORLY_GATE_SLOTS", 3)) }, (_, i) => i ? `-${i}` : "");
-  return withAnyLock(slots.map((x) => join(s.data, `build${x}.lock`)), async (slot) => {
-    if (land) rmSync(wanted, { force: true });
-    const exportDir = join(s.data, `export${slots[slot]}`);
-    const tmp = mkdtempSync(join(tmpdir(), "orly-export-"));
-    mkdirSync(exportDir, { recursive: true });
-    // rsync -c keeps the mtime of unchanged files, so an incremental build redoes only what the rev changed.
-    // ponytail: the export holds tracked files only; a check that needs installed deps installs them itself
-    const exported = run(["sh", "-c", 'git archive "$1" | tar -x -C "$2" && rsync -rlpc --delete "$2/" "$3/"', "export", rev, tmp, exportDir], s.root);
-    rmSync(tmp, { recursive: true, force: true });
-    if (!exported.ok) refuse(`export of ${sha} failed: ${exported.err.trim()}`);
-    const runChecks = async () => {
-      // builds run without any model endpoint (`*_BASE_URL`), so a test cannot reach the agent's proxy
-      for (const key of Object.keys(process.env)) if (key.endsWith("_BASE_URL")) delete process.env[key];
-      // a check may judge by seat (a refactor lane must not grow the code, a port lane may): name the lane and the rev
-      if (lane) Object.assign(process.env, { ORLY_LANE: lane, ORLY_SHA: gitOut(s.root, "rev-parse", "--verify", `${rev}^{commit}`) });
-      const runs = join(s.data, `checks${slots[slot]}`);
-      mkdirSync(runs, { recursive: true });
-      let line = sha;
-      let green = true;
-      const base = gitOut(s.root, "merge-base", s.main, rev);
-      const changed = base ? (gitOut(s.root, "diff", "--name-only", base, rev) ?? "").split("\n").filter(Boolean) : null;
-      for (const [name, check] of Object.entries(checks)) {
-        if (changed && gateSkips(check, changed)) { line += ` ${name}=skip`; continue; }
-        // the slot is ours, so a check still recorded here belongs to a gate that died mid-run: kill it, run fresh
-        const stale = join(runs, `${Bun.hash(name)}.key`);
-        const [, orphan] = existsSync(stale) ? readFileSync(stale, "utf8").split("\n") : [];
-        if (Number(orphan) > 0) try { process.kill(-Number(orphan), "SIGKILL"); } catch { /* gone */ }
-        rmSync(stale, { force: true });
-        const record = await checkRecord(name, { ...check, timeoutMs: check.timeoutMs ?? 600_000 }, exportDir, runs, null);
-        const ok = record.exit === 0;
-        if (!ok) {
-          green = false;
-          // the next gate reuses this check's output file, so a red run keeps its own copy and names what failed
-          const out = join(runs, `${Bun.hash(name)}.out`), log = join(runs, `${sha}-${name}.log`);
-          if (existsSync(out)) copyFileSync(out, log);
-          const text = existsSync(log) ? readFileSync(log, "utf8") : String(record.out ?? "");
-          const failed = text.split("\n").filter((l) => /panicked at|^test .* FAILED$|^error(\[|:)/.test(l)).slice(0, 10);
-          for (const l of [...failed, ...text.trimEnd().split("\n").slice(-6)]) console.log(`${name}: ${l}`);
-          if (existsSync(log)) console.log(`${name}: full output ${log}`);
-        }
-        line += ` ${name}=${ok ? 0 : 1}`;
-      }
-      console.log(line);
-      if (green) appendFileSync(join(s.data, "green-provenance-v2"), `${gitOut(s.root, "rev-parse", `${rev}^{tree}`)}\n`);
-      return green;
-    };
-    if (!existsSync(join(exportDir, "Cargo.toml"))) return runChecks();
-    return withLock(join(s.data, "cargo-provenance.lock"), async () => {
-      const fresh = run(["sh", "-c", 'find "$1" -type f -exec touch {} +', "freshen", exportDir], s.root);
-      if (!fresh.ok) refuse(`cannot freshen Rust export ${sha}: ${fresh.err.trim()}`);
-      return runChecks();
-    });
-  }, land ? undefined : wanted);
-}
-
-function freshRust(s: Swarm, source: string) {
-  const fresh = run(["find", source, "-type", "d", "(", "-name", "target", "-o", "-name", ".git", "-o", "-name", ".orly", ")", "-prune", "-o", "-type", "f", "-exec", "touch", "{}", "+"], s.root);
-  if (!fresh.ok) refuse(`cannot freshen Rust source: ${fresh.err.trim()}`);
-  const env = { ...process.env, CARGO_TARGET_DIR: join(s.root, "target") };
-  for (const key of Object.keys(env)) if (key.endsWith("_BASE_URL")) delete env[key];
-  return env;
-}
-
-async function laneTest(s: Swarm, manifestArg: string, exact: string, bin?: string, filter = false): Promise<number> {
-  const manifest = resolve(s.root, manifestArg);
-  if (basename(manifest) !== "Cargo.toml" || !existsSync(manifest)) refuse(`not a Cargo manifest: ${manifest}`);
-  if (!exact || exact.startsWith("-")) refuse(filter ? "name a Rust test filter" : "name one exact Rust test");
-  const source = dirname(manifest);
-  const wanted = join(s.data, "land.wanted");
-  return withLock(join(s.data, "cargo-provenance.lock"), async () => {
-    const env = freshRust(s, source);
-    const args = ["cargo", "test", "--manifest-path", manifest, ...(bin ? ["--bin", bin] : ["--lib"]), exact, "--", ...(filter ? [] : ["--exact"])];
-    console.error(`targeted test: ${manifest} ${exact}; target=${env.CARGO_TARGET_DIR}`);
-    const child = Bun.spawn(args, { cwd: source, env, stdout: "pipe", stderr: "pipe" });
-    const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    process.stdout.write(out);
-    process.stderr.write(err);
-    if (code) return code;
-    const summary = out.match(/^test result: ok\. ([0-9]+) passed; 0 failed; 0 ignored;/m);
-    if (!summary || (filter ? Number(summary[1]) < 1 : Number(summary[1]) !== 1)) {
-      console.error(`refused: expected ${filter ? "nonzero executed tests without failures or ignores" : "one executed test"}: ${exact}`);
-      return 1;
-    }
-    return 0;
-  }, wanted);
-}
-
-async function laneSnapshot(s: Swarm, manifestArg: string, destinationArg: string, bin: string): Promise<number> {
-  const manifest = resolve(s.root, manifestArg), destination = resolve(s.root, destinationArg);
-  if (basename(manifest) !== "Cargo.toml" || !existsSync(manifest)) refuse(`not a Cargo manifest: ${manifest}`);
-  const source = dirname(manifest);
-  return withLock(join(s.data, "land.lock"), () => withLock(join(s.data, "cargo-provenance.lock"), async () => {
-    if (existsSync(destination)) refuse(`snapshot already exists: ${destination}`);
-    const root = gitOut(source, "rev-parse", "--show-toplevel");
-    const revision = root && realpathSync(root) === realpathSync(source) && git(source, "diff", "--quiet", "HEAD", "--").ok && !gitOut(source, "status", "--porcelain", "--", "src", "Cargo.toml", "Cargo.lock", "build.rs", ".cargo") ? gitOut(source, "rev-parse", "HEAD") : "uncommitted-export";
-    const env = freshRust(s, source);
-    const child = Bun.spawn(["cargo", "build", "--manifest-path", manifest, "--bin", bin, "--message-format=json"], { cwd: source, env, stdout: "pipe", stderr: "pipe" });
-    const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    process.stderr.write(err);
-    if (code) return code;
-    const messages = out.split("\n").flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
-    const artifact = messages.findLast((m) => m.reason === "compiler-artifact" && m.target?.name === bin && m.executable);
-    if (!artifact) refuse(`Cargo reported no executable for ${bin}`);
-    mkdirSync(dirname(destination), { recursive: true });
-    copyFileSync(artifact.executable, destination, constants.COPYFILE_EXCL);
-    chmodSync(destination, statSync(artifact.executable).mode);
-    const sha256 = new Bun.CryptoHasher("sha256").update(readFileSync(destination)).digest("hex");
-    console.log(JSON.stringify({ manifest, revision, binary: destination, sha256 }));
-    return 0;
-  }));
-}
-
-/** Director only: merge lane/<name> (or its commit `at`) into main, gate it, move main, push. */
-async function laneLand(s: Swarm, name: string, slug: string, at?: string) {
-  checkName("sitter name", name);
-  if (gitOut(s.root, "rev-parse", "--abbrev-ref", "HEAD") !== s.main) refuse(`land runs in the main tree on ${s.main}`);
-  // orly's stop hook rewrites its run state in the tree it runs in; that is nobody's work
-  if (git(s.root, "ls-files", "--error-unmatch", ".orly/baseline.json").ok) git(s.root, "restore", "--source=HEAD", "--worktree", "--", ".orly/baseline.json");
-  if (!git(s.root, "diff", "--quiet", "HEAD", "--").ok) refuse("the main tree has uncommitted changes; commit them first");
-  if (existsSync(join(workDir(s, name), ".merge"))) refuse(`${name} has an unfinished sync merge; not landed`);
-  const main = gitOut(s.root, "rev-parse", s.main)!;
-  // a rebasing pull flattens land merges and splits main from what was published; landing on it only fails the push
-  const published = gitOut(s.root, "rev-parse", "--verify", "-q", `origin/${s.main}`);
-  if (published && !git(s.root, "merge-base", "--is-ancestor", published, main).ok) refuse(`${s.main} has diverged from origin/${s.main}; merge origin/${s.main} into it (never rebase, never force); not landed`);
-  let lane = gitOut(s.root, "rev-parse", "--verify", "-q", laneRef(name)) ?? refuse(`no lane/${name}`);
-  // the sha the land request named: commits the sitter put after it stay on the lane for its next land
-  if (at) {
-    const commit = gitOut(s.root, "rev-parse", "--verify", "-q", `${at}^{commit}`);
-    if (!commit || !git(s.root, "merge-base", "--is-ancestor", commit, lane).ok) refuse(`${at} is not a commit on lane/${name}; not landed`);
-    lane = commit!;
-  }
-  if (git(s.root, "merge-base", "--is-ancestor", lane, main).ok) refuse(`${name} has nothing to land`);
-  let landing = lane;
-  if (!git(s.root, "merge-base", "--is-ancestor", main, lane).ok) {
-    const { tree, conflicts } = mergeTree(s, main, lane);
-    if (conflicts) refuse(`${name} conflicts with ${s.main} in: ${conflicts.join(", ")}; ${name} runs orly lane sync; not landed`);
-    landing = run(["git", "commit-tree", tree, "-p", main, "-p", lane], s.root, { input: signed(`land(${slug}): merge lane/${name}`, name) }).out.trim();
-  }
-  const sha = gitOut(s.root, "rev-parse", "--short", landing)!;
-  const tree = gitOut(s.root, "rev-parse", `${landing}^{tree}`)!;
-  if (readLines(join(s.data, "green-provenance-v2")).includes(tree)) console.log(`gate: tree of ${sha} already green`);
-  else if (!(await laneGate(s, landing, true, name))) refuse(`${name} at ${sha} is red; not landed`);
-  const now = gitOut(s.root, "rev-parse", s.main)!;
-  if (now !== main) refuse(`${s.main} moved from ${main.slice(0, 7)} to ${now.slice(0, 7)} while ${sha} was gated; only lane land writes ${s.main}; not landed`);
-  const moved = git(s.root, "merge", "-q", "--ff-only", landing);
-  if (!moved.ok) refuse(moved.err.trim());
-  git(s.root, "tag", "-f", "approved", sha);
-  console.log(`landed ${slug} from ${name} at ${sha}`);
-  // main is published after every landing; a failed push is unavailable, never a bounce
-  if (git(s.root, "remote", "get-url", "origin").ok) {
-    const pushed = git(s.root, "push", "-q", "origin", s.main);
-    if (!pushed.ok) console.error(`orly: push unavailable: ${pushed.err.trim().split("\n").at(-1)}`);
-  }
-}
-
-/** Every lane with ahead/behind main, or one lane's commits. */
-function laneList(s: Swarm, name?: string): string[] {
-  if (name) return (gitOut(s.root, "log", "--format=%h %ar %s", `${s.main}..lane/${name}`) ?? "").split("\n").filter(Boolean);
-  const lanes = (gitOut(s.root, "for-each-ref", "--format=%(refname:short)", "refs/heads/lane") ?? "").split("\n").filter(Boolean);
-  return lanes.map((b) => `${b.slice("lane/".length).padEnd(18)} ahead ${gitOut(s.root, "rev-list", "--count", `${s.main}..${b}`)} behind ${gitOut(s.root, "rev-list", "--count", `${b}..${s.main}`)}`);
-}
-
-/** Main's history for one seat (trailer `Sitter: <seat>-<n>`, optionally one slug) or one sitter (`Sitter: <name>`). */
-function laneLog(s: Swarm, by: string, who: string, slug?: string): string[] {
-  const grep = by === "seat" ? `^Sitter: ${who}-[0-9]+$` : by === "sitter" ? `^Sitter: ${who}$` : usage("orly lane log seat <seat> [<slug>] | log sitter <name>");
-  const lines = (gitOut(s.root, "log", "--format=%h %s", "-E", `--grep=${grep}`, s.main) ?? "").split("\n").filter(Boolean);
-  return slug ? lines.filter((l) => l.includes(`(${slug})`)) : lines;
-}
-
-const BUS_HELP = `orly bus post <from> <to> <text...>    append one line
-orly bus read <me> [tag...]            new lines to <me>, its seat, all or a tag; '*' is every line
-orly bus drain <me>                    every new line since <me>'s read mark, once
-orly bus watch <me> [tag...]           read every 2s, forever (a Monitor target)
-orly bus take <me> <seq>               claim line <seq> as yours to act on; refused when someone took it first
-orly bus pending                       land lines not yet answered by landed or bounced for their slug
-orly bus lease <role> | unlease <role> hold, renew or give back the singleton <role> (director) for this session
-orly bus sit <seat>                    this session's sitter name for <seat>
-orly bus reap                          release every claim whose session pid is gone
-orly bus claim <me> <slug> <file...>   add files to a slug's claim; refused if another claim holds one
-orly bus release <me> <slug>           give a slug's files back
-orly bus claims                        every claim: owner, slug, files
-orly bus log <me> <sha> <what> -- <why> | state <me> [text...] | show <me>   a sitter's cache`;
-
-const LANE_HELP = `orly lane open <name>                      make lane/<name> off main if new; print the work dir
-orly lane get <name> <path...>             copy lane/<name>'s version of each path into the work dir
-orly lane put <name> -m <msg> [<path...>]  commit those copies onto lane/<name>
-orly lane sync <name>                      merge main into lane/<name>
-orly lane check <name> | gate <rev>        the gate (swarm.md's gate checks) on lane/<name> or <rev>
-orly lane test <manifest> <test> [--filter] [--bin <name>]  targeted test with shared source provenance
-orly lane snapshot <manifest> <destination> --bin <name>  build and copy under source lock
-orly lane land <name> <slug> [<sha>]       one land at a time: merge, gate, move main, push
-orly lane ls [<name>]                      every lane with ahead/behind main, or one lane's commits
-orly lane log seat <seat> [<slug>] | log sitter <name>   main's history by Sitter trailer`;
-
-async function busCommand(s: Swarm, [verb, ...a]: string[]): Promise<number> {
-  const need = (n: number, text: string) => { if (a.length < n) usage(`orly bus ${text}`); };
-  switch (verb) {
-    case "post": need(3, "post <from> <to> <text...>"); await busPost(s, a[0], a[1], a.slice(2).join(" ")); return 0;
-    case "read": need(1, "read <me> [tag...]"); await busSince(s, a[0], addressedTo(a[0], a.slice(1))); return 0;
-    case "drain": need(1, "drain <me>"); await busSince(s, a[0], () => true); return 0;
-    case "watch": need(1, "watch <me> [tag...]"); for (;;) { await busSince(s, a[0], addressedTo(a[0], a.slice(1))); await Bun.sleep(2000); }
-    case "take": {
-      need(2, "take <me> <seq>");
-      if (!/^\d+$/.test(a[1])) refuse(`'${a[1]}' is not a seq`);
-      console.log(JSON.stringify(await busTake(s, a[0], Number(a[1]))));
-      return 0;
-    }
-    case "pending": for (const l of busPending(s)) console.log(`${l.seq} ${l.from} ${l.text}`); return 0;
-    case "lease": {
-      need(1, "lease <role>");
-      if (await lease(s, a[0])) return 0;
-      const held = JSON.parse(readFileSync(join(s.data, `lease.${a[0]}`), "utf8"));
-      return refuse(`refused: ${a[0]} is held by pid ${held.pid}, renewed ${Math.floor(Date.now() / 1000) - held.at}s ago`);
-    }
-    case "unlease": need(1, "unlease <role>"); await unlease(s, a[0]); return 0;
-    case "sit": need(1, "sit <seat>"); console.log(await sit(s, a[0])); return 0;
-    case "reap": await reap(s); return 0;
-    case "claim": need(3, "claim <me> <slug> <file...>"); await claim(s, a[0], a[1], a.slice(2)); return 0;
-    case "release": need(2, "release <me> <slug>"); await release(s, a[0], a[1]); return 0;
-    case "claims": for (const c of readJsonl<Claim>(claimsPath(s))) console.log(`${c.owner}\t${c.slug}\t${c.files.join(" ")}`); return 0;
-    case "show": {
-      need(1, "show <me>");
-      const path = join(s.data, "cache", `${a[0]}.md`);
-      console.log(existsSync(path) ? readFileSync(path, "utf8").trimEnd() : `no cache for ${a[0]}`);
-      return 0;
-    }
-    case "log": {
-      need(3, "log <me> <sha> <what> -- <why>");
-      const sha = gitOut(s.root, "rev-parse", "--short", "--verify", `${a[1]}^{commit}`) ?? refuse(`'${a[1]}' is not a commit`);
-      const rest = a.slice(2).join(" ");
-      if (!rest.includes(" -- ")) usage("orly bus log <me> <sha> <what> -- <why>: say why after --");
-      const [what, why] = [rest.slice(0, rest.indexOf(" -- ")), rest.slice(rest.indexOf(" -- ") + 4)];
-      await writeCache(s, a[0], { log: `- ${isoNow()} \`${sha}\` ${what}. Why: ${why}` });
-      return 0;
-    }
-    case "state": {
-      need(1, "state <me> [text...]");
-      // text as arguments, or stdin; never block on a terminal and never blank the state
-      const body = a.length > 1 ? a.slice(1).join(" ") : process.stdin.isTTY ? usage("orly bus state <me> <text...> | orly bus state <me> < file") : await new Response(Bun.stdin.stream()).text();
-      if (!body.trim()) refuse("empty state refused; the cache keeps its old one");
-      await writeCache(s, a[0], { state: body.trim() });
-      return 0;
-    }
-    default: console.error(BUS_HELP); return 2;
-  }
-}
-
-async function laneCommand(s: Swarm, [verb, ...a]: string[]): Promise<number> {
-  const need = (n: number, text: string) => { if (a.length < n) usage(`orly lane ${text}`); };
-  switch (verb) {
-    case "open": need(1, "open <name>"); console.log(laneOpen(s, a[0])); return 0;
-    case "get": need(2, "get <name> <path...>"); laneGet(s, a[0], a.slice(1)); return 0;
-    case "put": {
-      if (a.length < 3 || a[1] !== "-m" || !a[2]) usage("orly lane put <name> -m <msg> [<path...>]");
-      console.log(lanePut(s, a[0], a[2], a.slice(3)));
-      return 0;
-    }
-    case "sync": need(1, "sync <name>"); console.log(laneSync(s, a[0])); return 0;
-    case "check": need(1, "check <name>"); laneOpen(s, a[0]); return (await laneGate(s, `lane/${a[0]}`, false, a[0])) ? 0 : 1;
-    case "gate": need(1, "gate <rev>"); return (await laneGate(s, a[0])) ? 0 : 1;
-    case "snapshot": {
-      if (a.length !== 4 || a[2] !== "--bin") usage("orly lane snapshot <manifest> <destination> --bin <name>");
-      return laneSnapshot(s, a[0], a[1], a[3]);
-    }
-    case "test": {
-      const help = "orly lane test <manifest> <test> [--filter] [--bin <name>]";
-      if (a.length < 2) usage(help);
-      let filter = false, bin: string | undefined;
-      for (let i = 2; i < a.length; i++) {
-        if (a[i] === "--filter" && !filter) filter = true;
-        else if (a[i] === "--bin" && bin === undefined && a[i + 1] && !a[i + 1].startsWith("-")) bin = a[++i];
-        else usage(help);
-      }
-      return laneTest(s, a[0], a[1], bin, filter);
-    }
-    case "land": need(2, "land <name> <slug> [<sha>]"); await withLock(join(s.data, "land.lock"), () => laneLand(s, a[0], a[1], a[2])); return 0;
-    case "ls": for (const l of laneList(s, a[0])) console.log(l); return 0;
-    case "log": need(2, "log seat <seat> [<slug>] | log sitter <name>"); for (const l of laneLog(s, a[0], a[1], a[2])) console.log(l); return 0;
-    default: console.error(LANE_HELP); return 2;
-  }
-}
-
-/** `orly swarm`, `orly bus …`, `orly lane …`. */
-export async function swarmCommand(command: string, args: string[], cwd: string): Promise<number> {
-  try {
-    const s = swarmAt(cwd);
-    if (command === "bus") return await busCommand(s, args);
-    if (command === "lane") return await laneCommand(s, args);
-    for (const sitter of await seatingPlan(s)) console.log(JSON.stringify(sitter));
-    return 0;
-  } catch (e: any) {
-    console.error(`orly: ${e?.message ?? e}`);
-    return e instanceof SwarmError ? e.exit : 1;
-  }
+/** Host hooks stay inert until the session arms them, and `/orly` is the only thing that arms one:
+ *  no argument (or `on`) arms, `off` disarms, `status` reports. Anything else is null, not a guess. */
+export function armCommand(arg: string): "on" | "off" | "status" | null {
+  const a = arg.trim().toLowerCase();
+  if (!a || a === "on" || a === "arm") return "on";
+  if (a === "off" || a === "disarm") return "off";
+  if (a === "status") return "status";
+  return null;
 }
 
 // ---------------------------------------------------------------- the CLI
@@ -1876,12 +1054,14 @@ orly gate          same input through the full gate a hook runs (baseline, round
 orly goal [group] "<text>"   append a goal to .orly/goal; specs under .orly/specs/<group>/ serve it
 orly tasks         the specs, most important goal first
 orly specs         validate every spec file; names each rejected one, exit 1 if any
-orly rows <spec>   run a row spec (select: over .orly/tables) and print its rows and answers; never gates
-orly swarm         this session's seating plan for .orly/swarm, one JSON sitter per line
-orly bus …         the swarm's bus, claims and leases (orly bus help)
-orly lane …        sitter lanes and the gated land (orly lane help)
+orly ask "<question>" [path|folder|glob|tree:<glob> …]
+                   one yes/no question to the judge over the project's files; with no path, over the list of every file
+orly on|off|status [--session <id>]
+                   turn the gate off for one session (nothing judged, no edit refused) and back on
+                       the session is --session, else ORLY_SESSION
 
 env: TYPESAFE_API_KEY or keyCommand in .orly/config.json or ~/.orly/config.json (ORLY_KEY_TIMEOUT_MS), TYPESAFE_BASE_URL, ORLY_MODEL, ORLY_TIMEOUT_MS, ORLY_CHECK_BUDGET_MS,
+     ORLY_EVIDENCE_FILES, ORLY_EVIDENCE_CHARS,
      ORLY_HAZARD, ORLY_SPEC_MET, ORLY_MIN_COVERAGE, ORLY_MIN_CONFIDENCE, ORLY_MIN_ACTION_P`;
 
 if (import.meta.main) {
@@ -1892,6 +1072,14 @@ if (import.meta.main) {
   const fail = (msg: string): never => { console.error(`orly: ${msg}`); process.exit(1); };
 
   if (command === "help" || command === "--help" || command === "-h") { console.log(HELP); process.exit(0); }
+  const session = () => flag("--session") ?? process.env.ORLY_SESSION;
+
+  if (command === "on" || command === "off" || command === "status") {
+    const sid = session() ?? fail("no session: pass --session <id> or set ORLY_SESSION");
+    if (command !== "status") setOff(sid, command === "off");
+    console.log(isOff(sid) ? "orly is off for this session: nothing is judged and no edit is refused until `orly on`" : "orly is on for this session: the gate runs at the end of every turn");
+    process.exit(0);
+  }
 
   if (command === "goal") {
     const [group, text] = args.length > 1 ? [args[0], args.slice(1).join(" ")] : [undefined, args[0]];
@@ -1931,8 +1119,23 @@ if (import.meta.main) {
     process.exit(problems.length ? 1 : 0);
   }
 
-  if (command === "rows") process.exit(await rowsCommand(args[0], cwd));
-  if (command === "swarm" || command === "bus" || command === "lane") process.exit(await swarmCommand(command, args, cwd));
+  if (command === "ask") {
+    const [question, ...where] = args;
+    if (!question?.trim()) fail('usage: orly ask "<yes/no question>" [path|folder|glob|tree:<glob> …]');
+    const apiKey = (await resolveKey()) ?? fail("no API key: set TYPESAFE_API_KEY, or a keyCommand in .orly/config.json or ~/.orly/config.json");
+    const project = await projectEvidence({ cwd, checks: {} })({} as Turn, [{ id: "ask", instructions: question, evidence: where.length ? where : ["tree:**", "**"] }]);
+    try {
+      const { answers, usage } = await ask({ project }, { answer: {
+        type: "noul",
+        instructions: `Judging only from \`project.files\` (the project's real current files, gathered independently; a \`tree:\` entry lists paths only): ${question}`,
+        criteria: { true: "The files shown establish this.", false: "The files shown do not establish this, or they show the opposite." },
+      } }, { apiKey, endpoint: process.env.TYPESAFE_BASE_URL, model: process.env.ORLY_MODEL, timeoutMs: Number(process.env.ORLY_TIMEOUT_MS) || 30_000 });
+      console.log(JSON.stringify({ answer: answers.answer, read: Object.fromEntries(Object.entries(project.files ?? {}).map(([path, body]) => [path, (body as string).length])), usage }));
+      process.exit(0);
+    } catch (e: any) {
+      fail(`judge unavailable (${e?.message ?? e})`);
+    }
+  }
   if (command !== "judge" && command !== "gate") fail(`unknown command "${command}" — try: orly help`);
 
   let input: { messages?: any[]; turn?: Turn };
@@ -1946,7 +1149,7 @@ if (import.meta.main) {
   const turn = t ?? normalizeLastTurn(input!.messages!);
 
   if (command === "gate") {
-    const outcome = await gateTurn({ cwd, sessionId: flag("--session") ?? process.env.ORLY_SESSION ?? "cli", read: async () => turn, flush: false, answeringBlock: args.includes("--answering-block") });
+    const outcome = await gateTurn({ cwd, sessionId: session() ?? "cli", read: async () => turn, flush: false, answeringBlock: args.includes("--answering-block") });
     if (outcome.note) console.error(`orly: ${outcome.note}`);
     console.log(JSON.stringify(outcome));
     process.exit(outcome.block ? 2 : 0);

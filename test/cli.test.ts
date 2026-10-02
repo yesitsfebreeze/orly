@@ -77,6 +77,24 @@ test("orly gate runs the turn-end gate and allows without a key", () => {
   expect(out.message).toContain("no TypeSafe key");
 });
 
+test("orly off, status and on switch one session, named by flag or by ORLY_SESSION", () => {
+  const sid = `cli-off-${Date.now()}-${Math.random()}`;
+  try {
+    expect(run(["off"]).exitCode).toBe(1);
+    expect(run(["off"]).stderr.toString()).toContain("no session");
+    const off = run(["off", "--session", sid]);
+    expect(off.exitCode).toBe(0);
+    expect(off.stdout.toString()).toContain("orly is off");
+    expect(run(["status", "--session", sid]).stdout.toString()).toContain("orly is off");
+    const r = Bun.spawnSync(["bun", CLI, "on"], { env: { PATH: process.env.PATH!, ORLY_SESSION: sid }, stdout: "pipe", stderr: "pipe" });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.toString()).toContain("orly is on");
+    expect(run(["status", "--session", sid]).stdout.toString()).toContain("orly is on");
+  } finally {
+    run(["on", "--session", sid]);
+  }
+});
+
 test("orly goal appends in a fresh directory and tasks lists the open specs", async () => {
   const dir = mkdtempSync(join(tmpdir(), "orly-cli-"));
   try {

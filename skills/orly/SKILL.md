@@ -5,12 +5,19 @@ description: Turn a goal into checkable specs and work until they pass, or turn 
 
 The user wrote: **$ARGUMENTS** (when nothing follows, use their last message).
 
-When nothing follows and `.orly/swarm/` exists in this repo, go to *Joining the swarm*.
-Otherwise decide which this is. A goal ("add retries to the client") → *Setting a goal*. A report
-that something went wrong ("it said tests pass but they didn't") → *When something went wrong*.
-
 `orly` below means `bun "${CLAUDE_PLUGIN_ROOT}/orly.ts"`; without that variable it is
 `orly.ts` in the orly checkout.
+
+Exactly `on`, `off` or `status` → *Switching the gate*. Otherwise decide which this is.
+A goal ("add retries to the client") → *Setting a goal*. A report that something went
+wrong ("it said tests pass but they didn't") → *When something went wrong*.
+
+## Switching the gate
+
+Run `orly on|off|status --session "$CLAUDE_CODE_SESSION_ID"` (the variable is set in your
+shell) and repeat its one line. Off means nothing is judged and no edit is refused until `orly on`;
+the switch dies with the session. Only the user turns it off: never run `orly off` to get
+past a block.
 
 ## Setting a goal
 
@@ -23,7 +30,10 @@ that something went wrong ("it said tests pass but they didn't") → *When somet
    so plainly: the word filter ran, decidability did not.
 4. Show the user the spec list in one short block (`orly tasks`), then start the work.
 
-From then on every turn you try to end is judged against these specs. The loop ends when
+From then on every turn you try to end is judged against these specs. In Claude Code the check
+runs in the background: a failed turn reaches you as a message naming the unmet specs, and you
+decide whether it is right. Your reply to it is not judged again, so fix what it names before
+you answer. The loop ends when
 every spec is met, when you state plainly what you could not do and why, or when the
 round cap runs out.
 
@@ -66,40 +76,3 @@ until fixed.
 
 If a fine turn was blocked, reword the spec that fired so it branches on when it applies.
 Never lower its cut or delete it: the next stop is refused when the spec set got weaker.
-
-## Joining the swarm
-
-This session joins the one swarm of this repo and keeps its sitters alive. More sessions mean
-more workers; nothing else sets a count.
-
-1. Read `.orly/swarm/swarm.md` (the director's brief and the rules every sitter keeps) and each
-   seat in `.orly/swarm/seats/`.
-2. Run `orly swarm`. Each line is one sitter this session hosts: `director` when the director's
-   lease was free (this session now holds it), then `<seat>-<n>` for each seat whose `filled`
-   query returned a row. The same session running it again gets the same names back.
-3. Per line, unless that name is already live: `orly lane open <name>` (skip for `director`),
-   then start one background worker named exactly that. Its prompt: the seat file with `<you>`
-   replaced by the name and `<lane>` by the work dir, a line `---`, then swarm.md's rules.
-   - Claude Code: `ListAgents` shows who is live; `Agent` with `name` set to it.
-   - Codex: `spawn_agent` with the name as its task name (`work-1` may be written `work_1`;
-     orly reads either); `send_input` relays a line, `wait` collects a finished worker.
-   The sitter posts `seated <seat> at <sha>` when ready.
-4. Watch the bus: Claude Code arms one `Monitor` on `orly bus watch <session-name> '*'`; Codex
-   runs `orly bus read <session-name>` at the start of every turn. Relay what a sitter must see.
-   Every wake: `orly bus lease director` when this session holds the director (a refusal means
-   another session took it; stop hosting the director), `orly bus reap` if you host the director
-   (releases the claims of sessions that are gone), and `orly swarm` again, seating new lines.
-5. Only `orly lane land` writes the main branch. A sitter `orly lane put`s its files, and when
-   the unit is whole runs `orly lane sync <name> && orly lane land <name> <slug>` itself: the land
-   merges, gates on swarm.md's `gate` checks with the lane named, moves main and pushes, one
-   land at a time. Red means not landed: fix and land again. The director lands only for a
-   sitter that is gone (`orly bus pending`).
-6. No seat blocks on the human, the director included: never call AskUserQuestion (the hook
-   denies it to every seat). A seat that needs a decision writes `.orly/swarm/questions/<slug>.md`
-   (frontmatter `status: open`; body the question and the options), posts `question <slug>` on the
-   bus and keeps working. The director's brief, added to its prompt: every turn read the questions
-   with `status: open`, tell the human once for each new one (Claude Code: `PushNotification`; Codex: say it in the turn's reply), and keep landing;
-   the human's answer lands in that file verbatim.
-
-Stopping: `orly bus unlease director` if held; the sitters end with the session and their names
-free up.

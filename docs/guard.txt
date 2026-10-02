@@ -25,7 +25,11 @@ WHERE IT IS ENFORCED
 Before an edit. `guardEdit(cwd, path, edit)` replays a planned edit to a spec file or to
 .orly/goal against the whole tree, and returns the refusal text if the result is weaker.
 `plannedEdit(tool, input)` turns a host's Write, Edit, MultiEdit or NotebookEdit input
-into the edit it describes. A host adapter calls both from its pre-tool hook.
+into the edit it describes. Every spelling a host uses for the two strings is read —
+`old_string`/`oldString`/`oldText` and the matching `new_*` names — and the replacements
+are taken from `edits` whether it holds one entry, many, or none (with the pair at the top
+level as the fallback). A host that renames a field is therefore still guarded instead of
+silently unguarded. A host adapter calls both from its pre-tool hook.
 
 At the end of a turn. Shell commands never reach a pre-tool hook, so `gateTurn` also
 compares the current specs and checks with the strictest set seen, stored in

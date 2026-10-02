@@ -1,6 +1,6 @@
 {
   "name": "orly",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "description": "A turn-end gate for coding agents: checks each turn against the project's specs in one judge request and refuses the stop until they hold.",
   "type": "module",
   "license": "MIT",
@@ -15,6 +15,7 @@
     "orly.ts",
     "install",
     ".claude-plugin",
+    ".codex-plugin",
     "docs",
     "llms.txt",
     "LICENSE.md",

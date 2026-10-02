@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "Stop": [{ "hooks": [{ "type": "command", "command": "bun \"${PLUGIN_ROOT}/install/codex/adapter.ts\"", "timeout": 35 }] }],
+    "SessionStart": [{ "matcher": "startup|resume|clear", "hooks": [{ "type": "command", "command": "bun \"${PLUGIN_ROOT}/install/codex/adapter.ts\"", "timeout": 10 }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "bun \"${PLUGIN_ROOT}/install/codex/adapter.ts\"", "timeout": 3 }] }]
+  }
+}

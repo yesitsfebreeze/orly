@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { guardEdit, plannedEdit } from "../orly.ts";
-import { gateTurn, NO_KEY_MESSAGE, sessionBrief } from "../orly.ts";
+import { armCommand, endSession, gateTurn, isOff, NO_KEY_MESSAGE, sessionBrief, setOff } from "../orly.ts";
 
 const sandbox = () => mkdtempSync(join(tmpdir(), "orly-core-"));
 const noKey = { TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY, ORLY_KEY_COMMAND: process.env.ORLY_KEY_COMMAND, HOME: process.env.HOME };
@@ -80,6 +80,31 @@ test("a weakened spec set blocks before any key is needed", async () => {
   }
 });
 
+test("a session turned off allows every turn, a weakened gate included, until turned on again", async () => {
+  const dir = sandbox(), session = `off-${Date.now()}-${Math.random()}`;
+  try {
+    mkdirSync(join(dir, ".orly", "specs", "g"), { recursive: true });
+    writeFileSync(join(dir, ".orly", "goal"), "g\n");
+    writeFileSync(join(dir, ".orly", "baseline.json"), JSON.stringify({ goal: "g", specs: [{ id: "one", instructions: "is it done?", cut: 0.9 }] }));
+    writeFileSync(join(dir, ".orly", "specs", "g", "one.spec"), "cut: 0.3\n\nis it done?\n");
+    const run = () => withoutKey(() => gateTurn({ cwd: dir, sessionId: session, read: async () => null }));
+    setOff(session, true);
+    expect(isOff(session)).toBe(true);
+    const off = await run();
+    expect(off.block).toBe(false);
+    expect(off.note).toContain("off for this session");
+    setOff(session, false);
+    expect(isOff(session)).toBe(false);
+    expect((await run()).block).toBe(true);
+    setOff(session, true);
+    endSession(session);
+    expect(isOff(session)).toBe(false);
+  } finally {
+    endSession(session);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a failing require check blocks before any key or judge", async () => {
   const dir = sandbox();
   try {
@@ -96,6 +121,29 @@ test("a failing require check blocks before any key or judge", async () => {
     const passing = await gate(); // checks met: only now is the judge's key needed
     expect(passing.block).toBe(false);
     expect(passing.message).toBe(NO_KEY_MESSAGE);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the reply to a block is not judged again, but a weakened gate still blocks it", async () => {
+  const dir = sandbox();
+  try {
+    mkdirSync(join(dir, ".orly", "specs", "g"), { recursive: true });
+    writeFileSync(join(dir, ".orly", "goal"), "- g: tests\n");
+    writeFileSync(join(dir, ".orly", "config.json"), JSON.stringify({ checks: { tests: { command: "test -e ok" } } }));
+    const spec = join(dir, ".orly", "specs", "g", "tests.spec");
+    writeFileSync(spec, "require: checks.tests.exit equals 0\n\nDo the tests pass?\n");
+    const other = join(dir, ".orly", "specs", "g", "other.spec");
+    writeFileSync(other, "require: checks.tests.exit equals 0\n\nDoes the second check pass too?\n");
+    const turn = { user_request: "fix it", assistant_final_message: "done", assistant_said: "done", actions_taken: ["Edit: a.ts"], command_results: [], conclusive: true };
+    const gate = (answeringBlock: boolean) => withoutKey(() => gateTurn({ cwd: dir, sessionId: `a-${Math.random()}`, read: async () => turn, flush: false, answeringBlock }));
+    expect((await gate(false)).block).toBe(true);
+    const reply = await gate(true); // the same failing check, on the turn that answers the block
+    expect(reply.block).toBe(false);
+    expect(reply.note).toContain("not judged again");
+    rmSync(other);
+    expect((await gate(true)).block).toBe(true); // deleting the spec is caught before the skip
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -154,18 +202,36 @@ test("the brief is null outside a project and names the host's goal command insi
   }
 });
 
+test("the arm command is what hosts share: bare and `on` arm, `off` disarms, anything else is null", () => {
+  for (const a of ["", "  ", "on", "ON", "arm", " Arm \n"]) expect(armCommand(a)).toBe("on");
+  for (const a of ["off", "OFF", "disarm"]) expect(armCommand(a)).toBe("off");
+  for (const a of ["status", "STATUS"]) expect(armCommand(a)).toBe("status");
+  for (const a of ["maybe", "--on", "start"]) expect(armCommand(a)).toBeNull();
+});
+
 test("every host's edit tool reduces to one planned edit", () => {
   expect(plannedEdit("Write", { file_path: "a", content: "x" })).toEqual({ kind: "write", content: "x" });
   expect(plannedEdit("write", { filePath: "a", content: "x" })).toEqual({ kind: "write", content: "x" });
   expect(plannedEdit("Edit", { old_string: "a", new_string: "b" })).toEqual({
     kind: "edit",
-    edits: [{ old_string: "a", new_string: "b", replace_all: undefined }],
+    edits: [{ old_string: "a", new_string: "b" }],
   });
   expect(plannedEdit("edit", { oldString: "a", newString: "b", replaceAll: true })).toEqual({
     kind: "edit",
     edits: [{ old_string: "a", new_string: "b", replace_all: true }],
   });
+  // Pi's live shape: the replacements are nested under `edits` with camelCase names. Before this
+  // was mapped, the guard built `{old_string: undefined, …}` and every Pi edit slipped through.
+  expect(plannedEdit("edit", { path: "a", edits: [{ oldText: "a", newText: "b" }] })).toEqual({
+    kind: "edit",
+    edits: [{ old_string: "a", new_string: "b" }],
+  });
+  // A single nested entry, several entries, and Claude's snake_case array all reduce the same way.
+  expect(plannedEdit("edit", { edits: { oldText: "a", newText: "b" } })!.edits).toHaveLength(1);
+  expect(plannedEdit("edit", { edits: [{ oldText: "a", newText: "b" }, { oldText: "c", newText: "d" }] })!.edits).toHaveLength(2);
   expect(plannedEdit("MultiEdit", { edits: [{ old_string: "a", new_string: "b" }] })!.kind).toBe("edit");
+  // An edit with no replacement text is not an edit; nothing is guessed.
+  expect(plannedEdit("edit", { path: "a", edits: [{ newText: "b" }] })).toBeNull();
   expect(plannedEdit("Bash", { command: "rm" })).toBeNull();
 });
 

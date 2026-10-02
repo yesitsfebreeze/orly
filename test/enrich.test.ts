@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { projectEvidence } from "../orly.ts";
+import { ask, excerpt, projectEvidence } from "../orly.ts";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,7 +27,7 @@ test("a file under the limit is passed whole; a long one announces its truncatio
   try {
     const e: any = await projectEvidence({ cwd: r })(turn, [{ id: "a", instructions: "n/a", evidence: ["thing.ts"] }]);
     expect(e.files["thing.ts"]).toBe("export const done = true;\n");
-    writeFileSync(join(r, "big.ts"), "x".repeat(20_000));
+    writeFileSync(join(r, "big.ts"), "x".repeat(120_000));
     const e2: any = await projectEvidence({ cwd: r })(turn, [{ id: "b", instructions: "n/a", evidence: ["big.ts"] }]);
     expect(e2.files["big.ts"]).toContain("TRUNCATED");
     expect(e2.files["big.ts"]).toContain("do not treat anything below as absent");
@@ -101,10 +101,11 @@ test("evidence never reads outside the project, by path or by symlink", async ()
 });
 
 test("evidence past the file limit is named as unread, never silently missing", async () => {
-  const names = Array.from({ length: 10 }, (_, i) => `f${i}.ts`);
+  const names = Array.from({ length: 42 }, (_, i) => `f${i}.ts`);
   const e: any = await projectEvidence({ cwd: "/nope" })(turn, [{ id: "a", instructions: "n/a", evidence: names }]);
   expect(Object.keys(e.files)).toEqual(names);
-  expect(e.files["f9.ts"]).toContain("not read");
+  expect(e.files["f41.ts"]).toContain("not read");
+  expect(e.files["f39.ts"]).toBe("[file does not exist]");
   expect(e.files["f0.ts"]).toBe("[file does not exist]");
 });
 
@@ -158,5 +159,90 @@ test("a check past the budget is pending, keeps running, and the next stop reads
     expect(readFileSync(runs, "utf8")).toBe(".\n"); // ran once, finished after the first stop stopped waiting
   } finally {
     rmSync(r, { recursive: true, force: true });
+  }
+});
+
+test("evidence names a folder, a glob or a tree, and reads what the project holds", async () => {
+  const r = mkdtempSync(join(tmpdir(), "orly-glob-"));
+  try {
+    mkdirSync(join(r, "src/deep"), { recursive: true });
+    writeFileSync(join(r, "src/a.rs"), "fn a() {}");
+    writeFileSync(join(r, "src/deep/b.rs"), "fn b() {}");
+    writeFileSync(join(r, "src/deep/c.txt"), "text");
+    writeFileSync(join(r, "bin.dat"), "x\0y");
+    const ask = (evidence: string[]) => projectEvidence({ cwd: r })(turn, [{ id: "a", instructions: "n/a", evidence }]) as Promise<any>;
+    expect(Object.keys((await ask(["src"])).files)).toEqual(["src/a.rs", "src/deep/b.rs", "src/deep/c.txt"]);
+    const globbed = await ask(["src/**/*.rs", "bin.dat", "nothing/*.rs"]);
+    expect(globbed.files["src/a.rs"]).toBe("fn a() {}");
+    expect(globbed.files["src/deep/b.rs"]).toBe("fn b() {}");
+    expect(globbed.files["src/deep/c.txt"]).toBeUndefined();
+    expect(globbed.files["bin.dat"]).toBe("[binary file: not read]");
+    expect(globbed.files["nothing/*.rs"]).toBe("[no file matches]");
+    expect((await ask(["tree:**"])).files["tree:**"]).toBe("bin.dat\nsrc/a.rs\nsrc/deep/b.rs\nsrc/deep/c.txt");
+    expect((await ask(["tree:src/config/**"])).files["tree:src/config/**"]).toBe("[no file matches]");
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("matched files past the budget are counted in one line, never silently dropped", async () => {
+  const r = mkdtempSync(join(tmpdir(), "orly-budget-"));
+  const before = process.env.ORLY_EVIDENCE_FILES;
+  try {
+    for (let i = 0; i < 5; i++) writeFileSync(join(r, `f${i}.ts`), "x");
+    process.env.ORLY_EVIDENCE_FILES = "3";
+    const e: any = await projectEvidence({ cwd: r })(turn, [{ id: "a", instructions: "n/a", evidence: ["*.ts"] }]);
+    expect(Object.keys(e.files)).toEqual(["f0.ts", "f1.ts", "f2.ts", "[not read]"]);
+    expect(e.files["[not read]"]).toContain("2 more matching files");
+  } finally {
+    if (before === undefined) delete process.env.ORLY_EVIDENCE_FILES; else process.env.ORLY_EVIDENCE_FILES = before;
+    rmSync(r, { recursive: true, force: true });
+  }
+});
+
+test("one budget is shared: small files go whole, a large one keeps the lines the question asks about", async () => {
+  const r = fresh();
+  try {
+    const filler = Array.from({ length: 6000 }, (_, i) => `const filler${i} = ${i};`);
+    filler[5000] = "export function settleInvoice() { return 42; }";
+    writeFileSync(join(r, "big.ts"), filler.join("\n"));
+    const e: any = await projectEvidence({ cwd: r })(turn, [{ id: "a", instructions: "Does big.ts define settleInvoice?", evidence: ["big.ts", "thing.ts"] }]);
+    expect(e.files["thing.ts"]).toBe("export const done = true;\n");
+    expect(e.files["big.ts"]).toContain("export function settleInvoice()");
+    expect(e.files["big.ts"]).toContain("const filler4999 = 4999;"); // context around the hit
+    expect(e.files["big.ts"]).toMatch(/…\[lines \d+-4998 not shown\]/);
+    expect(e.files["big.ts"].length).toBeLessThanOrEqual(80_000);
+    expect(excerpt("short", 100, [])).toBe("short");
+  } finally {
+    rmSync(r, { recursive: true, force: true });
+  }
+});
+
+test("more matches than the file limit: the files carrying the question's words are read first", async () => {
+  const r = fresh(), before = process.env.ORLY_EVIDENCE_FILES;
+  try {
+    for (let i = 0; i < 6; i++) writeFileSync(join(r, `m${i}.ts`), i === 5 ? "export const settleInvoice = 1;\n" : "export const other = 1;\n");
+    process.env.ORLY_EVIDENCE_FILES = "2";
+    const e: any = await projectEvidence({ cwd: r })(turn, [{ id: "a", instructions: "Is settleInvoice exported anywhere?", evidence: ["m*.ts"] }]);
+    expect(Object.keys(e.files)).toEqual(["m5.ts", "m0.ts", "[not read]"]);
+  } finally {
+    if (before === undefined) delete process.env.ORLY_EVIDENCE_FILES; else process.env.ORLY_EVIDENCE_FILES = before;
+    rmSync(r, { recursive: true, force: true });
+  }
+});
+
+test("a request the judge calls too large is cut around the question and sent again", async () => {
+  const sizes: number[] = [];
+  const server = Bun.serve({ port: 0, fetch: async (req) => { // a local stand-in, never the live API
+    const body: any = await req.json(), size = body.state.project.files["big.ts"].length;
+    sizes.push(size);
+    return size > 50_000 ? Response.json({ detail: { error_type: "max_tokens_exceeded" } }, { status: 400 }) : Response.json({ answers: { a: { type: "noul", noul: 0.9 } } });
+  } });
+  try {
+    const big = Array.from({ length: 6000 }, (_, i) => `const filler${i} = ${i};`).join("\n");
+    const { answers } = await ask({ project: { files: { "big.ts": big } } }, { a: { type: "noul", instructions: "Is filler5000 defined?" } }, { apiKey: "k", endpoint: server.url.href });
+    expect(answers.a.noul).toBe(0.9);
+    expect(sizes.length).toBeGreaterThan(1);
+    expect(sizes.at(-1)!).toBeLessThanOrEqual(50_000);
+  } finally {
+    server.stop(true);
   }
 });

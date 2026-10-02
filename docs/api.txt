@@ -44,8 +44,8 @@ THE GATE
 
     read           async () => Turn | null, called again while the closing message is
                    still being written (flush: false turns that off)
-    answeringBlock true when the turn is the agent's reply to a block; with no specs it
-                   is allowed without judging
+    answeringBlock true when the turn is the agent's reply to a block: it is allowed without
+                   judging, so one stop is blocked at most once. A weakened gate still blocks
 
     returns { block, reason?, message?, note? }
       block    true: refuse the stop and send `reason` back to the agent
@@ -60,8 +60,12 @@ gate.
   sessionBrief(cwd, cli?)   goals, specs and the one rule, for a session-start hook;
                             null outside a project
   endSession(sessionId)     deletes the gate's temp files for a session-end hook
+  isOff(sessionId), setOff(sessionId, off)
+                            the per-session off switch behind `orly on|off`; a host hook
+                            that finds isOff true does nothing
   guardEdit(cwd, path, e)   the refusal text if the edit weakens the gate, else null
-  plannedEdit(tool, input)  a host's Write/Edit/MultiEdit/NotebookEdit input as that edit
+  plannedEdit(tool, input)  a host's Write/Edit/MultiEdit/NotebookEdit input as that edit;
+                            reads edits[] or a top-level pair, under snake_case or camelCase
 
 
 LOWER LEVEL
@@ -88,6 +92,10 @@ JSON on stdout.
           1 could not run (bad input, no key, judge unreachable)
   gate    the GateOutcome; exit 0 or 2, never 1. --session <id> (or ORLY_SESSION) names
           the session the round cap counts under; --answering-block sets answeringBlock
+  on | off | status   turns one session off (gateTurn allows with a note, the shipped
+          hooks stay inert) and back on; same session resolution, and the skill passes
+          Claude Code's CLAUDE_CODE_SESSION_ID as --session. The marker lives in the
+          temp dir and endSession deletes it
 
 
 WIRING A HOST HOOK
@@ -108,9 +116,10 @@ host whose hook reads JSON on stdin and accepts {"decision": "block", "reason"} 
 
 Adapt the field names to the host. install/claude/adapter.ts is the complete Claude Code
 adapter: the same gate on Stop, plus sessionBrief on SessionStart, guardEdit on PreToolUse
-and endSession on SessionEnd. install/claude/hooks.json registers it, together with
-install/claude/status.ts, a function-hook module that draws the last verdict under the
-turn's closing line from ~/.orly/status/<session>.json, which the Stop adapter writes.
+and endSession on SessionEnd. install/claude/hooks.json registers it, the Stop hook with
+`asyncRewake`: it runs in the background, prints nothing on a pass, and on a failed turn exits 2
+with one line on stderr, which Claude Code hands to the model as a message. The Stop adapter writes the last verdict to
+~/.orly/status/<session>.json, for anything that draws a status line.
 
 install/codex/adapter.ts speaks the same hook dialect as the Claude Code adapter. It reads
 Codex's rollout JSONL with `codexMessages` (context Codex injects as user messages, reasoning
@@ -125,7 +134,11 @@ messages, since Cursor does not document the format.
 install/opencode/plugin.ts (OpenCode, Kilo Code) and install/pi/extension.ts (Pi) are
 in-process: they map the host's messages onto the core's shape with `toAnthropic`, gate on
 the host's idle or end-of-agent event, send a block back as a new prompt, send the brief
-when a session starts, and refuse weakening edits from the host's pre-tool event.
+when a session starts, and refuse weakening edits from the host's pre-tool event. Pi's gate
+is inert until the session arms it with the `/orly` command (`/orly off` disarms,
+`/orly status` reports): with no command typed, session_start injects nothing, agent_end
+judges nothing and tool_call blocks nothing. `armCommand(arg)` in orly.ts parses the
+argument, so a host that spells the opt-in differently can reuse the same rule.
 install/opencode/index.ts is the OpenCode 2 plugin ({id, setup}); it gates on
 session.execution.succeeded, since v2 never emits session.idle, and loads as the package
 directory "<orly>/install/opencode" because v2 ignores main.

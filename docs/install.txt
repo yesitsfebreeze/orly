@@ -23,9 +23,9 @@ found in this order:
        { "keyCommand": "security find-generic-password -s typesafe -w" }
 
      A project without a keyCommand uses the one in ~/.orly/config.json, so one entry
-     serves every project. A key kept by kern in a pass store:
+     serves every project. A key kept in a pass store:
 
-       { "keyCommand": "PASSWORD_STORE_DIR=$HOME/dev/kern/.kern/secrets pass show typesafe/api-key | head -n 1" }
+       { "keyCommand": "pass show typesafe/api-key | head -n 1" }
 
      The command runs with `sh -c`. It is killed after ORLY_KEY_TIMEOUT_MS (10000), and a
      command that times out or exits non-zero yields no key.
@@ -69,9 +69,10 @@ ENVIRONMENT
   ORLY_MODEL            judge model (jev-latest)
   ORLY_TIMEOUT_MS       judge request timeout (12000)
   ORLY_CHECK_BUDGET_MS  how long a stop waits on checks before leaving them to the next stop (8000)
-  ORLY_GATE_SLOTS       how many swarm lane gates run at once, each in its own export (3)
-  ORLY_SESSION          session id for `orly gate` when --session is not given
-  ORLY_PID              the session pid `orly swarm|bus` holds leases, names and claims under (default: the harness process)
+  ORLY_EVIDENCE_FILES   how many evidence files one request reads (40)
+  ORLY_EVIDENCE_CHARS   how many characters of evidence one request reads (80000)
+  ORLY_SESSION          session id for `orly gate` and `orly on|off|status` when --session is
+                        not given
   ORLY_HAZARD           probability at which a built-in hazard blocks (0.7)
   ORLY_SPEC_MET         probability at which a judged spec without a cut is met (0.7)
   ORLY_MIN_COVERAGE     coverage score below which the turn blocks, out of 3 (1.5)
@@ -82,8 +83,4 @@ ENVIRONMENT
   ORLY_FLUSH_WAIT_MS    wait between those reads (150)
   ORLY_CLI              how the brief names the orly command, for the Codex, OpenCode and
                         Pi adapters (Claude Code derives it from the plugin root)
-  CODEX_THREAD_ID       Codex-provided thread identity; combined with the process id for swarm seats
-                        and leases so threads sharing one app server do not share ownership.
-                        Existing PID-only reservations remain reserved until their owner exits;
-                        coordinate active worker handovers before allocating new names.
   CODEX_HOME            where the Codex adapter looks for rollouts (~/.codex)

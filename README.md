@@ -40,10 +40,13 @@ alias orly="bun ~/orly/orly.ts"
 
 ### Claude Code
 
-The repository is a Claude Code plugin. It gates the stop, refuses spec edits that weaken
-the gate, briefs each session on the goals and specs, and cleans up when a session ends.
-Under each finished turn it draws a score bar and the three things behind it (unmet
-specs and hazards first):
+The repository is a Claude Code plugin. It checks each finished turn, refuses spec edits
+that weaken the gate, briefs each session on the goals and specs, and cleans up when a
+session ends. The check runs in the background and shows nothing: a turn that passes ends
+as usual, and a turn that fails wakes the agent with one message naming the unmet specs,
+which the agent weighs itself (continue, or say why not and stop). The stop after that
+message is not checked again. `/orly off` turns the gate off for the running session
+(`/orly on` turns it back on, `/orly status` reports); the switch dies with the session:
 
 ```sh
 claude plugin marketplace add ~/orly && claude plugin install orly@orly
@@ -52,7 +55,10 @@ claude plugin marketplace add ~/orly && claude plugin install orly@orly
 ### OpenCode and Pi
 
 One-line shims load the shipped adapters. On a block they prompt the session again with
-the reason; spec edits that weaken the gate are refused.
+the reason; spec edits that weaken the gate are refused. The gate is inert until the
+session arms it: nothing is injected and nothing is judged unless you type `/orly`
+(`/orly off` disarms, `/orly status` reports). OpenCode arms on its own first idle event;
+in Pi `/orly` is the only thing that arms it.
 
 ```sh
 mkdir -p .opencode/plugins && echo 'export { OrlyPlugin } from "'$HOME'/orly/install/opencode/plugin.ts";' > .opencode/plugins/orly.ts
@@ -65,31 +71,23 @@ OpenCode 2 loads plugins by package directory instead: add
 
 ### Codex CLI
 
-Codex runs command hooks from `~/.codex/hooks.json` (or `.codex/hooks.json` in a project).
-Point Stop, SessionStart, SessionEnd and PreToolUse at the adapter:
-
-```json
-{ "hooks": {
-  "Stop":         [{ "hooks": [{ "type": "command", "command": "bun ~/orly/install/codex/adapter.ts", "timeout": 25 }] }],
-  "SessionStart": [{ "hooks": [{ "type": "command", "command": "bun ~/orly/install/codex/adapter.ts", "timeout": 10 }] }],
-  "SessionEnd":   [{ "hooks": [{ "type": "command", "command": "bun ~/orly/install/codex/adapter.ts", "timeout": 3 }] }],
-  "PreToolUse":   [{ "hooks": [{ "type": "command", "command": "bun ~/orly/install/codex/adapter.ts", "timeout": 10 }] }]
-} }
-```
-
-Codex edits files through `apply_patch`, which the pre-edit guard cannot read; the gate's
-baseline check catches a weakened spec at the end of the turn instead.
-
-Codex installs the skill from this repo's own marketplace (it reads `.claude-plugin/`), which
-keeps it current on update; a copy left in `~/.codex/skills/orly` shadows it, so remove one:
+Codex installs orly as a plugin from this repo's own marketplace. The plugin carries the skill
+and the hooks (`.codex-plugin/plugin.json` points Stop, SessionStart and SessionEnd at
+`install/codex/adapter.ts`), and stays current on update:
 
 ```sh
 codex plugin marketplace add ~/orly && codex plugin add orly@orly
 ```
 
-Plugin hooks do not run under Codex, so the hooks above stay in `hooks.json`. All of the skill
-runs under Codex; *Joining the swarm* seats sitters with `spawn_agent`, and orly knows a spawned
-sitter by its rollout's `agent_path`.
+Codex has no `/orly`: skills are not slash commands there. Type `$` and pick orly from the
+skill list (or `/skills`) wherever this README says `/orly`.
+
+Codex asks you to trust new hooks once: open `/hooks` in the TUI and approve orly's. Remove any
+orly entries left in `~/.codex/hooks.json` from an older install, or the gate runs twice, and
+any copy in `~/.codex/skills/orly`, which shadows the plugin's skill.
+
+Codex edits files through `apply_patch`, which the pre-edit guard cannot read; the gate's
+baseline check catches a weakened spec at the end of the turn instead.
 
 ### Cursor
 
@@ -131,10 +129,8 @@ orly gate --session my-session < turn.json
 | `orly goal [group] "<text>"` | appends a goal to `.orly/goal`, never overwrites |
 | `orly tasks` | the specs, most important goal first |
 | `orly specs` | validates every spec file and check name; exit 1 if any is rejected |
-| `orly rows <spec>` | runs a row spec (`select:` over `.orly/tables`) and prints its rows and answers; never gates |
-| `orly swarm` | this session's seating plan for `.orly/swarm/`, one JSON sitter per line (`director` while its lease is free, then `<seat>-<n>`) |
-| `orly bus <cmd>` | the swarm bus: post, read, watch, take, pending, claim, release, claims, reap, sit, lease, unlease, log, state, show |
-| `orly lane <cmd>` | sitter branches without worktrees: open, get, put, sync, check, gate, land, ls, log; the gate is swarm.md's `gate` checks |
+| `orly ask "<question>" [path…]` | puts one yes/no question to the judge over project files: a file, a folder, a glob or `tree:<glob>`; with no path, over the file list and the files carrying the question's words; never gates |
+| `orly on\|off\|status [--session <id>]` | turns the gate off for one session (nothing judged, no edit refused) and back on; the session is `--session`, else `ORLY_SESSION` |
 | `orly help` | the command list and environment variables |
 
 Exit codes for `judge` and `gate`: `0` the turn may end, `2` it may not, `1` orly could not
@@ -159,22 +155,3 @@ specs under `.orly/specs/`.
 ## License
 
 [MIT](LICENSE.md)
-
-## Swarm
-
-A repo with `.orly/swarm/` runs a swarm of agent sessions; a bare `/orly` joins it.
-
-```
-.orly/swarm/swarm.md        the director's brief; frontmatter main (branch), gate (check names from config.json)
-.orly/swarm/seats/<seat>.md  frontmatter filled (`always` or one SELECT over .orly/tables), specs; body the job
-.orly/swarm/questions/<slug>.md  tracked: the human's decisions; frontmatter status (open, answered), body question and options
-.orly/swarm/data/            never tracked: bus.jsonl, claims.jsonl, sitters.jsonl, lease.<role>, work/, green
-```
-
-`director.md` is the singleton seat: the session holding `orly bus lease director` hosts it, and it
-alone lands lanes on the main branch. Every other session contributes one `<seat>-<n>` per filled
-seat. A lease or sitter name is held while its session's pid runs. No seat, the director included,
-may call AskUserQuestion: the PreToolUse hook denies it, and the seat writes `questions/<slug>.md`
-with `status: open` and posts `question <slug>` on the bus instead. `seat`, `questions`, `bus`,
-`claims` and `sitters` are row-spec tables (see docs/specs.txt), so swarm health is written as row specs.
-Needs `git`, `tar` and `rsync`. All of it lives in `orly.ts`; there are no scripts.
