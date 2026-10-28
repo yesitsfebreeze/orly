@@ -1,7 +1,7 @@
 {
   "name": "orly",
-  "version": "0.6.5",
-  "description": "A turn-end gate for coding agents: checks each turn against the project's specs in one judge request and refuses the stop until they hold.",
+  "version": "1.0.0",
+  "description": "A guard check for coding agents: the agent turns the user's request into guards, every stop is checked against them and refused until all are upheld.",
   "type": "module",
   "license": "MIT",
   "repository": "github:yesitsfebreeze/orly",
@@ -16,7 +16,6 @@
     "install",
     ".claude-plugin",
     ".codex-plugin",
-    "docs",
     "llms.txt",
     "LICENSE.md",
     "README.md",
@@ -27,10 +26,5 @@
   },
   "scripts": {
     "test": "bun test"
-  },
-  "pi": {
-    "extensions": [
-      "./install/pi/extension.ts"
-    ]
   }
 }

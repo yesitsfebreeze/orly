@@ -1,78 +1,34 @@
 ---
 name: orly
-description: Turn a goal into checkable specs and work until they pass, or turn a reported mistake into the spec that catches it. Use when the user states a goal for this session, or says something the agent did was wrong.
+description: Guard check for the session. Turn the user's request into guards (one yes/no question each, a shell command where one decides it); every stop is checked against them and refused until all are upheld. Use when the user asks for work, when "/orly" is typed, or when a stop was refused.
 ---
 
 The user wrote: **$ARGUMENTS** (when nothing follows, use their last message).
 
-`orly` below means `bun "${CLAUDE_PLUGIN_ROOT}/orly.ts"`; without that variable it is
-`orly.ts` in the orly checkout.
+`orly` below means `bun "${CLAUDE_PLUGIN_ROOT}/orly.ts"`; the session is `$CLAUDE_CODE_SESSION_ID`
+(set in your shell; pass `--session` when it is not). The prompt hook prints the exact command.
 
-Exactly `on`, `off` or `status` → *Switching the gate*. Otherwise decide which this is.
-A goal ("add retries to the client") → *Setting a goal*. A report that something went
-wrong ("it said tests pass but they didn't") → *When something went wrong*.
+## Writing guards
 
-## Switching the gate
+Before the work starts, one guard per thing the request must deliver, 2 to 6 in all:
 
-Run `orly on|off|status --session "$CLAUDE_CODE_SESSION_ID"` (the variable is set in your
-shell) and repeat its one line. Off means nothing is judged and no edit is refused until `orly on`;
-the switch dies with the session. Only the user turns it off: never run `orly off` to get
-past a block.
-
-## Setting a goal
-
-1. Read enough of the project to name its real commands and paths.
-2. Write `.orly/goal` (`rounds: 6`, a blank line, then `- <group>: <text>` per goal) and one
-   spec file per check under `.orly/specs/<group>/`. Put every check a command can decide
-   into `checks` in `.orly/config.json` and assert it with `require:`.
-3. Run `orly specs`. Rewrite every spec it rejects and re-run until clean; an undecidable
-   spec yields a confident number that means nothing. If the judge cannot be reached, say
-   so plainly: the word filter ran, decidability did not.
-4. Show the user the spec list in one short block (`orly tasks`), then start the work.
-
-From then on every turn you try to end is judged against these specs. In Claude Code the check
-runs in the background: a failed turn reaches you as a message naming the unmet specs, and you
-decide whether it is right. Your reply to it is not judged again, so fix what it names before
-you answer. The loop ends when
-every spec is met, when you state plainly what you could not do and why, or when the
-round cap runs out.
-
-## Writing a spec
-
-A spec is one yes/no question about the recorded evidence of a turn: commands run, their
-output, what you said, and files orly reads from disk itself.
-
-- **Observable.** "Do `command_results` show a test run reporting zero failures after the
-  last edit?", not "the tests are good".
-- **Output, not behaviour.** The judge cannot predict what code does at runtime.
-- **No taste words** (clean, readable, idiomatic, robust, proper): rejected.
-- **One thing per spec**, 5 to 12 specs.
-- **Branch when it only sometimes applies:** "First check whether `actions_taken` edits X.
-  If NOT, answer yes. If it does, answer yes only when …".
-
-A file is optional `key: value` headers, a blank line, then the question. The file name
-is the id.
-
-```
-evidence: duration.js
-
-Look at the `duration.js` entry under `project.files`, which is the file's real current
-content. Is the `throw new Error("not implemented")` stub gone?
+```sh
+orly guard "Do command_results show bun test exiting 0 after the last edit?" --check "bun test"
+orly guard "Does README.md list every plugin in exactly one tier?" --file README.md
+orly guard "Does assistant_final_message name the file that was changed and how to verify it?"
 ```
 
-Headers: `require: <path> <op> <value>` (decided in code from a check, e.g.
-`require: checks.tests.exit equals 0` with `"checks": {"tests": {"command": "bun test"}}`),
-`evidence: a, b` (files read at judging time), `cut: 0.6`, `optional: yes`, `true:` and
-`false:` (what met and unmet look like). A file that does not parse blocks every turn
-until fixed.
+- **One yes/no question about evidence**: a command result, a file's content, the final message.
+  Not "is the code good": taste words are rejected.
+- **`--check` when a command decides it.** Exit 0 upholds the guard. A check runs at every stop,
+  so a regression reopens it.
+- **`--file` when the question is about file state.** The judge sees the file's real content.
+- A question or a one-line answer needs no guard. The user's follow-up that adds work adds guards.
 
-## When something went wrong
+`orly guards` lists them. `orly drop <id>` only when the user says to drop one.
 
-1. Write the question that would have caught it as a new spec in its group, with
-   `evidence:` when it is about file state.
-2. Run `orly specs`; reword until it is accepted.
-3. Fix the mistake itself in the work, so the new spec is met this turn.
-4. Report in two lines: the spec file, and what was fixed.
+## When a stop is refused
 
-If a fine turn was blocked, reword the spec that fired so it branches on when it applies.
-Never lower its cut or delete it: the next stop is refused when the spec set got weaker.
+The message names the guards not upheld and where the full verdict is. Fix what they name, then
+stop again; that stop is not checked. A guard that cannot be met: say so to the user and name why.
+Never drop or reword a guard to get past a block.

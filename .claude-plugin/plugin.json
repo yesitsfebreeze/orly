@@ -1,7 +1,7 @@
 {
   "name": "orly",
-  "version": "0.6.6",
-  "description": "A turn-end gate for coding agents: checks each turn against the project's specs and refuses the stop until they hold.",
+  "version": "1.0.0",
+  "description": "A guard check for coding agents: the agent turns the user's request into guards, every stop is checked against them and refused until all are upheld.",
   "author": {
     "name": "Stefan Hoevelmanns"
   },
@@ -11,7 +11,7 @@
   "keywords": [
     "hooks",
     "gate",
-    "specs",
+    "guards",
     "verification"
   ],
   "hooks": "./install/claude/hooks.json",

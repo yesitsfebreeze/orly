@@ -1,3 +1,0 @@
-rounds: 6
-
-- core: Keep orly.ts a small, reliable single-file core: tests and build green, no growth without cause, every CLI command the skill relies on either implemented or removed from the docs

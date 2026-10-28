@@ -1,12 +1,17 @@
 {
   "name": "orly",
-  "owner": { "name": "Stefan Hoevelmanns" },
-  "metadata": { "description": "A turn-end gate for coding agents", "version": "0.6.4" },
+  "owner": {
+    "name": "Stefan Hoevelmanns"
+  },
+  "metadata": {
+    "description": "A guard check for coding agents",
+    "version": "1.0.0"
+  },
   "plugins": [
     {
       "name": "orly",
       "source": "./",
-      "description": "A turn-end gate for coding agents: checks each turn against the project's specs and refuses the stop until they hold.",
+      "description": "A guard check for coding agents: the agent turns the user's request into guards, every stop is checked against them and refused until all are upheld.",
       "category": "productivity"
     }
   ]

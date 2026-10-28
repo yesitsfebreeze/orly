@@ -1,16 +1,11 @@
 # orly
 
-> A turn-end gate for coding agents. At the end of every turn the recorded work is
-> checked against the project's specs in one TypeSafe/Jev judge request, with facts
-> decided in code; the agent keeps working until they hold. One file, `orly.ts`, run
-> with bun. `orly judge` exits 0 = may stop, 2 = not done, 1 = could not run.
+> A guard check for coding agents. The agent turns the user's request into guards (one yes/no
+> question each, a shell command where one decides it). At every stop the open guards are
+> checked against the recorded turn in one TypeSafe/Jev request; an unmet guard refuses the
+> stop and the agent keeps working until all are upheld. One file, `orly.ts`, run with bun.
 
-- [README](README.md): what it does, install, quick start, commands.
-- [Install](docs/install.txt): the .orly layout, the API key, environment variables.
-- [Writing specs](docs/specs.txt): the spec tree, rules for judgeable specs, goals, file evidence, checks.
-- [The guard](docs/guard.txt): what counts as weakening the gate and where it is refused.
-- [API](docs/api.txt): library exports, the Turn shape, the CLI contract, wiring a host hook.
-- [Claude Code adapter](install/claude/adapter.ts): the shipped hook, registered by install/claude/hooks.json.
+- [README](README.md): what it does, install, the guard commands, environment.
+- [Skill](skills/orly/SKILL.md): how the agent writes guards and answers a refused stop.
+- [Claude Code adapter](install/claude/adapter.ts): the hook, registered by install/claude/hooks.json.
 - [Codex CLI adapter](install/codex/adapter.ts): the plugin hook, registered by install/codex/hooks.json; reads rollout transcripts.
-- [Cursor adapter](install/cursor/adapter.ts): hook for .cursor/hooks.json, registered by install/cursor/hooks.json.
-- [OpenCode plugin](install/opencode/plugin.ts) (v1; [index.ts](install/opencode/index.ts) for OpenCode 2) and [Pi extension](install/pi/extension.ts): in-process adapters.

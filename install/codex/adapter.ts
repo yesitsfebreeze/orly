@@ -2,22 +2,19 @@
 /**
  * Codex CLI hook (the plugin's install/codex/hooks.json), dispatched on `hook_event_name`.
  * Codex speaks Claude Code's hook dialect: the same stdin fields, `{decision: "block", reason}`
- * on Stop, `hookSpecificOutput` for context and permissions. What differs is the transcript:
- * a rollout JSONL under ~/.codex/sessions, found by session id when `transcript_path` is null.
- * Codex edits through apply_patch, which the pre-tool guard cannot project; the gate's baseline
- * catches those at Stop. Fails open: every error lets the agent stop.
+ * on Stop, `hookSpecificOutput` for context. What differs is the transcript: a rollout JSONL
+ * under ~/.codex/sessions, found by session id when `transcript_path` is null. Fails open.
  */
 import { Glob } from "bun";
 import { join } from "node:path";
-import { endSession, gateTurn, guardEdit, isOff, normalizeLastTurn, plannedEdit, sessionBrief, type Msg } from "../../orly.ts";
+import { endSession, gateTurn, loadSession, normalizeLastTurn, promptBrief, type Msg } from "../../orly.ts";
 
 /** Context Codex injects as user messages; none of it is the request. */
 const INJECTED = /^\s*(<(environment_context|user_instructions|turn_aborted|permissions|skill|app-context|codex_internal_context)\b|# AGENTS\.md instructions)/i;
-// Codex wraps Stop feedback in a user-role envelope, sometimes preceded by a
-// truncation notice. It is feedback on the current task, not a new human task.
+// Codex wraps Stop feedback in a user-role envelope. It is feedback on the current task, not a new human task.
 const orlyStopFeedback = (body: string): boolean => {
   const wrapped = body.trim().match(/^<hook_prompt\b[^>]*\bhook_run_id=["']stop:[^"']+["'][^>]*>([\s\S]*)<\/hook_prompt>$/);
-  return !!wrapped && /(?:^|\n)orly(?: \(an independent|\? refuses|\? —)/.test(wrapped[1]);
+  return !!wrapped && /(?:^|\n)orly: guards? not upheld/.test(wrapped[1]);
 };
 const text = (v: unknown): string =>
   typeof v === "string" ? v : Array.isArray(v) ? v.map((c: any) => (typeof c?.text === "string" ? c.text : "")).filter(Boolean).join("\n") : "";
@@ -58,19 +55,11 @@ if (import.meta.main) {
   const cwd = input.cwd ?? process.cwd();
   const sessionId = String(input.session_id ?? "unknown");
   const event = String(input.hook_event_name ?? "Stop");
+  const root = process.env.PLUGIN_ROOT ?? process.env.CODEX_PLUGIN_ROOT;
+  const cli = process.env.ORLY_CLI ?? (root ? `bun "${root}/orly.ts"` : "orly");
 
   if (event === "SessionEnd") emit(endSession(sessionId));
-  if (isOff(sessionId)) emit(); // `orly off` for this session: inert until `orly on`
-  if (event === "SessionStart") {
-    const brief = sessionBrief(cwd, process.env.ORLY_CLI);
-    emit(brief && { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: brief } });
-  }
-  if (event === "PreToolUse") {
-    const edit = plannedEdit(String(input.tool_name ?? ""), input.tool_input);
-    const target = input.tool_input?.file_path ?? input.tool_input?.path;
-    const reason = edit && typeof target === "string" ? guardEdit(cwd, target, edit) : null;
-    emit(reason && { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
-  }
+  if (event === "UserPromptSubmit") emit({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: promptBrief(loadSession(sessionId), cli) } });
   if (event !== "Stop") emit();
 
   const sessions = join(process.env.CODEX_HOME ?? join(process.env.HOME ?? "", ".codex"), "sessions");
